@@ -1251,6 +1251,7 @@ export const SURFACE_GROUPS: SurfaceGroup[] = [
           "PluginBbSdk.environments.experimental_cleanup",
           "PluginBbSdk.plugins.experimental_getSafeMode",
           "PluginBbSdk.plugins.experimental_setSafeMode",
+          "PluginBbSdk.plugins.experimental_pruneCache",
         ],
         firstParty: [
           "Account Pooler [Experimental]",
