@@ -35,7 +35,6 @@ import CloudOffIcon from "@hugeicons/core-free-icons/CloudOffIcon";
 import Coffee02Icon from "@hugeicons/core-free-icons/Coffee02Icon";
 import CollapseIcon from "@hugeicons/core-free-icons/CollapseIcon";
 import DashedLine02Icon from "@hugeicons/core-free-icons/DashedLine02Icon";
-import DatabaseRestoreIcon from "@hugeicons/core-free-icons/DatabaseRestoreIcon";
 import DateTimeIcon from "@hugeicons/core-free-icons/DateTimeIcon";
 import DiscordIcon from "@hugeicons/core-free-icons/DiscordIcon";
 import DragDropHorizontalIcon from "@hugeicons/core-free-icons/DragDropHorizontalIcon";
@@ -265,7 +264,6 @@ export const EXTENDED_ICON_MAP: ExtendedIconMap = {
   Columns2: LayoutTwoColumnIcon,
   CornerDownLeft: ArrowMoveDownLeftIcon,
   CornerDownRight: ArrowMoveDownRightIcon,
-  DatabaseRestore: DatabaseRestoreIcon,
   Discord: DiscordIcon,
   DiscordLogo: DiscordLogoIcon,
   DateTime: DateTimeIcon,
