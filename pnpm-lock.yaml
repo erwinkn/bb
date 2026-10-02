@@ -1602,6 +1602,9 @@ importers:
       bb-plugin-bb--provider-usage:
         specifier: workspace:*
         version: link:../../plugins/provider-usage
+      bb-plugin-bb--storage-retention:
+        specifier: workspace:*
+        version: link:../../plugins/storage-retention
       bb-plugin-bb-account:
         specifier: workspace:*
         version: link:../../plugins/bb-account
@@ -1695,9 +1698,6 @@ importers:
       bb-plugin-simple-notes:
         specifier: workspace:*
         version: link:../../plugins/docs
-      bb-plugin-storage-retention:
-        specifier: workspace:*
-        version: link:../../plugins/storage-retention
       bb-plugin-tasks:
         specifier: workspace:*
         version: link:../../plugins/tasks
