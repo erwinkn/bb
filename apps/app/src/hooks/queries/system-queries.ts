@@ -308,6 +308,24 @@ function systemExecutionOptionsQueryOptions({
           );
         }
       }
+      if (
+        writeLastKnown &&
+        response.modelLoadError?.providerId === providerId &&
+        response.models.length === 0 &&
+        response.selectedOnlyModels.length === 0 &&
+        (response.modelLoadError?.code === "failed" ||
+          response.modelLoadError?.code === "timeout")
+      ) {
+        const cached = readCachedModelCatalog(
+          modelCatalogCacheKey({ environmentId, hostId, providerId }),
+        );
+        if (
+          cached !== null &&
+          (cached.models.length > 0 || cached.selectedOnlyModels.length > 0)
+        ) {
+          return { ...response, ...cached, modelLoadError: null };
+        }
+      }
       return response;
     },
     staleTime: 60_000,
