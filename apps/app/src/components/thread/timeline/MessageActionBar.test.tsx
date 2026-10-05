@@ -15,6 +15,7 @@ import {
 } from "@/lib/plugin-logos";
 import { COMPACT_VIEWPORT_QUERY } from "@bb/shared-ui/hooks/use-compact-viewport";
 import { POINTER_COARSE_QUERY } from "@bb/shared-ui/hooks/use-pointer-coarse";
+import { resetMessageActionRecencyForTest } from "@/lib/message-action-recency";
 import {
   computeMessageActionRowLayout,
   findMessageActionTooltipCollisionBoundary,
@@ -25,6 +26,8 @@ const TIMESTAMP = Date.UTC(2026, 8, 30, 16, 5);
 
 afterEach(() => {
   cleanup();
+  window.localStorage.clear();
+  resetMessageActionRecencyForTest();
   resetPluginLogoStoreForTest();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
@@ -84,7 +87,98 @@ function openDesktopMenu() {
   return screen.getByRole("menu");
 }
 
+function inlineActionLabels(bar: HTMLElement) {
+  return within(bar)
+    .getAllByRole("button")
+    .map((button) => button.getAttribute("aria-label"))
+    .filter((label) => label !== "Message actions");
+}
+
+function RecencyMessage({
+  testId,
+  recencyScope,
+  onEdit,
+}: {
+  testId: string;
+  recencyScope: "user" | "assistant";
+  onEdit?: () => void;
+}) {
+  return (
+    <div className="group/message" data-testid={testId}>
+      <MessageActionBar
+        timestamp={TIMESTAMP}
+        messageText="An answer."
+        alignment={recencyScope === "user" ? "end" : "start"}
+        recencyScope={recencyScope}
+        mobileActionDisplay="inline"
+        onEdit={onEdit}
+        pluginActions={[
+          {
+            key: "demo/summarize/1",
+            usageKey: "plugin/demo/summarize",
+            pluginId: null,
+            icon: "Zap",
+            label: "Summarize",
+            onSelect: vi.fn(),
+          },
+        ]}
+      />
+    </div>
+  );
+}
+
 describe("MessageActionBar", () => {
+  it("orders inline actions by recency separately for user and assistant messages", () => {
+    const first = render(
+      <>
+        <RecencyMessage testId="assistant" recencyScope="assistant" />
+        <RecencyMessage testId="user" recencyScope="user" onEdit={vi.fn()} />
+      </>,
+    );
+    fireEvent.click(
+      within(screen.getByTestId("assistant")).getByRole("button", {
+        name: "Summarize",
+      }),
+    );
+    fireEvent.click(
+      within(screen.getByTestId("user")).getByRole("button", {
+        name: "Edit message",
+      }),
+    );
+    first.unmount();
+
+    render(
+      <>
+        <RecencyMessage testId="assistant" recencyScope="assistant" />
+        <RecencyMessage testId="user" recencyScope="user" onEdit={vi.fn()} />
+      </>,
+    );
+
+    expect(inlineActionLabels(screen.getByTestId("assistant"))).toEqual([
+      "Summarize",
+      "Copy message",
+    ]);
+    expect(inlineActionLabels(screen.getByTestId("user"))).toEqual([
+      "Edit message",
+      "Copy message",
+      "Summarize",
+    ]);
+  });
+
+  it("keeps a visible bar's order until it is revealed again", () => {
+    render(<RecencyMessage testId="assistant" recencyScope="assistant" />);
+    const message = screen.getByTestId("assistant");
+    fireEvent.pointerEnter(message);
+    fireEvent.click(within(message).getByRole("button", { name: "Summarize" }));
+
+    expect(inlineActionLabels(message)).toEqual(["Copy message", "Summarize"]);
+
+    fireEvent.pointerLeave(message);
+    fireEvent.pointerEnter(message);
+
+    expect(inlineActionLabels(message)).toEqual(["Summarize", "Copy message"]);
+  });
+
   it("uses the nearest thread window as the tooltip collision boundary", () => {
     const threadWindow = document.createElement("div");
     threadWindow.setAttribute("data-thread-window", "");
@@ -125,6 +219,7 @@ describe("MessageActionBar", () => {
         timestamp={TIMESTAMP}
         messageText="An answer."
         alignment="start"
+        recencyScope="assistant"
         mobileActionDisplay="inline"
         onEdit={vi.fn()}
         onCopyLink={onCopyLink}
@@ -133,6 +228,7 @@ describe("MessageActionBar", () => {
         pluginActions={[
           {
             key: "demo/summarize/1",
+            usageKey: "demo/summarize",
             pluginId: "demo",
             icon: "Zap",
             label: "Summarize",
@@ -176,6 +272,7 @@ describe("MessageActionBar", () => {
         timestamp={TIMESTAMP}
         messageText="An answer."
         alignment="end"
+        recencyScope="user"
         mobileActionDisplay="inline"
         onEdit={vi.fn()}
         onCopyLink={vi.fn()}
@@ -184,6 +281,7 @@ describe("MessageActionBar", () => {
         pluginActions={[
           {
             key: "demo/summarize/1",
+            usageKey: "demo/summarize",
             pluginId: null,
             icon: "Zap",
             label: "Summarize",
@@ -191,6 +289,7 @@ describe("MessageActionBar", () => {
           },
           {
             key: "demo/translate/1",
+            usageKey: "demo/translate",
             pluginId: null,
             icon: "Languages",
             label: "Translate",
@@ -225,6 +324,7 @@ describe("MessageActionBar", () => {
         timestamp={TIMESTAMP}
         messageText="An answer."
         alignment="end"
+        recencyScope="user"
         mobileActionDisplay="inline"
         onEdit={vi.fn()}
         onAddToChat={vi.fn()}
@@ -252,6 +352,7 @@ describe("MessageActionBar", () => {
         timestamp={TIMESTAMP}
         messageText="An answer."
         alignment="start"
+        recencyScope="assistant"
         mobileActionDisplay="inline"
       />,
     );
@@ -275,6 +376,7 @@ describe("MessageActionBar", () => {
           timestamp={TIMESTAMP}
           messageText="An answer."
           alignment="start"
+          recencyScope="assistant"
           mobileActionDisplay="inline"
           onEdit={vi.fn()}
           onAddToChat={vi.fn()}
@@ -282,6 +384,7 @@ describe("MessageActionBar", () => {
           pluginActions={[
             {
               key: "demo/summarize/1",
+              usageKey: "demo/summarize",
               pluginId: null,
               icon: "Zap",
               label: "Summarize",
@@ -346,6 +449,7 @@ describe("MessageActionBar", () => {
         timestamp={TIMESTAMP}
         messageText="An earlier answer."
         alignment="start"
+        recencyScope="assistant"
         mobileActionDisplay="overflow"
         onEdit={vi.fn()}
         onCopyLink={onCopyLink}
@@ -388,6 +492,7 @@ describe("MessageActionBar", () => {
         timestamp={TIMESTAMP}
         messageText="Quote this message."
         alignment="end"
+        recencyScope="user"
         mobileActionDisplay="inline"
         addToChatAttachments={[attachment]}
         onAddToChat={onAddToChat}
@@ -415,6 +520,7 @@ describe("MessageActionBar", () => {
         timestamp={TIMESTAMP}
         messageText=""
         alignment="end"
+        recencyScope="user"
         mobileActionDisplay="inline"
         addToChatAttachments={[attachment]}
         onAddToChat={onAddToChat}
@@ -434,6 +540,7 @@ describe("MessageActionBar", () => {
         messageText=""
         copyImageUrl="/attachments/screenshot.png"
         alignment="end"
+        recencyScope="user"
         mobileActionDisplay="inline"
       />,
     );
@@ -447,6 +554,7 @@ describe("MessageActionBar", () => {
         timestamp={TIMESTAMP}
         messageText="An answer."
         alignment="end"
+        recencyScope="user"
         mobileActionDisplay="inline"
       />,
     );
