@@ -491,15 +491,17 @@ describe("useSystemExecutionOptions", () => {
   });
 
   it.each([
-    ["failed", true, true],
-    ["failed", false, false],
-    ["timeout", true, true],
-    ["auth_required", false, true],
-    ["missing_executable", false, true],
-    ["provider_unavailable", false, true],
+    ["failed", true, true, "codex", "codex"],
+    ["failed", false, false, "codex", "codex"],
+    ["timeout", true, true, "codex", "codex"],
+    ["auth_required", false, true, "codex", "codex"],
+    ["missing_executable", false, true, "codex", "codex"],
+    ["provider_unavailable", false, true, "codex", "codex"],
+    ["failed", true, true, undefined, "codex"],
+    ["failed", false, true, undefined, "claude-code"],
   ] as const)(
     "handles reconnect refresh: %s (retain catalog: %s)",
-    async (code, retainCatalog, hasCatalog) => {
+    async (code, retainCatalog, hasCatalog, providerId, refreshProviderId) => {
       const { queryClient, wrapper } = createQueryClientTestHarness();
       const initialCatalog = {
         ...CODEX_CATALOG,
@@ -508,14 +510,15 @@ describe("useSystemExecutionOptions", () => {
       vi.mocked(sdk.system.executionOptions).mockResolvedValue(initialCatalog);
       const { result } = renderHook(
         () =>
-          useSystemExecutionOptions({ hostId: "host-a", providerId: "codex" }),
+          useSystemExecutionOptions({ hostId: "host-a", providerId }),
         { wrapper },
       );
       await waitFor(() => expect(result.current.data).toEqual(initialCatalog));
       const loadedAt = result.current.dataUpdatedAt;
-      const modelLoadError = { providerId: "codex", code, detail: null };
+      const modelLoadError = { providerId: refreshProviderId, code, detail: null };
       vi.mocked(sdk.system.executionOptions).mockResolvedValue({
         ...CODEX_CATALOG,
+        providers: [makeProviderInfo({ id: refreshProviderId })],
         models: [],
         modelLoadError,
       });
@@ -524,7 +527,7 @@ describe("useSystemExecutionOptions", () => {
           queryKey: systemExecutionOptionsQueryKey({
             environmentId: null,
             hostId: "host-a",
-            providerId: "codex",
+            providerId: providerId ?? null,
           }),
         }),
       );

@@ -292,6 +292,7 @@ function systemExecutionOptionsQueryOptions({
         providerId: providerId ?? undefined,
         signal,
       });
+      const modelsProviderId = providerId ?? response.providers[0]?.id ?? null;
       if (writeLastKnown) {
         writeCachedProviderList(
           providerListCacheKey({ environmentId, hostId }),
@@ -306,18 +307,32 @@ function systemExecutionOptionsQueryOptions({
             modelCatalogCacheKey({ environmentId, hostId, providerId }),
             catalog,
           );
+          if (providerId === null && modelsProviderId !== null) {
+            writeCachedModelCatalog(
+              modelCatalogCacheKey({
+                environmentId,
+                hostId,
+                providerId: modelsProviderId,
+              }),
+              catalog,
+            );
+          }
         }
       }
       if (
         writeLastKnown &&
-        response.modelLoadError?.providerId === providerId &&
+        response.modelLoadError?.providerId === modelsProviderId &&
         response.models.length === 0 &&
         response.selectedOnlyModels.length === 0 &&
         (response.modelLoadError?.code === "failed" ||
           response.modelLoadError?.code === "timeout")
       ) {
         const cached = readCachedModelCatalog(
-          modelCatalogCacheKey({ environmentId, hostId, providerId }),
+          modelCatalogCacheKey({
+            environmentId,
+            hostId,
+            providerId: modelsProviderId,
+          }),
         );
         if (
           cached !== null &&
