@@ -11,8 +11,12 @@ describe("site navigation", () => {
       (match) => match[0],
     );
     expect(links).toHaveLength(7);
-    expect(html).toMatch(/<details class="nav-menu"><summary class="nav-current">Plugins/);
-    expect(html).toContain('href="/marketplace" aria-current="page">Marketplace');
+    expect(html).toMatch(
+      /<details class="nav-menu"><summary class="nav-current">Plugins/,
+    );
+    expect(html).toContain(
+      'href="/marketplace" aria-current="page">Marketplace',
+    );
     expect(html).toContain('href="/plugin-guide">Plugin Guide');
     expect(html).toContain('href="/blog">Blog');
     expect(html).toContain('href="/changelog">Changelog');
@@ -29,7 +33,9 @@ describe("site navigation", () => {
   it("marks the Plugin Guide current inside the Plugins menu", () => {
     const html = renderToStaticMarkup(<SiteNav current="plugin-guide" />);
     expect(html).toContain('<summary class="nav-current">Plugins');
-    expect(html).toContain('href="/plugin-guide" aria-current="page">Plugin Guide');
+    expect(html).toContain(
+      'href="/plugin-guide" aria-current="page">Plugin Guide',
+    );
     expect(html).not.toContain('aria-current="page">Marketplace');
   });
 
@@ -40,5 +46,18 @@ describe("site navigation", () => {
     const footer = renderToStaticMarkup(<SiteFooter />);
     expect(footer).toContain('href="/changelog">Changelog');
     expect(footer).toContain('href="/plugin-guide">Plugin Guide');
+  });
+
+  it("groups footer links and marks the current page", () => {
+    const footer = renderToStaticMarkup(
+      <SiteFooter current="/compare/superset-alternative" />,
+    );
+    for (const title of ["Product", "Guides", "Compare", "Community"]) {
+      expect(footer).toContain(`<h2 class="footer-title">${title}</h2>`);
+    }
+    expect(footer).toContain(
+      'href="/compare/superset-alternative" aria-current="page">bb vs Superset',
+    );
+    expect(footer).not.toContain('href="/plugin-guide" aria-current="page"');
   });
 });
