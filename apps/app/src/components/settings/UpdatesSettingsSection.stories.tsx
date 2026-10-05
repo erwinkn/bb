@@ -17,19 +17,31 @@ import { StoryCard, StoryRow } from "../../../.ladle/story-card";
 import {
   BbAppUpdateRows,
   BbDaemonUpdateRow,
-  ChangelogPreviewCard,
   MachineUpdatesFleetSection,
   MachineUpdatesRows,
   MachineUpdatesSection,
   ProviderCliCheckRow,
   UpdateActionButton,
 } from "./UpdatesSettingsSection";
+import { WhatsNewView } from "./WhatsNewSection";
+import { CHANGELOG_ENTRIES, selectWhatsNewReleases } from "./changelog-preview";
 
 export default {
   title: "settings/Updates",
 };
 
 const noop = () => {};
+const LATEST_RELEASES = (() => {
+  const releases = selectWhatsNewReleases({
+    entries: CHANGELOG_ENTRIES,
+    installedVersion: null,
+    previousVersion: null,
+  });
+  if (releases === null) {
+    throw new Error("The changelog has no releases");
+  }
+  return releases;
+})();
 const NO_JOBS: ReadonlySet<string> = new Set();
 const STORY_NOW = 1_800_000_000_000;
 
@@ -1196,11 +1208,11 @@ export function SectionVariations() {
         </div>
       </StoryRow>
       <StoryRow
-        label="Changelog preview"
-        hint="The optional release preview appears above the machine update sections."
+        label="What's new"
+        hint="The installed release's notes appear above the machine update sections."
       >
         <div className="w-full space-y-6">
-          <ChangelogPreviewCard />
+          <WhatsNewView releases={LATEST_RELEASES} available={null} />
           <MachineUpdatesFleetSection action={updateAll(2)}>
             <StoryMachineSection machine={workstation} app />
           </MachineUpdatesFleetSection>

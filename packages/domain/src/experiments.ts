@@ -1,7 +1,6 @@
 import { z } from "zod";
 
 export const experimentKeys = [
-  "changelogPreview",
   "serverMove",
   "performanceDiagnostics",
   "navigationRail",
@@ -19,7 +18,6 @@ export const experimentUpdatesSchema = z.partialRecord(
 export type ExperimentUpdates = z.infer<typeof experimentUpdatesSchema>;
 
 export const defaultExperiments: Experiments = {
-  changelogPreview: false,
   serverMove: false,
   performanceDiagnostics: false,
   navigationRail: false,

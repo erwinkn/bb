@@ -1,7 +1,6 @@
 // @vitest-environment jsdom
 
 import {
-  act,
   cleanup,
   fireEvent,
   render,
@@ -91,6 +90,22 @@ vi.mock("@/hooks/useUpdateInventory", () => ({
 
 vi.mock("@/hooks/useDesktopUpdateInfo", () => ({
   useDesktopUpdateInfo: vi.fn(),
+}));
+
+vi.mock("@/components/settings/WhatsNewSection", () => ({
+  WhatsNewSection: ({
+    installedVersion,
+    availableVersion,
+  }: {
+    installedVersion: string | null;
+    availableVersion: string | null;
+  }) => (
+    <div
+      data-testid="whats-new"
+      data-installed-version={installedVersion ?? ""}
+      data-available-version={availableVersion ?? ""}
+    />
+  ),
 }));
 
 const hostDaemon = vi.hoisted(() => ({
@@ -281,9 +296,7 @@ function makeInventory(overrides: Partial<UpdateInventory>): UpdateInventory {
   };
 }
 
-function renderSection({
-  showChangelogPreview = false,
-}: { showChangelogPreview?: boolean } = {}): void {
+function renderSection(): void {
   render(
     <MemoryRouter>
       <TooltipProvider>
@@ -292,7 +305,7 @@ function renderSection({
             new QueryClient({ defaultOptions: { queries: { retry: false } } })
           }
         >
-          <UpdatesSettingsSection showChangelogPreview={showChangelogPreview} />
+          <UpdatesSettingsSection />
         </QueryClientProvider>
       </TooltipProvider>
     </MemoryRouter>,
@@ -460,7 +473,32 @@ describe("UpdatesSettingsSection", () => {
     ).toBeDefined();
   });
 
-  it("keeps the changelog preview behind its experiment", () => {
+  it("shows What's new first for the installed and available releases", () => {
+    useDesktopUpdateInfoMock.mockReturnValue({
+      desktopApi: null,
+      desktopInfo: null,
+      isDesktop: false,
+    });
+    const inventory = makeInventory({});
+    useUpdateInventoryMock.mockReturnValue({
+      ...inventory,
+      systemVersion: {
+        ...inventory.systemVersion!,
+        currentVersion: "0.0.5",
+        latestVersion: "0.0.6",
+        updateAvailable: true,
+      },
+    });
+
+    renderSection();
+
+    const whatsNew = screen.getByTestId("whats-new");
+    expect(whatsNew.getAttribute("data-installed-version")).toBe("0.0.5");
+    expect(whatsNew.getAttribute("data-available-version")).toBe("0.0.6");
+    expect(whatsNew.parentElement?.firstElementChild).toBe(whatsNew);
+  });
+
+  it("omits the available release when bb is up to date", () => {
     useDesktopUpdateInfoMock.mockReturnValue({
       desktopApi: null,
       desktopInfo: null,
@@ -470,34 +508,12 @@ describe("UpdatesSettingsSection", () => {
 
     renderSection();
 
-    expect(
-      document.querySelector('[data-updates-domain="changelog"]'),
-    ).toBeNull();
-    expect(fetch).not.toHaveBeenCalled();
+    const whatsNew = screen.getByTestId("whats-new");
+    expect(whatsNew.getAttribute("data-installed-version")).toBe("0.0.5");
+    expect(whatsNew.getAttribute("data-available-version")).toBe("");
   });
 
   it("keeps a recently checked healthy fleet quiet and accessible", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn().mockImplementation(() =>
-        Promise.resolve(
-          new Response(`# Changelog
-
-## 9.9.9
-
-The canonical release summary.
-
-### New features
-
-- One current feature.
-
-### Fixes
-
-- One current fix.
-`),
-        ),
-      ),
-    );
     useDesktopUpdateInfoMock.mockReturnValue({
       desktopApi: null,
       desktopInfo: null,
@@ -518,7 +534,7 @@ The canonical release summary.
       }),
     );
 
-    renderSection({ showChangelogPreview: true });
+    renderSection();
 
     await waitFor(() => {
       expect(
@@ -540,152 +556,6 @@ The canonical release summary.
     expect(screen.queryByText("workstation, studio-mac")).toBeNull();
     expect(screen.queryByRole("button", { name: /check/i })).toBeNull();
     expect(screen.queryByRole("heading", { name: "Updates" })).toBeNull();
-    expect(
-      screen.getByRole("button", { name: /^Open the full bb .* changelog$/ }),
-    ).toBeDefined();
-    const changelog = document.querySelector(
-      '[data-updates-domain="changelog"]',
-    );
-    await waitFor(() => {
-      expect(changelog?.textContent).toContain("9.9.9");
-    });
-    expect(
-      within(changelog as HTMLElement).getByRole("heading", {
-        level: 2,
-        name: "What's new",
-      }),
-    ).toBeDefined();
-    expect(
-      within(changelog as HTMLElement).getByRole("heading", {
-        level: 3,
-        name: "9.9.9",
-      }),
-    ).toBeDefined();
-    expect(changelog?.textContent).toContain("The canonical release summary.");
-    expect(
-      changelog?.querySelector('[data-changelog-version="9.9.9"]'),
-    ).toBeNull();
-    const changelogLabel = changelog?.querySelector("[data-changelog-label]");
-    expect(changelogLabel?.className).toContain("rounded-sm");
-    expect(changelogLabel?.className).not.toContain("rounded-full");
-    expect(changelogLabel?.className).toContain("bg-muted/40");
-    const changelogPreview = changelog?.querySelector(
-      "[data-changelog-preview]",
-    );
-    expect(changelogPreview?.className).toContain("p-4");
-    expect(changelogPreview?.className).not.toContain("grid");
-    expect(
-      changelog?.querySelector("[data-changelog-release-scroll]")?.className,
-    ).toContain("max-h-56");
-    expect(
-      changelog?.querySelector("[data-changelog-footer]")?.className,
-    ).toContain("border-t");
-    expect(
-      changelog?.querySelector("[data-changelog-footer]")?.className,
-    ).toContain("bg-foreground");
-    expect(
-      changelog?.querySelector("[data-changelog-footer]")?.className,
-    ).toContain("text-background");
-    expect(changelog?.textContent).toContain("Full changelog");
-    expect(
-      screen.getByRole("button", {
-        name: "Open the full bb 9.9.9 changelog",
-      }).className,
-    ).toContain("font-semibold");
-    for (const highlight of ["New features", "Fixes"]) {
-      expect(
-        within(changelog as HTMLElement).getByRole("heading", {
-          level: 4,
-          name: highlight,
-        }),
-      ).toBeDefined();
-    }
-    expect(changelog?.textContent).toContain("One current feature.");
-    expect(changelog?.textContent).toContain("One current fix.");
-    const dismissChangelog = screen.getByRole("button", {
-      name: "Dismiss bb 9.9.9 changelog preview",
-    });
-    const changelogHeader = changelog?.querySelector("[data-changelog-header]");
-    const changelogCard = changelogHeader?.closest("section");
-    expect(changelogPreview?.firstElementChild).toBe(changelogHeader);
-    expect(changelogHeader?.className).not.toContain("border-b");
-    expect(changelogHeader?.contains(dismissChangelog)).toBe(true);
-    expect(changelogCard?.contains(changelogPreview ?? null)).toBe(true);
-    expect(dismissChangelog.querySelector('[data-icon="X"]')).not.toBeNull();
-    fireEvent.click(
-      screen.getByRole("button", {
-        name: "Open the full bb 9.9.9 changelog",
-      }),
-    );
-    expect(openUrlInExternalBrowserMock).toHaveBeenCalledWith(
-      "https://getbb.app/changelog#9-9-9",
-    );
-    vi.useFakeTimers();
-    fireEvent.click(dismissChangelog);
-    expect(screen.getByRole("status").textContent).toContain(
-      "You're all caught up",
-    );
-    expect(
-      screen.queryByRole("button", {
-        name: "Open the full bb 9.9.9 changelog",
-      }),
-    ).toBeNull();
-    expect(changelog?.getAttribute("data-changelog-dismiss-phase")).toBe(
-      "confirming",
-    );
-    expect(
-      changelog?.querySelector("[data-changelog-release-panel]")?.className,
-    ).toContain("grid-rows-[0fr]");
-    const confirmation = changelog?.querySelector(
-      "[data-changelog-dismiss-confirmation]",
-    );
-    expect(confirmation?.className).toContain("grid-rows-[1fr]");
-    expect(confirmation?.className).not.toContain("absolute");
-    expect(changelog?.className).toContain("motion-reduce:transition-none");
-    expect(
-      window.localStorage.getItem(
-        "bb.settings.updates.dismissed-changelog-version",
-      ),
-    ).toBe("9.9.9");
-
-    act(() => vi.advanceTimersByTime(1_999));
-    expect(changelog?.getAttribute("data-changelog-dismiss-phase")).toBe(
-      "confirming",
-    );
-    act(() => vi.advanceTimersByTime(1));
-    expect(changelog?.getAttribute("data-changelog-dismiss-phase")).toBe(
-      "exiting",
-    );
-    expect(changelog?.className).toContain("grid-rows-[0fr]");
-    act(() => vi.advanceTimersByTime(180));
-    expect(
-      document.querySelector('[data-updates-domain="changelog"]'),
-    ).toBeNull();
-    vi.useRealTimers();
-
-    cleanup();
-    renderSection({ showChangelogPreview: true });
-    await waitFor(() => {
-      expect(fetch).toHaveBeenCalledTimes(2);
-    });
-    expect(
-      document.querySelector('[data-updates-domain="changelog"]'),
-    ).toBeNull();
-
-    cleanup();
-    window.localStorage.setItem(
-      "bb.settings.updates.dismissed-changelog-version",
-      "9.9.8",
-    );
-    renderSection({ showChangelogPreview: true });
-    await waitFor(() => {
-      expect(
-        screen.getByRole("button", {
-          name: "Dismiss bb 9.9.9 changelog preview",
-        }),
-      ).toBeDefined();
-    });
-
     const settledRows = screen.getAllByText(/^Up to date/);
     expect(
       settledRows.every(
@@ -726,7 +596,7 @@ The canonical release summary.
       makeInventory({ lastCheckedAt: Date.now(), machines: [machine] }),
     );
 
-    renderSection({});
+    renderSection();
 
     await waitFor(() => {
       expect(screen.getAllByText("Latest unknown").length).toBeGreaterThan(0);

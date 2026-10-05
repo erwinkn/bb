@@ -195,8 +195,9 @@ default (Claude Code is `flat`, the other first-party providers `collapse`).
 that provider, and `default` removes the override. Settings → Providers has
 the same per-provider switch.
 
-The default-off `changelogPreview` experiment shows the latest release notes
-as a compact, dismissible card on Settings → Updates.
+Settings → Updates always shows a What's new section with the installed
+release's notes, releases skipped since the page was last opened on this
+client, and the notes for an available update.
 The default-off `navigationRail` experiment keeps a vertical rail of
 destinations on the left edge of the sidebar on every screen. Home returns to
 the last thread, Settings sits at the bottom, and New thread moves into the

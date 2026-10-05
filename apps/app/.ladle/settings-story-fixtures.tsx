@@ -33,6 +33,11 @@ import {
 } from "./machine-story-fixtures";
 import { makeProviderInfo } from "@bb/test-helpers/domain-fixtures";
 import { getSettingsRoutePath } from "../src/lib/route-paths";
+import { WhatsNewView } from "../src/components/settings/WhatsNewSection";
+import {
+  CHANGELOG_ENTRIES,
+  selectWhatsNewReleases,
+} from "../src/components/settings/changelog-preview";
 import {
   BbAppUpdateRows,
   MachineUpdatesFleetSection,
@@ -252,42 +257,52 @@ const noop = () => {};
 
 export function SettingsUpdatesStory() {
   const navigate = useNavigate();
+  const releases = selectWhatsNewReleases({
+    entries: CHANGELOG_ENTRIES,
+    installedVersion: null,
+    previousVersion: null,
+  });
   return (
-    <MachineUpdatesFleetSection
-      action={
-        <div role="toolbar" aria-label="Bulk update actions">
-          <UpdateActionButton
-            label="Update all 1 CLI tool"
-            tooltipLabel="Update all"
-            icon={UPDATE_ACTION_ICON}
-            visibleLabel="Update all"
-            variant="default"
-            onClick={noop}
-          />
-        </div>
-      }
-    >
-      <MachineUpdatesSection
-        machine={settingsUpdateMachine}
-        isThisMachine={false}
-        showServerBadge={false}
+    <div className="space-y-6">
+      {releases === null ? null : (
+        <WhatsNewView releases={releases} available={null} />
+      )}
+      <MachineUpdatesFleetSection
+        action={
+          <div role="toolbar" aria-label="Bulk update actions">
+            <UpdateActionButton
+              label="Update all 1 CLI tool"
+              tooltipLabel="Update all"
+              icon={UPDATE_ACTION_ICON}
+              visibleLabel="Update all"
+              variant="default"
+              onClick={noop}
+            />
+          </div>
+        }
       >
-        <BbAppUpdateRows
-          systemVersion={systemVersion}
-          desktopInfo={null}
-          isDesktop={false}
-          onRelaunchDesktop={null}
-          onRetryDesktop={null}
-        />
-        <MachineUpdatesRows
+        <MachineUpdatesSection
           machine={settingsUpdateMachine}
-          runningJobKey={null}
-          queuedJobKeys={noJobs}
-          onStartInstall={noop}
-          onOpenProvider={() => navigate(getSettingsRoutePath("providers"))}
-        />
-      </MachineUpdatesSection>
-    </MachineUpdatesFleetSection>
+          isThisMachine={false}
+          showServerBadge={false}
+        >
+          <BbAppUpdateRows
+            systemVersion={systemVersion}
+            desktopInfo={null}
+            isDesktop={false}
+            onRelaunchDesktop={null}
+            onRetryDesktop={null}
+          />
+          <MachineUpdatesRows
+            machine={settingsUpdateMachine}
+            runningJobKey={null}
+            queuedJobKeys={noJobs}
+            onStartInstall={noop}
+            onOpenProvider={() => navigate(getSettingsRoutePath("providers"))}
+          />
+        </MachineUpdatesSection>
+      </MachineUpdatesFleetSection>
+    </div>
   );
 }
 

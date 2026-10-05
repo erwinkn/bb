@@ -200,11 +200,10 @@ so they carry over between navigation plugins.
 - Downloads are available in Settings → Mobile without opting in.
 - Pair your phone under Settings → Mobile → **Add mobile device**.
 
-## Changelog preview
+## What's new
 
-- The `changelogPreview` experiment defaults to false.
-- Enable it with `bb settings experiment changelogPreview true` to show the
-  latest release notes on Settings → Updates.
+- Settings → Updates shows the installed release's notes, any releases
+  skipped since you last opened the page, and an available update's notes.
 
 ## Navigation rail
 

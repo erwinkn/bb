@@ -1052,11 +1052,6 @@ const EXPERIMENT_DEFINITIONS: Record<
   ExperimentKey,
   { label: string; description: string }
 > = {
-  changelogPreview: {
-    label: "Changelog preview",
-    description:
-      "Show the latest release notes as a compact preview on the Updates page.",
-  },
   navigationRail: {
     label: "Navigation rail",
     description:
@@ -1258,11 +1253,7 @@ export function SettingsView() {
   } else if (activeSection === "environment-variables") {
     content = <MachineEnvironmentSettings />;
   } else if (activeSection === "updates") {
-    content = (
-      <UpdatesSettingsSection
-        showChangelogPreview={experiments.changelogPreview}
-      />
-    );
+    content = <UpdatesSettingsSection />;
   } else if (activeSection === "mobile") {
     content = <MobileAppSection />;
   } else if (activeSection === "experiments") {
