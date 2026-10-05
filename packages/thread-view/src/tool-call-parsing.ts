@@ -1,4 +1,4 @@
-import { rawThreadIdSchema } from "@bb/domain";
+import { isRawThreadId } from "@bb/domain";
 import type { EventProjectionToolParsedIntent } from "./event-projection-types.js";
 
 const SHELL_WRAPPER_NAMES = new Set(["sh", "bash", "zsh"]);
@@ -706,7 +706,7 @@ function parseThreadTellSegment(
   if (
     extra.length > 0 ||
     threadId === undefined ||
-    !rawThreadIdSchema.safeParse(threadId).success ||
+    !isRawThreadId(threadId) ||
     message === null ||
     message.trim().length === 0
   ) {

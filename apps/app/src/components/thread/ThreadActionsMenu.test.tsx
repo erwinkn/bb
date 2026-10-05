@@ -131,18 +131,36 @@ describe("ThreadActionsMenu", () => {
     },
   );
 
-  it("opens the rename dialog from the menu", async () => {
-    renderWide(<ThreadActionsMenu thread={thread} />);
+  it.each([
+    ["Rename", "requestRename"],
+    ["Mark read", "toggleRead"],
+    ["Pin", "togglePin"],
+    ["Archive", "requestArchive"],
+    ["Unarchive", "unarchiveThread"],
+    ["Delete", "requestDelete"],
+  ] as const)("dispatches %s to the selected thread", async (label, action) => {
+    const selectedThread = makeThreadListEntry({
+      ...thread,
+      archivedAt: label === "Unarchive" ? 1 : null,
+      lastReadAt: null,
+      latestAttentionAt: 1,
+    });
+    renderWide(<ThreadActionsMenu thread={selectedThread} />);
     fireEvent.pointerDown(
       screen.getByRole("button", { name: "Thread actions" }),
       { button: 0 },
     );
 
-    fireEvent.click(screen.getByRole("menuitem", { name: "Rename" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: label }));
 
     await waitFor(() => {
-      expect(threadActions.requestRename).toHaveBeenCalledWith(thread);
+      expect(threadActions[action]).toHaveBeenCalledExactlyOnceWith(
+        selectedThread,
+      );
     });
+    for (const [name, callback] of Object.entries(threadActions)) {
+      if (name !== action) expect(callback).not.toHaveBeenCalled();
+    }
   });
 
   it("copies the canonical thread URL from every menu instance", () => {

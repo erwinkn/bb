@@ -184,22 +184,72 @@ function ThreadActionsMenuItems({
     );
   }
 
+  const primaryActions: ThreadActionsMenuResponsiveAction[] = [
+    {
+      icon: "Copy",
+      label: "Copy thread link",
+      onSelect: () => {
+        void copyToClipboardWithToast(threadUrl, {
+          successMessage: "Thread link copied",
+          errorMessage: "Failed to copy thread link",
+        });
+      },
+    },
+    {
+      icon: isRead ? "Mail" : "MailOpen",
+      label: isRead ? "Mark unread" : "Mark read",
+      onSelect: () => toggleRead(thread),
+    },
+    {
+      icon: isPinned ? "PinOff" : "Pin",
+      label: isPinned ? "Unpin" : "Pin",
+      onSelect: () => togglePin(thread),
+    },
+  ];
+  const managementActions: (ThreadActionsMenuResponsiveAction & {
+    variant?: "destructive";
+  })[] = [
+    {
+      icon: isArchived ? "ArchiveRestore" : "Archive",
+      label: isArchived ? "Unarchive" : "Archive",
+      onSelect: () => {
+        if (isArchived) unarchiveThread(thread);
+        else window.setTimeout(() => requestArchive(thread), 0);
+      },
+    },
+    {
+      icon: "Trash2",
+      label: "Delete",
+      variant: "destructive",
+      onSelect: () => {
+        window.setTimeout(() => requestDelete(thread), 0);
+      },
+    },
+  ];
+  const renderAction = ({
+    icon,
+    label,
+    onSelect,
+    variant,
+  }: ThreadActionsMenuResponsiveAction & { variant?: "destructive" }) => (
+    <ActionMenuItem
+      key={label}
+      surface="dropdown"
+      icon={icon}
+      variant={variant}
+      onSelect={() => {
+        void onSelect();
+      }}
+    >
+      {label}
+    </ActionMenuItem>
+  );
+
   return (
     <>
       {responsiveActions.length > 0 ? (
         <>
-          {responsiveActions.map((action) => (
-            <ActionMenuItem
-              key={action.label}
-              surface="dropdown"
-              icon={action.icon}
-              onSelect={() => {
-                void action.onSelect();
-              }}
-            >
-              {action.label}
-            </ActionMenuItem>
-          ))}
+          {responsiveActions.map(renderAction)}
           {showSeparators ? <ActionMenuSeparator surface="dropdown" /> : null}
         </>
       ) : null}
@@ -226,80 +276,21 @@ function ThreadActionsMenuItems({
           New thread in environment
         </ActionMenuItem>
       ) : null}
-      <ActionMenuItem
-        surface="dropdown"
-        icon="Copy"
-        onSelect={() => {
-          void copyToClipboardWithToast(threadUrl, {
-            successMessage: "Thread link copied",
-            errorMessage: "Failed to copy thread link",
-          });
-        }}
-      >
-        Copy thread link
-      </ActionMenuItem>
-      <ActionMenuItem
-        surface="dropdown"
-        icon={isRead ? "Mail" : "MailOpen"}
-        onSelect={() => {
-          toggleRead(thread);
-        }}
-      >
-        {isRead ? "Mark unread" : "Mark read"}
-      </ActionMenuItem>
-      <ActionMenuItem
-        surface="dropdown"
-        icon={isPinned ? "PinOff" : "Pin"}
-        onSelect={() => {
-          togglePin(thread);
-        }}
-      >
-        {isPinned ? "Unpin" : "Pin"}
-      </ActionMenuItem>
+      {primaryActions.map(renderAction)}
       <ThreadSectionMoveMenu
         isDrawer={isDrawer}
         onOpenDrawerStep={() => onCompactStepChange?.("move")}
         thread={thread}
       />
-      <ActionMenuItem
-        surface="dropdown"
-        icon="Edit"
-        onSelect={() => {
-          window.setTimeout(() => {
-            requestRename(thread);
-          }, 0);
-        }}
-      >
-        Rename
-      </ActionMenuItem>
+      {renderAction({
+        icon: "Edit",
+        label: "Rename",
+        onSelect: () => {
+          window.setTimeout(() => requestRename(thread), 0);
+        },
+      })}
       {showSeparators ? <ActionMenuSeparator surface="dropdown" /> : null}
-      <ActionMenuItem
-        surface="dropdown"
-        icon={isArchived ? "ArchiveRestore" : "Archive"}
-        onSelect={() => {
-          if (isArchived) {
-            unarchiveThread(thread);
-            return;
-          }
-          window.setTimeout(() => {
-            requestArchive(thread);
-          }, 0);
-        }}
-      >
-        {isArchived ? "Unarchive" : "Archive"}
-      </ActionMenuItem>
-      <ActionMenuItem
-        surface="dropdown"
-        icon="Trash2"
-        variant="destructive"
-        onSelect={() => {
-          window.setTimeout(() => {
-            requestDelete(thread);
-          }, 0);
-        }}
-      >
-        Delete
-      </ActionMenuItem>
+      {managementActions.map(renderAction)}
     </>
   );
 }
