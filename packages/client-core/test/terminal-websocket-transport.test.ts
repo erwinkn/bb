@@ -169,8 +169,51 @@ describe("TerminalWebSocketTransport", () => {
     ).toEqual([0, 2]);
     expect(gaps).toHaveBeenCalledWith(1, 2);
     expect(harness.urls).toEqual([
-      "ws://example.test/ws/terminals/term-1?sinceSeq=0",
-      "ws://example.test/ws/terminals/term-1?sinceSeq=1",
+      "ws://example.test/ws/terminals/term-1?sinceSeq=0&outputAcks=1",
+      "ws://example.test/ws/terminals/term-1?sinceSeq=1&outputAcks=1",
+    ]);
+    harness.transport.dispose();
+  });
+
+  it("sends one acknowledgement for the furthest output parsed in a task", async () => {
+    const harness = createHarness();
+    harness.transport.start();
+    harness.sockets[0]?.open();
+
+    harness.transport.acknowledgeOutput(1);
+    harness.transport.acknowledgeOutput(3);
+    harness.transport.acknowledgeOutput(2);
+    await Promise.resolve();
+
+    expect(
+      harness.sockets[0]?.sent.map((payload) => JSON.parse(payload)),
+    ).toEqual([{ type: "ack", nextSeq: 3 }]);
+    harness.transport.dispose();
+  });
+
+  it("reports a hidden document again after reconnecting", () => {
+    vi.useFakeTimers();
+    const harness = createHarness();
+    harness.transport.setVisible(false);
+    harness.transport.start();
+    harness.sockets[0]?.open();
+    harness.sockets[0]?.close();
+    vi.advanceTimersByTime(100);
+    harness.sockets[1]?.open();
+    harness.transport.setVisible(true);
+
+    expect(
+      harness.sockets.map((socket) =>
+        socket.sent
+          .map((payload) => JSON.parse(payload))
+          .filter((message) => message.type === "visibility"),
+      ),
+    ).toEqual([
+      [{ type: "visibility", visible: false }],
+      [
+        { type: "visibility", visible: false },
+        { type: "visibility", visible: true },
+      ],
     ]);
     harness.transport.dispose();
   });
