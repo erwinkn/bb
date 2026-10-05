@@ -1,3 +1,4 @@
+import { submitPromptDraft } from "@/hooks/usePromptDraftStorage";
 import { appendQuoteAndAttachmentsToDraft } from "@bb/client-core";
 import { createCoreComposerActions } from "@/lib/plugin-composer-handle";
 import {
@@ -467,24 +468,26 @@ function EmbeddedThreadChatWithComposer({
       if (input.length === 0) {
         throw new Error("Type a message before submitting it.");
       }
-      const clearedSubmittedDraft =
-        promptDraft.clearIfCurrentMatches(submittedDraft);
       setBottomAttachmentError(null);
       setIsTurnSubmitting(true);
       try {
-        const result = await sendThreadMessage.mutateAsync({
-          id: threadId,
-          input,
-          mode: "queue-if-active",
-          ...executionRequestFields,
-          ...(options.sendAt === undefined ? {} : { sendAt: options.sendAt }),
-          ...(pluginSubmission === undefined ? {} : { pluginSubmission }),
-        });
+        const result = await submitPromptDraft(
+          promptDraft,
+          submittedDraft,
+          () =>
+            sendThreadMessage.mutateAsync({
+              id: threadId,
+              input,
+              mode: "queue-if-active",
+              ...executionRequestFields,
+              ...(options.sendAt === undefined
+                ? {}
+                : { sendAt: options.sendAt }),
+              ...(pluginSubmission === undefined ? {} : { pluginSubmission }),
+            }),
+        );
         reportQueuedSendDelivery(result.delivery);
       } catch (error) {
-        if (clearedSubmittedDraft) {
-          promptDraft.restoreIfEmpty(submittedDraft);
-        }
         throw new Error(
           getMutationErrorMessage({
             error,
@@ -513,15 +516,15 @@ function EmbeddedThreadChatWithComposer({
     if (submittedInput.length === 0 || isTurnSubmitting) {
       return;
     }
-    promptDraft.clearIfCurrentMatches(submittedDraft);
     setBottomAttachmentError(null);
     setIsTurnSubmitting(true);
-    void defaultSendOrQueueInput(submittedInput)
+    void submitPromptDraft(promptDraft, submittedDraft, () =>
+      defaultSendOrQueueInput(submittedInput),
+    )
       .catch((error) => {
         if (!isMountedRef.current) {
           return;
         }
-        promptDraft.restoreIfEmpty(submittedDraft);
         showMutationErrorToast({
           error,
           fallbackMessage: "Failed to send message",
@@ -585,16 +588,16 @@ function EmbeddedThreadChatWithComposer({
       return;
     }
 
-    promptDraft.clearIfCurrentMatches(submittedDraft);
     setBottomAttachmentError(null);
     setIsTurnSubmitting(true);
-    void sendThreadMessage
-      .mutateAsync({
+    void submitPromptDraft(promptDraft, submittedDraft, () =>
+      sendThreadMessage.mutateAsync({
         id: threadId,
         input: submittedInput,
         mode: "steer-if-active",
         ...executionRequestFields,
-      })
+      }),
+    )
       .then((result) => {
         reportQueuedSendDelivery(result.delivery);
       })
@@ -602,7 +605,6 @@ function EmbeddedThreadChatWithComposer({
         if (!isMountedRef.current) {
           return;
         }
-        promptDraft.restoreIfEmpty(submittedDraft);
         showMutationErrorToast({
           error,
           fallbackMessage: "Failed to send message",
