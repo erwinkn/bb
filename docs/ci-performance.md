@@ -109,6 +109,47 @@ separately: a rerun can reuse earlier successful jobs, making the span between
 the earliest and latest job misleading. Keep failed and canceled attempts out
 of successful-run latency percentiles, but track their frequency separately.
 
+## October 5 declaration-generation investigation
+
+A sample of the 20 most recent successful runs on each sampled day, excluding
+reruns using the run API's `run_attempt`, showed these workflow durations:
+
+| Date            | First-attempt runs |  Median |
+| --------------- | -----------------: | ------: |
+| October 1, 2026 |                 16 |   4m26s |
+| October 4, 2026 |                 18 | 4m50.5s |
+| October 5, 2026 |                 15 |   7m36s |
+
+These are small time-window samples, not whole-day percentiles. The October 5
+sample ends at run [37387186039](https://github.com/get-bb/bb/actions/runs/37387186039).
+Full Windows test coverage was added on October 2 in PR #4776. Retain that
+coverage when optimizing the now-longer critical path.
+
+In first-attempt run [37386205651](https://github.com/get-bb/bb/actions/runs/37386205651),
+the Windows server shards spent 179.3s and 149.8s in
+`@get-bb/plugin-sdk#build:types`; the other-packages shard spent 170.5s there.
+All three were cache misses. Server shard 1 then spent 124.0s running tests.
+
+The shared declaration emitter compared TypeScript's forward-slash source
+filenames against a Windows backslash workspace prefix. That selected no
+workspace roots, causing repeated compiler-program construction as declaration
+sources loaded. Normalize both paths before selecting roots and checking
+program membership. The regression exercises real TypeScript emission and
+bounds source-file reads across five entry points, including an equivalent
+workspace path with a trailing separator. Before the fix that case read the
+first entry six times; afterward it reads it twice. Existing coverage checks
+inferred types, ambient declarations, and different compiler options.
+
+Local generation preserved all 17 declaration bundles byte-for-byte. The
+Windows wall-clock improvement still needs measurement after CI runs the fix;
+do not interpret the avoided repeated work as a measured end-to-end speedup.
+
+Infrastructure also contributes: run
+[37381624894](https://github.com/get-bb/bb/actions/runs/37381624894) had a 118s
+maximum job provisioning wait, and its Windows server-1 checkout spent 122s in
+the shallow Git fetch. Later-starting jobs in multi-attempt runs must not be
+counted as provisioning delays from the original workflow creation time.
+
 ## Cache maintenance
 
 `CI Cache Maintenance` reports GitHub-visible storage by family and runs daily.
