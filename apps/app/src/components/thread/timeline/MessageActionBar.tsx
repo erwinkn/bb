@@ -219,13 +219,7 @@ function useRecencyRefreshedWhileHidden(
   useEffect(() => {
     if (hoverGroup === null) return;
     const handlePointerEnter = (event: PointerEvent) => {
-      if (
-        event.pointerType === "touch" ||
-        hoverGroup.contains(document.activeElement)
-      ) {
-        return;
-      }
-      setShownRecency(liveRecency);
+      if (event.pointerType !== "touch") setShownRecency(liveRecency);
     };
     const handleFocusIn = (event: FocusEvent) => {
       if (
@@ -480,7 +474,7 @@ export function MessageActionBar({
       ? [
           {
             icon: "Fork" as const,
-            label: "Fork into new thread",
+            label: "Fork thread",
             onSelect: onFork,
             disabled,
           },

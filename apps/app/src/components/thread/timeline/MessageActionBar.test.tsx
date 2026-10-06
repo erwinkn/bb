@@ -165,11 +165,15 @@ describe("MessageActionBar", () => {
     ]);
   });
 
-  it("keeps a visible bar's order until it is revealed again", () => {
+  it("keeps a visible bar's order until the pointer returns, even with focus still inside", () => {
     render(<RecencyMessage testId="assistant" recencyScope="assistant" />);
     const message = screen.getByTestId("assistant");
     fireEvent.pointerEnter(message);
-    fireEvent.click(within(message).getByRole("button", { name: "Summarize" }));
+    const summarize = within(message).getByRole("button", {
+      name: "Summarize",
+    });
+    summarize.focus();
+    fireEvent.click(summarize);
 
     expect(inlineActionLabels(message)).toEqual(["Copy message", "Summarize"]);
 
@@ -257,7 +261,7 @@ describe("MessageActionBar", () => {
       within(menu)
         .getAllByRole("menuitem")
         .map((item) => item.textContent),
-    ).toEqual(["Copy link", "Add to chat", "Fork into new thread"]);
+    ).toEqual(["Copy link", "Add to chat", "Fork thread"]);
     expect(menu.getAttribute("data-side")).toBe("bottom");
     fireEvent.click(
       within(menu).getByRole("menuitem", { name: "Copy link" }),
@@ -313,7 +317,7 @@ describe("MessageActionBar", () => {
       "Summarize",
       "Translate",
       "Add to chat",
-      "Fork into new thread",
+      "Fork thread",
     ]);
   });
 
@@ -342,7 +346,7 @@ describe("MessageActionBar", () => {
       "Copy message",
       "Edit message",
       "Add to chat",
-      "Fork into new thread",
+      "Fork thread",
     ]);
   });
 
@@ -410,7 +414,7 @@ describe("MessageActionBar", () => {
       "Edit message",
       "Summarize",
       "Add to chat",
-      "Fork into new thread",
+      "Fork thread",
     ]);
     resizeObserver.reportWidth(60);
     expect(screen.queryByRole("button", { name: "Summarize" })).toBeNull();
@@ -423,7 +427,7 @@ describe("MessageActionBar", () => {
       "Edit message",
       "Summarize",
       "Add to chat",
-      "Fork into new thread",
+      "Fork thread",
     ]);
     expect(document.body.querySelector('[data-side="top"]')).toBeNull();
     expect(screen.getByTestId("app-root").hasAttribute("inert")).toBe(false);
@@ -431,7 +435,7 @@ describe("MessageActionBar", () => {
       false,
     );
     fireEvent.click(
-      within(drawer).getByRole("menuitem", { name: "Fork into new thread" }),
+      within(drawer).getByRole("menuitem", { name: "Fork thread" }),
     );
     expect(onFork).toHaveBeenCalledTimes(1);
     fireEvent.click(screen.getByRole("button", { name: "Message actions" }));
@@ -471,7 +475,7 @@ describe("MessageActionBar", () => {
       "Copy message",
       "Edit message",
       "Add to chat",
-      "Fork into new thread",
+      "Fork thread",
     ]);
     fireEvent.click(
       within(drawer).getByRole("menuitem", { name: "Copy link" }),

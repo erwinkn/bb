@@ -334,7 +334,7 @@ export function MobileActionsAndSelection() {
         [aria-label="Copy message"],
       .mobile-agent-actions-review
         [data-timeline-row-id="mobile_actions_earlier_agent_message"]
-        [aria-label="Fork into new thread"],
+        [aria-label="Fork thread"],
       .mobile-agent-actions-review
         [data-timeline-row-id="mobile_actions_earlier_agent_message"]
       .mobile-agent-actions-review
@@ -360,7 +360,7 @@ export function MobileActionsAndSelection() {
         [aria-label="Copy message"],
       .mobile-agent-actions-review
         [data-timeline-row-id="mobile_actions_latest_agent_message"]
-        [aria-label="Fork into new thread"],
+        [aria-label="Fork thread"],
       .mobile-agent-actions-review
         [data-timeline-row-id="mobile_actions_latest_agent_message"]
       .mobile-agent-actions-review
@@ -379,7 +379,7 @@ export function MobileActionsAndSelection() {
         [aria-label="Copy message"] svg,
       .mobile-agent-actions-review
         [data-timeline-row-id="mobile_actions_latest_agent_message"]
-        [aria-label="Fork into new thread"] svg,
+        [aria-label="Fork thread"] svg,
       .mobile-agent-actions-review
         [data-timeline-row-id="mobile_actions_latest_agent_message"]
       .mobile-agent-actions-review
