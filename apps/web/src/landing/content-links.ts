@@ -21,6 +21,10 @@ export const CONTENT_LINK_GROUPS: ContentLinkGroup[] = [
         label: "Conductor alternatives",
         href: "/compare/conductor-alternatives",
       },
+      {
+        label: "T3 Code alternatives",
+        href: "/compare/t3-code-alternatives",
+      },
     ],
   },
 ];
