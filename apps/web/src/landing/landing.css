@@ -2973,22 +2973,6 @@ html.js .mock[data-construct]:not(.constructing):not(.constructed) {
   text-wrap: balance;
 }
 
-.footer-brand .footer-license {
-  display: inline-flex;
-  align-items: center;
-  margin-top: 10px;
-  padding: 2px 9px;
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  font-size: 12px;
-  font-weight: 500;
-  line-height: 1.6;
-}
-
-.footer-brand .footer-license:hover {
-  border-color: var(--ink);
-}
-
 .footer-x {
   display: block;
   width: 16px;
@@ -2996,7 +2980,7 @@ html.js .mock[data-construct]:not(.constructing):not(.constructed) {
 }
 
 .footer-brand .footer-legal {
-  margin-top: 14px;
+  margin-top: 10px;
 }
 
 .footer-title {
