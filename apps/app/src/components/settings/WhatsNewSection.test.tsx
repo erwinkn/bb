@@ -62,7 +62,11 @@ vi.mock("./changelog-preview", async (importOriginal) => {
     ...actual,
     CHANGELOG_ENTRIES: parseChangelog(fixtures.changelog),
     RELEASE_META: {
-      "0.5.0": { date: "October 2, 2026", headline: "Five headline" },
+      "0.5.0": {
+        date: "October 2, 2026",
+        headline: "Five headline",
+        hero: { src: "https://example.test/five.png", alt: "Five in action" },
+      },
       "0.4.0": { date: "September 20, 2026", headline: "Four headline" },
     },
   };
@@ -122,6 +126,9 @@ describe("WhatsNewSection", () => {
       screen.getByRole("heading", { level: 3, name: "Five headline" }),
     ).toBeDefined();
     expect(screen.getByText("bb 0.5.0 · October 2, 2026")).toBeDefined();
+    expect(
+      screen.getByRole("img", { name: "Five in action" }).getAttribute("src"),
+    ).toBe("https://example.test/five.png");
     expect(section?.textContent).toContain("Five is here.");
     expect(section?.textContent).toContain("switch instantly.");
 
@@ -192,6 +199,7 @@ describe("WhatsNewSection", () => {
     expect(
       screen.getByRole("heading", { level: 3, name: "Four headline" }),
     ).toBeDefined();
+    expect(document.querySelector("[data-whats-new-hero]")).toBeNull();
     expect(screen.queryByText("Five is here.")).toBeNull();
   });
 

@@ -1,6 +1,13 @@
-type ReleaseMeta = {
+export type ReleaseHero = {
+  src: string;
+  darkSrc?: string;
+  alt: string;
+};
+
+export type ReleaseMeta = {
   date: string;
   headline: string;
+  hero?: ReleaseHero;
 };
 
 export const RELEASE_META: Record<string, ReleaseMeta> = {

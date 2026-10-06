@@ -36,6 +36,7 @@ import { getSettingsRoutePath } from "../src/lib/route-paths";
 import { WhatsNewView } from "../src/components/settings/WhatsNewSection";
 import {
   CHANGELOG_ENTRIES,
+  RELEASE_META,
   selectWhatsNewReleases,
 } from "../src/components/settings/changelog-preview";
 import {
@@ -265,7 +266,11 @@ export function SettingsUpdatesStory() {
   return (
     <div className="space-y-6">
       {releases === null ? null : (
-        <WhatsNewView releases={releases} available={null} />
+        <WhatsNewView
+          releases={releases}
+          meta={RELEASE_META[releases.current.version] ?? null}
+          available={null}
+        />
       )}
       <MachineUpdatesFleetSection
         action={

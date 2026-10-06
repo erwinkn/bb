@@ -24,7 +24,11 @@ import {
   UpdateActionButton,
 } from "./UpdatesSettingsSection";
 import { WhatsNewView } from "./WhatsNewSection";
-import { CHANGELOG_ENTRIES, selectWhatsNewReleases } from "./changelog-preview";
+import {
+  CHANGELOG_ENTRIES,
+  RELEASE_META,
+  selectWhatsNewReleases,
+} from "./changelog-preview";
 
 export default {
   title: "settings/Updates",
@@ -1212,7 +1216,11 @@ export function SectionVariations() {
         hint="The installed release's notes appear above the machine update sections."
       >
         <div className="w-full space-y-6">
-          <WhatsNewView releases={LATEST_RELEASES} available={null} />
+          <WhatsNewView
+            releases={LATEST_RELEASES}
+            meta={RELEASE_META[LATEST_RELEASES.current.version] ?? null}
+            available={null}
+          />
           <MachineUpdatesFleetSection action={updateAll(2)}>
             <StoryMachineSection machine={workstation} app />
           </MachineUpdatesFleetSection>

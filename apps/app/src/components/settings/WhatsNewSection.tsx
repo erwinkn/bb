@@ -6,7 +6,6 @@ import { Icon } from "@bb/shared-ui/icon";
 import { cn } from "@bb/shared-ui/lib/utils";
 import {
   SettingsBadge,
-  SettingsRowList,
   SettingsSection,
 } from "@/components/ui/settings-section";
 import { rawStringLocalStorage } from "@/lib/browser-storage";
@@ -20,6 +19,8 @@ import {
   selectWhatsNewReleases,
   type ChangelogBlock,
   type ChangelogEntry,
+  type ReleaseHero,
+  type ReleaseMeta,
   type WhatsNewReleases,
 } from "./changelog-preview";
 
@@ -209,10 +210,7 @@ function ReleaseRow({
   const panelId = useId();
   const date = RELEASE_META[entry.version]?.date;
   return (
-    <div
-      data-whats-new-release={entry.version}
-      className="py-3 first:pt-0 last:pb-0"
-    >
+    <div data-whats-new-release={entry.version}>
       <div className="-mx-2">
         <button
           type="button"
@@ -299,17 +297,51 @@ export function WhatsNewSection({
   if (releases === null) {
     return null;
   }
-  return <WhatsNewView releases={releases} available={available} />;
+  return (
+    <WhatsNewView
+      releases={releases}
+      meta={RELEASE_META[releases.current.version] ?? null}
+      available={available}
+    />
+  );
+}
+
+function ReleaseHeroImage({ hero }: { hero: ReleaseHero }) {
+  return (
+    <div
+      data-whats-new-hero
+      className="mt-3 overflow-hidden rounded-md border border-border bg-muted"
+    >
+      <img
+        src={hero.src}
+        alt={hero.alt}
+        loading="lazy"
+        className={cn(
+          "block w-full",
+          hero.darkSrc !== undefined && "dark:hidden",
+        )}
+      />
+      {hero.darkSrc === undefined ? null : (
+        <img
+          src={hero.darkSrc}
+          alt={hero.alt}
+          loading="lazy"
+          className="hidden w-full dark:block"
+        />
+      )}
+    </div>
+  );
 }
 
 export function WhatsNewView({
   releases: { current, skipped, updatedFrom },
+  meta,
   available,
 }: {
   releases: WhatsNewReleases;
+  meta: ReleaseMeta | null;
   available: ChangelogEntry | null;
 }) {
-  const meta = RELEASE_META[current.version];
   const metaLine = [
     `bb ${current.version}`,
     meta?.date,
@@ -339,14 +371,11 @@ export function WhatsNewView({
         actionPlacement="inline"
       >
         {available === null ? null : (
-          <div
-            data-whats-new-available
-            className="mb-3 border-b border-border pb-3"
-          >
+          <div data-whats-new-available className="mb-4">
             <ReleaseRow entry={available} badge="Update available" />
           </div>
         )}
-        {meta === undefined ? null : (
+        {meta === null ? null : (
           <h3 className="text-sm font-semibold text-foreground">
             {meta.headline}
           </h3>
@@ -354,22 +383,22 @@ export function WhatsNewView({
         <p className="mt-0.5 text-xs leading-snug text-subtle-foreground first:mt-0">
           {metaLine}
         </p>
-        <div className="mt-2.5">
+        {meta?.hero === undefined ? null : (
+          <ReleaseHeroImage hero={meta.hero} />
+        )}
+        <div className="mt-3">
           <ReleaseNotes entry={current} />
         </div>
         {skipped.length === 0 ? null : (
-          <div
-            data-whats-new-skipped
-            className="mt-3 border-t border-border pt-3"
-          >
-            <h4 className="mb-2 text-xs font-medium text-subtle-foreground">
+          <div data-whats-new-skipped className="mt-5">
+            <h4 className="mb-1.5 text-xs font-medium text-subtle-foreground">
               Also new since {updatedFrom}
             </h4>
-            <SettingsRowList>
+            <div className="space-y-1">
               {skipped.map((entry) => (
                 <ReleaseRow key={entry.version} entry={entry} />
               ))}
-            </SettingsRowList>
+            </div>
           </div>
         )}
       </SettingsSection>

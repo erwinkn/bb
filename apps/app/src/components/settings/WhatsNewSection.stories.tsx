@@ -5,8 +5,10 @@ import { SettingsUpdatesStory } from "../../../.ladle/settings-story-fixtures";
 import { WhatsNewView } from "./WhatsNewSection";
 import {
   CHANGELOG_ENTRIES,
+  RELEASE_META,
   selectWhatsNewReleases,
   type ChangelogEntry,
+  type ReleaseMeta,
   type WhatsNewReleases,
 } from "./changelog-preview";
 
@@ -27,6 +29,26 @@ function releasesFor(
     throw new Error(`Missing changelog fixture ${installedVersion}`);
   }
   return releases;
+}
+
+function viewFor(
+  installedVersion: string,
+  previousVersion: string | null,
+): { releases: WhatsNewReleases; meta: ReleaseMeta | null } {
+  const releases = releasesFor(installedVersion, previousVersion);
+  return { releases, meta: RELEASE_META[releases.current.version] ?? null };
+}
+
+function withPlaceholderHero(meta: ReleaseMeta | null): ReleaseMeta | null {
+  return meta === null
+    ? null
+    : {
+        ...meta,
+        hero: {
+          src: "https://getbb.app/marketplace/v2/screenshots/automations/automations-catalog.png",
+          alt: "Placeholder screenshot from the Automations catalog",
+        },
+      };
 }
 
 function entryFor(version: string): ChangelogEntry {
@@ -88,8 +110,17 @@ export function States() {
     <StoryCard className="max-w-6xl" labelWidth="240px">
       <StoryRow label="Returning visit" hint="No update since the last visit.">
         <Frame>
+          <WhatsNewView {...viewFor("0.45.0", null)} available={null} />
+        </Frame>
+      </StoryRow>
+      <StoryRow
+        label="Hero screenshot"
+        hint="Optional per release; the image here is a placeholder."
+      >
+        <Frame>
           <WhatsNewView
-            releases={releasesFor("0.45.0", null)}
+            releases={releasesFor("0.45.0", "0.44.0")}
+            meta={withPlaceholderHero(RELEASE_META["0.45.0"] ?? null)}
             available={null}
           />
         </Frame>
@@ -99,10 +130,7 @@ export function States() {
         hint="0.44.0 → 0.45.0, arriving from the new-thread tip."
       >
         <Frame>
-          <WhatsNewView
-            releases={releasesFor("0.45.0", "0.44.0")}
-            available={null}
-          />
+          <WhatsNewView {...viewFor("0.45.0", "0.44.0")} available={null} />
         </Frame>
       </StoryRow>
       <StoryRow
@@ -110,10 +138,7 @@ export function States() {
         hint="0.42.0 → 0.45.0; skipped releases collapse below the installed one."
       >
         <Frame>
-          <WhatsNewView
-            releases={releasesFor("0.45.0", "0.42.0")}
-            available={null}
-          />
+          <WhatsNewView {...viewFor("0.45.0", "0.42.0")} available={null} />
         </Frame>
       </StoryRow>
       <StoryRow
@@ -122,7 +147,7 @@ export function States() {
       >
         <Frame>
           <WhatsNewView
-            releases={releasesFor("0.44.0", null)}
+            {...viewFor("0.44.0", null)}
             available={entryFor("0.45.0")}
           />
         </Frame>
@@ -138,16 +163,14 @@ export function States() {
               skipped: [],
               updatedFrom: null,
             }}
+            meta={null}
             available={null}
           />
         </Frame>
       </StoryRow>
       <StoryRow label="390px" hint="Narrow viewport, skipped releases.">
         <div className="w-full max-w-sm">
-          <WhatsNewView
-            releases={releasesFor("0.45.0", "0.42.0")}
-            available={null}
-          />
+          <WhatsNewView {...viewFor("0.45.0", "0.42.0")} available={null} />
         </div>
       </StoryRow>
     </StoryCard>
