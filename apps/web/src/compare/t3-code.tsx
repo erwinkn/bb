@@ -63,13 +63,16 @@ export const BB_VS_T3_CODE: Comparison = {
         },
         {
           feature: "Switch accounts at usage limits",
-          bb: cell("yes", "Automatic with Account Pooler"),
+          bb: cell("yes", "Switches accounts automatically"),
           competitor: cell("partial", "Tracks limits, you switch"),
         },
         {
           feature: "Multi-agent support",
-          bb: cell("yes", "Claude Code, Codex, Cursor, Pi, and more"),
-          competitor: cell("yes", "Claude Code, Codex, Cursor, Pi, and more"),
+          bb: cell("yes", "Claude Code, Codex, Pi, and any ACP agent"),
+          competitor: cell(
+            "yes",
+            "Claude Code, Codex, Cursor, OpenCode, and more",
+          ),
         },
       ],
     },
@@ -80,6 +83,31 @@ export const BB_VS_T3_CODE: Comparison = {
           feature: "Plugin marketplace",
           bb: cell("yes", "Gallery or agent-built"),
           competitor: cell("no", "Fork the code"),
+        },
+      ],
+    },
+    {
+      title: "Everything you use today",
+      rows: [
+        {
+          feature: "Git worktree per thread",
+          bb: cell("yes", "Setup and teardown scripts"),
+          competitor: cell("yes"),
+        },
+        {
+          feature: "Review and merge",
+          bb: cell("yes", "Line comments, checks, merge"),
+          competitor: cell("yes"),
+        },
+        {
+          feature: "Phone and remote access",
+          bb: cell("yes", "iOS, Android, any browser"),
+          competitor: cell("yes"),
+        },
+        {
+          feature: "Go back to an earlier point",
+          bb: cell("yes", "Edit a message or fork from it"),
+          competitor: cell("yes"),
         },
       ],
     },
