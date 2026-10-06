@@ -19,7 +19,7 @@ import {
   faqUsageLimit,
   price,
 } from "./compare-content";
-import { pluginsSection } from "./compare-sections";
+import { pluginsSection, SPAWN_COPY, spawnSection } from "./compare-sections";
 import { AgentSplit, type BrandLogo } from "./compare-visuals";
 
 const T3_CODE_LOGO: BrandLogo = { kind: "image", src: t3CodeIcon };
@@ -45,7 +45,7 @@ export const BB_VS_T3_CODE: Comparison = {
   sub: "Claude Code builds, Codex reviews in its own thread, and you can message either one mid-run. Free and open source, on Mac, Windows, and Linux.",
   heroVisual: <AgentSplit />,
   tailored: CUSTOMIZE_SECTION,
-  sections: [],
+  sections: [spawnSection(SPAWN_COPY)],
   tableNote: null,
   table: [
     {

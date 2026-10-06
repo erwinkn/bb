@@ -1,6 +1,10 @@
 import type { ReactNode } from "react";
 
-import { CustomizeBuild, ProviderChips } from "../landing/landing-visuals";
+import {
+  CustomizeBuild,
+  ProviderChips,
+  SpawnSidebar,
+} from "../landing/landing-visuals";
 import type { CompareHighlight } from "./comparisons";
 import {
   AgentSplit,
@@ -43,6 +47,16 @@ export const AGENTS_COPY: SectionCopy = {
     <p>
       Claude Code builds, Codex reviews, and Cursor writes the release notes. No
       copying between tools.
+    </p>
+  ),
+};
+
+export const SPAWN_COPY: SectionCopy = {
+  title: "Let one agent run the others",
+  body: (
+    <p>
+      Claude Code hands out the work, and Codex, Cursor, and others each take a
+      task in their own thread. No copying between tools.
     </p>
   ),
 };
@@ -100,23 +114,36 @@ export function pricingSection(
   };
 }
 
+function agentsBody(copy: SectionCopy) {
+  return (
+    <>
+      {copy.body}
+      <div className="providers cmp-providers">
+        <span className="label">Works with any agent</span>
+        <ProviderChips />
+      </div>
+      <p className="cmp-providers-note">
+        Need another? Add it with a <a href="/marketplace">plugin</a>.
+      </p>
+    </>
+  );
+}
+
 export function agentsSection(copy: SectionCopy): CompareHighlight {
   return {
     title: copy.title,
     wide: true,
     visual: <AgentSplit />,
-    body: (
-      <>
-        {copy.body}
-        <div className="providers cmp-providers">
-          <span className="label">Works with any agent</span>
-          <ProviderChips />
-        </div>
-        <p className="cmp-providers-note">
-          Need another? Add it with a <a href="/marketplace">plugin</a>.
-        </p>
-      </>
-    ),
+    body: agentsBody(copy),
+  };
+}
+
+export function spawnSection(copy: SectionCopy): CompareHighlight {
+  return {
+    title: copy.title,
+    wide: false,
+    visual: <SpawnSidebar />,
+    body: agentsBody(copy),
   };
 }
 
