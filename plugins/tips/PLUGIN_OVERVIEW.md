@@ -12,7 +12,7 @@ Learn what bb can do from a small feed under the composer. Tips shows three shor
 
 Tips are on by default for new installs and off for existing ones. The first time Tips runs it counts an install as new when it has no threads or none older than two weeks, saves that to the Show tips switch, and never changes it again; your own choice in the switch always wins.
 
-The same three tips stay up all day, and unseen tips come before repeats. Tips put first what matters now: threads waiting on you, Account Pooler right after a usage limit, and subthreads or automations in a project that has not used them yet. A tip appears only when it fits your setup: keyboard tips stay off touch devices, Browser Automation tips stay off Windows, and a tip for a plugin waits until that plugin is installed. A tip retires once you take its action, once bb sees you using the feature, after it has been shown on two days, or when you dismiss it with `bb tips dismiss`. After an update, a What's new tip links to Settings → Updates once.
+Each new visit to the New thread page brings one new tip in at the top and lets the oldest drop off, working through every tip that fits you before any repeats. A tip you click stays out of the next visit. Tips put first what matters now: threads waiting on you, Account Pooler right after a usage limit, and subthreads or automations in a project that has not used them yet. A tip appears only when it fits your setup: keyboard tips stay off touch devices, Browser Automation tips stay off Windows, and a tip for a plugin waits until that plugin is installed. A tip retires once bb sees you using the feature or when you dismiss it with `bb tips dismiss`. After an update, a What's new tip links to Settings → Updates once.
 
 Tips keeps its state and its shown, dismissed, and acted counts in its own plugin storage on this bb server. It sends nothing anywhere.
 
@@ -20,7 +20,7 @@ Tips keeps its state and its shown, dismissed, and acted counts in its own plugi
 
 Use the `bb tips` command:
 
-- `bb tips` lists the tips that are eligible now and marks the three showing today, and says how to turn tips on when they are off. Add `--all` to include dismissed, retired, held, and not-applicable tips.
+- `bb tips` lists the tips that are eligible now and marks the three in the feed, newest first, and says how to turn tips on when they are off. Add `--all` to include dismissed, retired, held, and not-applicable tips.
 - `bb tips hide` hides tips for the rest of today; `bb tips hide --undo` shows them again.
 - `bb tips dismiss <id>` retires one tip.
 - `bb tips reset` brings back every dismissed and retired tip.

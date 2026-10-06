@@ -8,7 +8,8 @@ import {
 } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import type { TipView } from "./contract.js";
-import { TipArt, TipArtStyles } from "./tip-art.js";
+import { describeTipAction } from "./actions.js";
+import { TipArt, TipArtStyles } from "./illustrations.js";
 
 export interface TipsGalleryProps {
   tips: readonly TipView[];
@@ -19,16 +20,16 @@ export interface TipsGalleryProps {
   onDismiss(): void;
 }
 
-function actionDescription(tip: TipView): string {
-  switch (tip.action.kind) {
-    case "prompt":
-      return "Adds prompt to composer";
-    case "route":
-      return `Opens settings: ${tip.action.label}`;
-    case "command":
-      return tip.action.label;
-  }
+const FEED_FADE =
+  "linear-gradient(to bottom, black calc(100% - 64px), rgb(0 0 0 / 0.4))";
+
+const FEED_CSS = `
+.tips-feed { -webkit-mask-image: ${FEED_FADE}; mask-image: ${FEED_FADE}; }
+.tips-feed:has(> li:last-child :is(:hover, :focus-visible)) {
+  -webkit-mask-image: none;
+  mask-image: none;
 }
+`;
 
 function DismissTips({ onDismiss }: Pick<TipsGalleryProps, "onDismiss">) {
   return (
@@ -64,7 +65,8 @@ export function TipsFeed({
   return (
     <>
       <TipArtStyles />
-      <ul className="overflow-hidden rounded-xl border border-border-hairline bg-background shadow-xs">
+      <style>{FEED_CSS}</style>
+      <ul className="tips-feed overflow-hidden rounded-xl border border-border-hairline bg-background shadow-xs">
         {tips.map((tip) => (
           <li
             key={tip.id}
@@ -84,7 +86,7 @@ export function TipsFeed({
               onBlur={() => onPreview(null)}
               onClick={() => onActivate(tip)}
             >
-              <TipArt tipId={tip.id} tone={tip.tone} />
+              <TipArt illustration={tip.illustration} tone={tip.tone} />
               <span className="flex min-w-0 flex-1 flex-col gap-0.5">
                 <span className="text-sm font-medium text-foreground">
                   {tip.title}
@@ -92,7 +94,7 @@ export function TipsFeed({
                 <span className="line-clamp-2 text-xs text-muted-foreground">
                   {tip.body}
                 </span>
-                <span className="sr-only">{actionDescription(tip)}</span>
+                <span className="sr-only">{describeTipAction(tip.action)}</span>
               </span>
             </button>
           </li>

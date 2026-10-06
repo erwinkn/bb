@@ -345,9 +345,7 @@ bb concurrency-limit host <host-id> [auto|<limit>] [--json]
 
 The builtin Tips plugin shows three contextual tips as a small feed under the
 composer on the desktop and web New thread page, never on phones or compact
-layouts. The set stays the same for the day and shows unseen tips first. A tip
-retires once bb sees its feature in use, its action is taken, it is dismissed,
-or it has shown on two days. Its "Show tips" switch (`enabled`) has no fixed
+layouts. Each new visit adds one tip at the top and drops the oldest, cycling through every eligible tip before repeating; a clicked tip stays out of the next visit. A tip retires once its feature is in use or it is dismissed. Its "Show tips" switch (`enabled`) has no fixed
 default: the first time Tips runs it turns tips on for new installs (no
 threads, or none older than two weeks) and off for existing ones, saves that
 to the switch, and never revisits it. An explicit choice always wins. "Hide

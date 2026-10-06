@@ -6,8 +6,9 @@ description: "List, hide, dismiss, or reset the tips bb shows on the New thread 
 # Tips
 
 bb shows three tips as a small feed under the composer on the desktop and web
-New thread page (never on phones or compact layouts). The set stays the same
-all day, unseen tips first. Tips are on by default for new installs and off for
+New thread page (never on phones or compact layouts). Each new visit adds one
+tip at the top and drops the oldest, cycling through every eligible tip before
+repeating. Tips are on by default for new installs and off for
 existing ones until someone turns them on. Use the `bb tips` command to inspect
 or change them.
 
@@ -19,7 +20,7 @@ bb tips reset [--json]
 ```
 
 - `bb tips` lists the tips eligible now, highest priority first, and marks the
-  three showing today. Tips limited to the desktop or web app are listed
+  three in the feed. Tips limited to the desktop or web app are listed
   because the CLI cannot tell which app the person uses. `--all` adds every tip
   with its status: `dismissed`, `retired` (with `used`, `acted`, or `seen`),
   `held`, or `not-applicable`.

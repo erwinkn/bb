@@ -8,6 +8,7 @@ const app = await loadPluginApp(() => import("./app"));
 
 const PROMPT_TIP: TipView = {
   id: "subthreads",
+  illustration: "subthreads",
   tone: "blue",
   title: "Run work in parallel",
   body: "Ask bb to spin up subthreads that try three approaches at once.",
@@ -20,18 +21,28 @@ const PROMPT_TIP: TipView = {
 
 const ROUTE_TIP: TipView = {
   id: "phone",
+  illustration: "phone",
   tone: "rose",
   title: "Check on your agents from your phone",
   body: "The bb mobile app lets you follow threads away from your desk.",
-  action: { kind: "route", label: "Get the app", path: "/settings/mobile" },
+  action: {
+    kind: "open-page",
+    label: "Get the app",
+    path: "/settings/mobile",
+  },
 };
 
 const COMMAND_TIP: TipView = {
   id: "command-palette",
+  illustration: "command-palette",
   tone: "rose",
   title: "Do anything from the keyboard",
   body: "Press ⌘⇧P to search bb's commands and settings.",
-  action: { kind: "command", label: "Open palette", commandId: "palette.open" },
+  action: {
+    kind: "run-command",
+    label: "Open palette",
+    commandId: "palette.open",
+  },
 };
 
 const IPHONE =
@@ -85,6 +96,7 @@ function renderTips(
   options: {
     openAppRoute?: (path: string) => boolean;
     runAppCommand?: (commandId: string) => boolean;
+    openUrl?: (url: string) => boolean;
     settings?: Record<string, boolean>;
   } = {},
 ) {
@@ -128,9 +140,9 @@ describe("Tips homepage section", () => {
         name: /Run work in parallel.*Adds prompt to composer$/u,
       }),
     ).toBe(tile(slot, "subthreads"));
-    expect(
-      slot.getByRole("button", { name: /Opens settings: Get the app$/u }),
-    ).toBe(tile(slot, "phone"));
+    expect(slot.getByRole("button", { name: /Opens Get the app$/u })).toBe(
+      tile(slot, "phone"),
+    );
     expect(slot.getByRole("button", { name: /Open palette$/u })).toBe(
       tile(slot, "command-palette"),
     );
@@ -141,6 +153,7 @@ describe("Tips homepage section", () => {
       input: {
         client: { surface: "web", os: expect.any(String) },
         projectId: "proj_1",
+        visit: true,
       },
     });
   });
@@ -238,11 +251,67 @@ describe("Tips homepage section", () => {
     await waitFor(() => expect(methods(slot)).toContain("act"));
   });
 
-  it("does not record the tip when bb refuses the route", async () => {
+  it("announces when bb refuses the route and still marks the tip used", async () => {
     const slot = renderTips(undefined, { openAppRoute: () => false });
     await slot.findByText("Run work in parallel");
     fireEvent.click(tile(slot, "phone"));
-    expect(methods(slot)).not.toContain("act");
+    expect(
+      await slot.findByText("Couldn't open Get the app here."),
+    ).toBeTruthy();
+    await waitFor(() => expect(methods(slot)).toContain("act"));
+  });
+
+  it("opens a plugin's detail tab and a learn-more link", async () => {
+    const pluginTip: TipView = {
+      id: "account-pool",
+      illustration: "account-pool",
+      tone: "orange",
+      title: "Keep working through usage limits",
+      body: "When an account hits its limit, Account Pooler moves the thread to another one you own.",
+      action: {
+        kind: "open-plugin",
+        label: "Set up Account Pooler",
+        pluginId: "account-pool",
+      },
+    };
+    const linkTip: TipView = {
+      id: "whats-new",
+      illustration: "whats-new",
+      tone: "amber",
+      title: "What's new",
+      body: "See what changed in this update.",
+      action: {
+        kind: "learn-more",
+        label: "the release notes",
+        url: "https://getbb.app/changelog",
+      },
+    };
+    const slot = renderTips([pluginTip, linkTip], {
+      openAppRoute: () => true,
+      openUrl: () => true,
+    });
+    await slot.findByText("Keep working through usage limits");
+    fireEvent.click(tile(slot, "account-pool"));
+    fireEvent.click(tile(slot, "whats-new"));
+    expect(slot.inspection.navigateCalls).toEqual([
+      { method: "experimental_openAppRoute", path: "/plugins/account-pool" },
+      { method: "openUrl", url: "https://getbb.app/changelog" },
+    ]);
+    expect(await slot.findByText("Opened the release notes")).toBeTruthy();
+  });
+
+  it("asks for a new visit only on mount, not on refetches", async () => {
+    const slot = renderTips();
+    await slot.findByText("Run work in parallel");
+    await slot.behavior.emitRealtime("tips-changed", {});
+    await waitFor(() =>
+      expect(
+        slot.inspection.rpcCalls.filter((call) => call.method === "current"),
+      ).toEqual([
+        { method: "current", input: expect.objectContaining({ visit: true }) },
+        { method: "current", input: expect.objectContaining({ visit: false }) },
+      ]),
+    );
   });
 
   it("runs the app command for a command tip", async () => {

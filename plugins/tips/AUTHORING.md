@@ -1,0 +1,104 @@
+# Authoring tips
+
+A tip is one entry in `TIP_CATALOG` in `catalog.ts`, drawn by one entry in
+`ILLUSTRATIONS` in `illustrations.tsx`. `catalog.test.ts` and the host tests
+(`apps/server/test/services/plugins/tips-catalog-targets.test.ts`,
+`apps/app/src/components/settings/tips-catalog-routes.test.ts`) enforce the
+rules below.
+
+## How tips reach people
+
+The New thread page shows a feed of three tips. Each new visit (a fresh mount,
+at least 10 minutes after the last one) adds one tip at the top and drops the
+oldest. The engine works through every eligible tip, highest `boost` and
+`priority` first, before it repeats any. A clicked tip is left out of the next
+visit and comes back only after the rest of the library has been shown. A tip
+retires for good when `retireWhen` turns true or the person dismisses it.
+Held and expired tips never show.
+
+## Fields
+
+| Field                 | Rule                                                                                                                             |
+| --------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| `id`                  | Unique, kebab-case. Never rename one; storage keys use it.                                                                       |
+| `title`               | Up to 45 characters. Sentence case, no trailing period.                                                                          |
+| `body`                | One sentence, up to 110 characters.                                                                                              |
+| `illustration`        | Key in `ILLUSTRATIONS`. Usually the tip id.                                                                                      |
+| `tone`                | `blue`, `green`, `amber`, `orange`, or `rose`. Colors the illustration's one accent.                                             |
+| `action`              | One of the action types below.                                                                                                   |
+| `source`              | `{ kind: "changelog" \| "blog" \| "guide" \| "feature", ref, version? }`: where the tip comes from.                              |
+| `addedAt`             | bb version the tip ships in.                                                                                                     |
+| `reviewedAt`          | bb version the copy and eligibility were last checked against. Never later than `CATALOG_REVIEWED_THROUGH`.                      |
+| `expiresAt`           | Optional bb version from which the tip stops showing. Must be later than `CATALOG_REVIEWED_THROUGH`, so an expired tip fails CI. |
+| `held`                | Optional. `true` keeps a finished tip out of every feed.                                                                         |
+| `priority`            | Ordering inside the library.                                                                                                     |
+| `eligible(signals)`   | When the tip fits this person right now.                                                                                         |
+| `retireWhen(signals)` | When the person already uses the feature. Retirement is permanent.                                                               |
+| `boost(signals)`      | Optional. Pushes a tip ahead when context makes it urgent.                                                                       |
+
+Bump `CATALOG_REVIEWED_THROUGH` when you review the whole catalog against a
+release.
+
+## Voice
+
+- Plain and direct: "Ask bb to…", "Your agent can…", "Press ⌘K to…".
+- Say what the person gets, not how the feature is built.
+- No feature-toggle caveats, no "new!", no exclamation marks.
+- Use `{version}`, `{paletteKeys}`, and `{searchKeys}` instead of hard-coding them.
+
+## Actions
+
+Every click marks the tip used and announces the result in the status line.
+`actions.ts` implements each type once.
+
+| Type          | Use it when                                                                                      | Click                                                                                     |
+| ------------- | ------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------- |
+| `prompt`      | bb can do it if asked. End the prompt with `Task: ` when the person's draft belongs after it.    | Fills the composer, moves the draft into the `Task: ` slot, focuses the caret at the end. |
+| `open-page`   | A core page explains or sets it up. `path` must be `/settings` or a real Settings section.       | Opens the in-app route.                                                                   |
+| `run-command` | A command does it: `palette.open`, `thread.search`, or `settings.open`.                          | Runs the command as its shortcut would.                                                   |
+| `open-plugin` | A built-in plugin does it. `pluginId` must be in `builtin-registry.ts`; never a personal plugin. | Opens the plugin's detail tab.                                                            |
+| `learn-more`  | Only an `https://` release note, blog post, or guide explains it.                                | Opens the link with the person's browser preference.                                      |
+
+Prefer `prompt`, then `open-plugin` or `open-page`. Use `learn-more` last.
+
+## Illustrations
+
+Build every drawing from the parts in `diagram-kit.tsx`, and check it in the
+**Illustrations** and **Diagram kit** stories in Ladle (`plugins/Tips`).
+
+- **Grid.** 48 units, rendered at 64px. Keep a 3-unit margin.
+- **Line.** Use `LINE`: `currentColor` at a 1.1 stroke with round caps and
+  joins. Fills use `WASH`; secondary lines use `soft`.
+- **Color.** Ink tones from `currentColor` and `CANVAS`. Use exactly one small
+  accent, from the `accent` argument. Never write literal colors.
+- **Rest state.** The drawing is still and complete at rest. It must read
+  without the animation.
+- **Hover.** Give the part that acts out the tip `animate`, and `stagger` for
+  a sequence. Use one idea per drawing, about one second, with the end state
+  held while the row is hovered. Reduced motion turns animation off in the kit.
+
+| Animation                                  | Does                                                                |
+| ------------------------------------------ | ------------------------------------------------------------------- |
+| `fill-in`                                  | Scales from `from` (0–1) to full width; ProgressBar fills.          |
+| `flip-on` / `flip-off`                     | Fades a part in or out; Toggle flips on.                            |
+| `glide`                                    | Moves from the `from` transform to the drawn position; Slider knob. |
+| `slide-in`, `fade-in`, `rise`, `travel`    | Enters from an offset.                                              |
+| `pop`, `press`, `snap`, `twinkle`, `nudge` | Plays once and settles where it started.                            |
+| `sweep`                                    | Moves across and settles.                                           |
+| `grow`                                     | Grows up from the baseline.                                         |
+| `spin`                                     | One full turn around `origin`.                                      |
+
+The parts are Panel, Window, Rule, Dot, ListLine, Node, Branch, ProgressBar,
+Toggle, Slider, Button, CheckMark, Check, Cursor, Phone, Envelope, Keycap,
+SearchGlyph, Magnifier, ChartAxes, Bar, CardStack, Arrow, Sparkle, Bubble,
+Clock, CalendarGrid, Wrench, Pill, and Highlight. Add a part to the kit, with a
+cell in the Diagram kit story, when two drawings need it.
+
+## Checklist
+
+- [ ] Copy follows the voice rules and the length limits.
+- [ ] The action type fits; its target is a core route, a built-in plugin, or an `https://` link.
+- [ ] The illustration uses kit parts, one accent, and one hover animation.
+- [ ] `source`, `addedAt`, `reviewedAt`, and any `expiresAt` are set.
+- [ ] `eligible` and `retireWhen` have tests in `engine.test.ts` when they are new logic.
+- [ ] The drawing reads at rest and on hover in light and dark, in the Illustrations story.

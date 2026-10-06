@@ -9,6 +9,12 @@ export const tipClientSchema = z
   .strict();
 export type TipClient = z.infer<typeof tipClientSchema>;
 
+export const TIP_COMMAND_IDS = [
+  "palette.open",
+  "thread.search",
+  "settings.open",
+] as const;
+
 export const tipActionSchema = z.discriminatedUnion("kind", [
   z
     .object({
@@ -19,16 +25,30 @@ export const tipActionSchema = z.discriminatedUnion("kind", [
     .strict(),
   z
     .object({
-      kind: z.literal("route"),
+      kind: z.literal("open-page"),
       label: z.string().min(1),
       path: z.string().startsWith("/"),
     })
     .strict(),
   z
     .object({
-      kind: z.literal("command"),
+      kind: z.literal("run-command"),
       label: z.string().min(1),
-      commandId: z.enum(["palette.open", "thread.search"]),
+      commandId: z.enum(TIP_COMMAND_IDS),
+    })
+    .strict(),
+  z
+    .object({
+      kind: z.literal("open-plugin"),
+      label: z.string().min(1),
+      pluginId: z.string().min(1),
+    })
+    .strict(),
+  z
+    .object({
+      kind: z.literal("learn-more"),
+      label: z.string().min(1),
+      url: z.string().url().startsWith("https://"),
     })
     .strict(),
 ]);
@@ -46,6 +66,7 @@ export type TipTone = z.infer<typeof tipToneSchema>;
 export const tipViewSchema = z
   .object({
     id: z.string().min(1),
+    illustration: z.string().min(1),
     tone: tipToneSchema,
     title: z.string().min(1),
     body: z.string().min(1),
@@ -55,22 +76,23 @@ export const tipViewSchema = z
 export type TipView = z.infer<typeof tipViewSchema>;
 
 export const tipStatusSchema = z.enum([
-  "current",
+  "in-feed",
   "eligible",
   "not-applicable",
   "dismissed",
   "retired",
+  "expired",
   "held",
 ]);
 export type TipStatus = z.infer<typeof tipStatusSchema>;
 
-export const tipRetiredReasonSchema = z.enum(["used", "acted", "seen"]);
+export const tipRetiredReasonSchema = z.enum(["used"]);
 export type TipRetiredReason = z.infer<typeof tipRetiredReasonSchema>;
 
 export const tipListEntrySchema = tipViewSchema
   .extend({
     status: tipStatusSchema,
-    shownDays: z.number().int().nonnegative(),
+    shownCount: z.number().int().nonnegative(),
     dismissed: z.boolean(),
     acted: z.boolean(),
     retiredReason: tipRetiredReasonSchema.nullable(),
@@ -80,18 +102,19 @@ export type TipListEntry = z.infer<typeof tipListEntrySchema>;
 
 const tipIdInputSchema = z.object({ id: z.string().min(1).max(64) }).strict();
 const okSchema = z.object({ ok: z.literal(true) }).strict();
-const tipSetInputSchema = z
+const tipFeedInputSchema = z
   .object({
     client: tipClientSchema,
     projectId: z.string().min(1).nullable(),
+    visit: z.boolean(),
   })
   .strict();
-const tipSetOutputSchema = z.object({ tips: z.array(tipViewSchema) }).strict();
+const tipFeedOutputSchema = z.object({ tips: z.array(tipViewSchema) }).strict();
 
-export const TIPS_PER_SET = 3;
+export const FEED_SIZE = 3;
 
 export const tipsRpcContract = defineRpcContract({
-  current: { input: tipSetInputSchema, output: tipSetOutputSchema },
+  current: { input: tipFeedInputSchema, output: tipFeedOutputSchema },
   hide: {
     input: z.object({ hidden: z.boolean() }).strict(),
     output: okSchema,

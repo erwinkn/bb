@@ -4,7 +4,7 @@ import {
   makeThreadResponse,
   makeTurnFailedEvent,
 } from "@get-bb/plugin-sdk/testing";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import {
   tipListEntrySchema,
@@ -96,12 +96,13 @@ async function setup(fixture: Fixture = {}) {
   const { harness } = fake;
   return {
     ...fake,
-    async current(projectId: string | null = null) {
+    async current(projectId: string | null = null, visit = true) {
       return setResultSchema
         .parse(
           await harness.behavior.callRpc("current", {
             client: WEB_MAC,
             projectId,
+            visit,
           }),
         )
         .tips.map((tip) => tip.id);
@@ -151,15 +152,15 @@ describe("current tips", () => {
     expect(await host.current()).toEqual([]);
   });
 
-  it("shows three tips after the first finished thread and keeps them for the day", async () => {
+  it("shows three tips after the first finished thread and keeps them through the visit", async () => {
     const host = await setup(NEW_USER);
     expect(await host.current()).toEqual(NEW_USER_SET);
     expect(await host.current()).toEqual(NEW_USER_SET);
     const list = await host.listAll();
     for (const id of NEW_USER_SET) {
       expect(list.tips.find((entry) => entry.id === id)).toMatchObject({
-        status: "current",
-        shownDays: 1,
+        status: "in-feed",
+        shownCount: 1,
       });
     }
   });
@@ -318,17 +319,43 @@ describe("dismissing and acting", () => {
     });
   });
 
-  it("retires a tip once its action is taken but keeps it on today's page", async () => {
-    const host = await setup(NEW_USER);
-    await host.current();
-    await host.harness.behavior.callRpc("act", { id: "subthreads" });
-    expect(await host.current()).toEqual(NEW_USER_SET);
-    const list = await host.listAll();
-    expect(list.tips.find((entry) => entry.id === "subthreads")).toMatchObject({
-      status: "retired",
-      acted: true,
-      retiredReason: "acted",
-    });
+  it("keeps a clicked tip through the visit and replaces it on the next one", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      vi.setSystemTime(Date.UTC(2026, 9, 5, 12));
+      const host = await setup(NEW_USER);
+      expect(await host.current()).toEqual(NEW_USER_SET);
+      await host.harness.behavior.callRpc("act", { id: "subthreads" });
+      expect(await host.current(null, false)).toEqual(NEW_USER_SET);
+      const list = await host.listAll();
+      expect(
+        list.tips.find((entry) => entry.id === "subthreads"),
+      ).toMatchObject({ status: "in-feed", acted: true, retiredReason: null });
+      vi.setSystemTime(Date.UTC(2026, 9, 5, 12, 11));
+      const next = await host.current();
+      expect(next).toHaveLength(3);
+      expect(next).not.toContain("subthreads");
+      expect(next.slice(1)).toEqual(["set-up-for-me", "phone"]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("inserts one new tip at the top on a later visit", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      vi.setSystemTime(Date.UTC(2026, 9, 5, 12));
+      const host = await setup(NEW_USER);
+      expect(await host.current()).toEqual(NEW_USER_SET);
+      vi.setSystemTime(Date.UTC(2026, 9, 5, 12, 5));
+      expect(await host.current()).toEqual(NEW_USER_SET);
+      vi.setSystemTime(Date.UTC(2026, 9, 5, 12, 20));
+      const next = await host.current();
+      expect(next.slice(1)).toEqual(["subthreads", "set-up-for-me"]);
+      expect(next[0]).not.toBe("phone");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("rejects an unknown tip id over RPC", async () => {
@@ -340,13 +367,13 @@ describe("dismissing and acting", () => {
 });
 
 describe("bb tips", () => {
-  it("lists eligible tips and marks the three showing today", async () => {
+  it("lists eligible tips and marks the three in the feed", async () => {
     const host = await setup(NEW_USER);
     await host.current();
     const result = await host.harness.behavior.runCli([]);
     expect(result.exitCode).toBe(0);
     for (const id of NEW_USER_SET) {
-      expect(result.stdout).toContain(`${id} (showing today)`);
+      expect(result.stdout).toContain(`${id} (in the feed)`);
     }
     expect(result.stdout).toContain("build-plugin\n");
     expect(result.stdout).not.toContain("account-pool");

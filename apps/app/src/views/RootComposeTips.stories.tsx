@@ -33,11 +33,6 @@ interface GalleryModule {
   >;
 }
 
-interface ArtModule {
-  TipArt: ComponentType<{ tipId: string; tone: string }>;
-  TipArtStyles: ComponentType;
-}
-
 interface CatalogModule {
   TIP_CATALOG: readonly { id: string }[];
   renderTip(definition: { id: string }, signals: object): StoryTip;
@@ -51,11 +46,6 @@ function only<T>(modules: Record<string, T>): T {
 
 const gallery = only(
   import.meta.glob<GalleryModule>("../../../../plugins/tips/gallery.tsx", {
-    eager: true,
-  }),
-);
-const art = only(
-  import.meta.glob<ArtModule>("../../../../plugins/tips/tip-art.tsx", {
     eager: true,
   }),
 );
@@ -178,40 +168,8 @@ export function Control() {
   return (
     <LayoutStory
       layout={ControlLayout}
-      hint="Production layout: a calm feed of three tips under the composer, each row an illustration with a title and body, with Hide tips above it. Hover a prompt row to preview its prompt as the placeholder; click to fill the composer."
+      hint="Production layout: a feed of three tips under the composer that fades out at the bottom, each row an illustration with a title and body, with Hide tips above it. Hover a row to play its illustration and preview a prompt as the placeholder; click to fill the composer."
     />
   );
 }
 Control.storyName = "Control (production)";
-
-const ALL_TIPS = catalog.TIP_CATALOG.map((definition) =>
-  catalog.renderTip(definition, STORY_SIGNALS),
-);
-
-export function Illustrations() {
-  return (
-    <StoryCard labelWidth="160px">
-      <StoryRow
-        label="every tip"
-        hint="Each catalog tip's illustration, in catalog order. Hover or focus one to play the animation its row plays on hover."
-      >
-        <div className="grid w-[760px] grid-cols-5 gap-x-4 gap-y-6 rounded-xl border border-border bg-background p-6">
-          <art.TipArtStyles />
-          {ALL_TIPS.map((tip) => (
-            <div
-              key={tip.id}
-              tabIndex={0}
-              data-tip-art-trigger=""
-              className="flex flex-col gap-1 rounded-lg p-1 outline-none hover:bg-surface-raised focus-visible:ring-2 focus-visible:ring-ring"
-            >
-              <art.TipArt tipId={tip.id} tone={tip.tone} />
-              <span className="text-xs font-medium text-foreground">
-                {tip.title}
-              </span>
-            </div>
-          ))}
-        </div>
-      </StoryRow>
-    </StoryCard>
-  );
-}

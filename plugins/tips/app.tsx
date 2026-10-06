@@ -3,6 +3,7 @@ import {
   useEffect,
   useLayoutEffect,
   useMemo,
+  useRef,
   useState,
   useSyncExternalStore,
 } from "react";
@@ -16,7 +17,7 @@ import {
   type PluginHomepageSectionProps,
 } from "@get-bb/plugin-sdk/app";
 import { detectTipClient, readTipClientEnvironment } from "./client.js";
-import { composeTipDraft } from "./compose.js";
+import { runTipAction } from "./actions.js";
 import type { TipView, tipsRpcContract } from "./contract.js";
 import { TipsGallery, TipsHiddenNotice } from "./gallery.js";
 
@@ -82,6 +83,7 @@ function TipsGallerySection({
   const [filledId, setFilledId] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [dismissed, setDismissed] = useState(false);
+  const visited = useRef(false);
   const isEmpty = composer.isEmpty;
 
   useRealtime(TIPS_CHANGED_CHANNEL, () => {
@@ -94,7 +96,9 @@ function TipsGallerySection({
       return;
     }
     let active = true;
-    rpc.call("current", { client, projectId }).then(
+    const visit = !visited.current;
+    visited.current = true;
+    rpc.call("current", { client, projectId, visit }).then(
       (result) => {
         if (active) setTips(result.tips);
       },
@@ -118,20 +122,19 @@ function TipsGallerySection({
 
   const activate = useCallback(
     (tip: TipView) => {
-      const action = tip.action;
-      if (action.kind === "prompt") {
-        composer.replace((current) => composeTipDraft(action.prompt, current));
-        composer.focus();
+      const result = runTipAction(tip, {
+        replaceDraft: (update) => composer.replace(update),
+        focusComposer: () => composer.focus(),
+        openAppRoute: (path) => navigate.experimental_openAppRoute(path),
+        runAppCommand: (commandId) =>
+          navigate.experimental_runAppCommand(commandId),
+        openUrl: (url) => navigate.openUrl(url),
+      });
+      if (tip.action.kind === "prompt") {
         setPreviewId(null);
         setFilledId(tip.id);
-        setNotice(`Added “${tip.title}” to the composer`);
-      } else if (
-        action.kind === "route"
-          ? !navigate.experimental_openAppRoute(action.path)
-          : !navigate.experimental_runAppCommand(action.commandId)
-      ) {
-        return;
       }
+      setNotice(result.announcement);
       void rpc.call("act", { id: tip.id }).catch(() => {});
     },
     [composer, navigate, rpc],
