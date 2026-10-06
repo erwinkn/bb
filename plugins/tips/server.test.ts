@@ -414,6 +414,6 @@ describe("bb tips", () => {
   it("says when tips are turned off", async () => {
     const host = await setup({ ...NEW_USER, settings: { enabled: false } });
     const result = await host.harness.behavior.runCli([]);
-    expect(result.stdout).toContain("Tips are turned off.");
+    expect(result.stdout).toContain("Tips are off.");
   });
 });
