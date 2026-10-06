@@ -164,7 +164,7 @@ describe("MessageActionBar", () => {
     ]);
   });
 
-  it("promotes an overflow action after focus leaves and retains plugin recency across reloads", () => {
+  it("ranks inline and overflow actions together without growing the visible row", () => {
     const resizeObserver = installControlledResizeObserver();
     const onSelect = vi.fn();
     const fixture = (generation: number) => (
@@ -176,6 +176,8 @@ describe("MessageActionBar", () => {
         mobileActionDisplay="inline"
         onEdit={vi.fn()}
         onCopyLink={vi.fn()}
+        onAddToChat={vi.fn()}
+        onFork={vi.fn()}
         pluginActions={[
           {
             key: `demo/translate/${generation}`,
@@ -189,7 +191,7 @@ describe("MessageActionBar", () => {
       />
     );
     const view = render(fixture(1));
-    resizeObserver.reportWidth(84);
+    resizeObserver.reportWidth(72);
     const trigger = screen.getByRole("button", { name: "Message actions" });
     act(() => trigger.focus());
     const translate = within(openDesktopMenu()).getByRole("menuitem", {
@@ -208,8 +210,26 @@ describe("MessageActionBar", () => {
       trigger.blur();
     });
     expect(screen.getByRole("button", { name: "Copy link" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Copy message" })).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Translate" })).toBeNull();
+    for (const name of ["Add to chat", "Fork into new thread"]) {
+      fireEvent.click(
+        within(openDesktopMenu()).getByRole("menuitem", { name }),
+      );
+      act(() => trigger.blur());
+      expect(screen.getByRole("button", { name })).toBeTruthy();
+      expect(screen.getAllByRole("button")).toHaveLength(3);
+    }
+    resizeObserver.reportWidth(300);
+    expect(
+      screen
+        .getAllByRole("button")
+        .map((button) => button.getAttribute("aria-label")),
+    ).toEqual([
+      "Copy message",
+      "Fork into new thread",
+      "Add to chat",
+      "Message actions",
+    ]);
   });
 
   it("uses the nearest thread window as the tooltip collision boundary", () => {
@@ -269,7 +289,7 @@ describe("MessageActionBar", () => {
         ]}
       />,
     );
-    resizeObserver.reportWidth(116);
+    resizeObserver.reportWidth(100);
 
     expect(
       [...container.querySelectorAll<HTMLButtonElement>("button[aria-label]")]
@@ -326,7 +346,7 @@ describe("MessageActionBar", () => {
         ]}
       />,
     );
-    resizeObserver.reportWidth(84);
+    resizeObserver.reportWidth(72);
 
     expect(screen.getByRole("button", { name: "Copy message" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Edit message" })).toBeTruthy();

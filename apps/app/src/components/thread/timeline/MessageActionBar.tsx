@@ -69,7 +69,7 @@ interface MessageOverflowAction {
   plugin?: { pluginId: string | null; icon: string | null };
   key: string;
   recencyKey?: string;
-  menuOnly?: boolean;
+  defaultOverflow?: boolean;
   label: string;
   onSelect: () => void;
   disabled?: boolean;
@@ -98,7 +98,7 @@ function MessageActionIcon({
   );
 }
 
-const DESKTOP_ACTION_WIDTH_PX = 24;
+const DESKTOP_ACTION_WIDTH_PX = 20;
 const TOUCH_ACTION_WIDTH_PX = 28;
 const ACTION_ROW_GAP_PX = 8;
 const OVERFLOW_TRIGGER_GAP_PX = 4;
@@ -184,7 +184,7 @@ export const MessageColumnWidthContext =
   createContext<SharedMessageColumnWidth | null>(null);
 
 const ACTION_BUTTON_CLASS =
-  "inline-flex size-6 cursor-pointer items-center justify-center text-muted-foreground hover:text-foreground disabled:pointer-events-none disabled:opacity-40";
+  "inline-flex size-5 cursor-pointer items-center justify-center text-muted-foreground hover:text-foreground disabled:pointer-events-none disabled:opacity-40";
 const HOVER_REVEAL_CLASS =
   "opacity-0 transition-opacity group-hover/message:opacity-100 group-focus-within/message:opacity-100";
 const MOBILE_INLINE_ACTION_CLASS =
@@ -225,7 +225,7 @@ function DesktopMessageAction({
             text={action.copyText ?? ""}
             imageUrl={action.copyImageUrl}
             label={action.label}
-            className={cn("size-6", className)}
+            className={className}
           />
         ) : (
           <button
@@ -409,7 +409,7 @@ export function MessageActionBar({
             icon: "Link" as const,
             label: "Copy link",
             onSelect: onCopyLink,
-            menuOnly: true,
+            defaultOverflow: true,
           },
         ]
       : []),
@@ -417,7 +417,7 @@ export function MessageActionBar({
       ? [
           {
             key: "add-to-chat",
-            menuOnly: true,
+            defaultOverflow: true,
             icon: "MessageSquarePlus" as const,
             label: "Add to chat",
             onSelect: handleAddToChat,
@@ -428,7 +428,7 @@ export function MessageActionBar({
       ? [
           {
             key: "fork",
-            menuOnly: true,
+            defaultOverflow: true,
             icon: "Fork" as const,
             label: "Fork into new thread",
             onSelect: onFork,
@@ -454,13 +454,8 @@ export function MessageActionBar({
         action.onSelect();
       },
     }));
-  const inlineCandidates = orderedActions.filter(
-    (action) =>
-      !action.menuOnly ||
-      visibleRecents.includes(action.recencyKey ?? action.key),
-  );
   const layout = computeMessageActionRowLayout({
-    actionCount: inlineCandidates.length,
+    actionCount: actions.filter((action) => !action.defaultOverflow).length,
     availableWidth,
     actionWidth: isCompactTouch
       ? TOUCH_ACTION_WIDTH_PX
@@ -470,7 +465,7 @@ export function MessageActionBar({
     isCompactTouch && mobileActionDisplay === "overflow"
       ? 0
       : layout.inlineCount;
-  const inlineActions = inlineCandidates.slice(0, inlineCount);
+  const inlineActions = orderedActions.slice(0, inlineCount);
   const menuActions = orderedActions.filter(
     (action) => isCompactViewport || !inlineActions.includes(action),
   );
@@ -490,7 +485,7 @@ export function MessageActionBar({
     <TooltipProvider delayDuration={300}>
       <div
         ref={slotRef}
-        className={cn(slotClass, "h-6 max-md:pointer-coarse:h-7")}
+        className={cn(slotClass, "h-5 max-md:pointer-coarse:h-7")}
         onPointerEnter={() => setIsHovered(true)}
         onPointerLeave={() => setIsHovered(false)}
         onFocusCapture={(event) => {
@@ -504,20 +499,16 @@ export function MessageActionBar({
       >
         <div className={rowClass} data-menu-open={isMenuOpen ? "" : undefined}>
           {isCompactTouch ? (
-            <MobileInlineActions
-              actions={inlineCandidates.slice(0, inlineCount)}
-            />
+            <MobileInlineActions actions={inlineActions} />
           ) : (
-            inlineCandidates
-              .slice(0, inlineCount)
-              .map((action) => (
-                <DesktopMessageAction
-                  key={action.key}
-                  action={action}
-                  className={cn(HOVER_REVEAL_CLASS, mobileDirectActionClass)}
-                  collisionBoundary={collisionBoundary}
-                />
-              ))
+            inlineActions.map((action) => (
+              <DesktopMessageAction
+                key={action.key}
+                action={action}
+                className={cn(HOVER_REVEAL_CLASS, mobileDirectActionClass)}
+                collisionBoundary={collisionBoundary}
+              />
+            ))
           )}
           <DropdownMenu onOpenChange={setIsMenuOpen}>
             <DropdownMenuTrigger asChild>

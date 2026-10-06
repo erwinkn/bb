@@ -237,7 +237,8 @@ Message action order in the app:
 
   Copy stays first and More stays last. Other message actions follow recent use,
   with separate user-message and agent-message histories saved in this browser.
-  Selecting an action from More promotes it into the button row when it fits.
+  Inline and overflow actions share one order. Recent actions swap into the
+  existing visible slots; recency never increases the number of visible buttons.
   The active row stays still while hovered, focused, or open; its new order
   appears after leaving it. Unused actions retain their default order.
   This only changes presentation; the existing CLI and SDK actions still work.
