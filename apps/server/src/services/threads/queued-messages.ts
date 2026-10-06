@@ -69,6 +69,7 @@ import { requireReadyThreadEnvironment } from "./thread-turn-dispatch.js";
 import { resolvePermissionEscalation } from "./thread-runtime-config.js";
 import { hasMessageDispatchHooks } from "./dispatch-hooks.js";
 import { attemptDispatch } from "./dispatch-attempt.js";
+import { isErroredThreadQueueDrainable } from "./errored-thread-queue.js";
 import { deliverParentSystemMessage } from "./parent-system-messages.js";
 import {
   createQueuedMessageAutoSendPausedError,
@@ -134,12 +135,20 @@ export function createAutomaticQueuedMessageGroupEligibility(
   args: { now: number; retryingFailure: boolean; thread: Thread },
 ): QueuedThreadMessageGroupEligibility {
   const activeTurnId = getActiveTurnId(deps, args.thread.id);
+  const settledError =
+    args.thread.status === "error" &&
+    isErroredThreadQueueDrainable(deps.db, args);
   return (group) =>
     group.every((member) => {
       if (member.failureReason !== null && !args.retryingFailure) return false;
       const waitingOn = parseStoredQueuedThreadMessageWaitingOn(member);
       switch (waitingOn?.kind) {
         case undefined:
+          return (
+            args.thread.status !== "error" ||
+            member.payloadKind === "retry" ||
+            settledError
+          );
         case "plugin":
           return true;
         case "time":
@@ -147,11 +156,14 @@ export function createAutomaticQueuedMessageGroupEligibility(
         case "thread-busy":
         case "stopping":
           return (
-            args.thread.status === "idle" || args.thread.status === "pending"
+            args.thread.status === "idle" ||
+            args.thread.status === "pending" ||
+            settledError
           );
         case "turn-starting":
           return (
             args.thread.status === "idle" ||
+            settledError ||
             (args.thread.status === "active" && activeTurnId !== null)
           );
         case "host-offline": {
