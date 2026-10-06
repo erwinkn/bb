@@ -43,6 +43,9 @@ function renderTopLevelSequence(
   if (list === null) {
     throw new Error("Timeline did not render a top-level row list");
   }
+  for (const time of list.querySelectorAll("[data-message-time]")) {
+    time.remove();
+  }
   return [...list.querySelectorAll(":scope > [data-timeline-items] > *")].map(
     (child) =>
       child.querySelector('[data-testid="thread-unread-divider"]') === null
