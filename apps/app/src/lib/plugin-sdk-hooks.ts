@@ -332,6 +332,11 @@ export function useBbContext(): BbContext {
   );
 }
 
+const PLUGIN_RUNNABLE_APP_COMMAND_IDS: ReadonlySet<string> = new Set([
+  "palette.open",
+  "thread.search",
+  "settings.open",
+]);
 export function useBbNavigate(): BbNavigate {
   const pluginId = usePluginId();
   const location = useLocation();
@@ -430,6 +435,7 @@ export function useBbNavigate(): BbNavigate {
     BbNavigate["experimental_runAppCommand"]
   >(
     (commandId) => {
+      if (!PLUGIN_RUNNABLE_APP_COMMAND_IDS.has(commandId)) return false;
       const command = appCommandIdSchema.safeParse(commandId);
       return command.success && appCommands.dispatch(command.data, null);
     },

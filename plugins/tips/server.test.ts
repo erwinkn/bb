@@ -32,7 +32,7 @@ interface Fixture {
 
 async function setup(fixture: Fixture = {}) {
   const fake = createFakePluginHost({
-    pluginId: "tips",
+    pluginId: "bb--tips",
     ...(fixture.settings === undefined ? {} : { settings: fixture.settings }),
     sdk: {
       system: {

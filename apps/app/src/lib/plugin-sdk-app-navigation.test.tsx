@@ -103,11 +103,14 @@ describe("plugin SDK app routes and commands", () => {
     expect(onPaletteOpen).toHaveBeenCalledTimes(1);
   });
 
-  it("rejects unknown and plugin command ids", () => {
+  it("rejects unknown, state-changing, and plugin command ids", () => {
     const onPaletteOpen = vi.fn();
     const results = renderProbe(
       (navigate) =>
         navigate.experimental_runAppCommand("palette.explode") ||
+        navigate.experimental_runAppCommand("thread.archive") ||
+        navigate.experimental_runAppCommand("question.select.1") ||
+        navigate.experimental_runAppCommand("plugins.enterSafeMode") ||
         navigate.experimental_runAppCommand("plugin:demo/palette"),
       onPaletteOpen,
     );

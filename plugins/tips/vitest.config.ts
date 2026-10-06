@@ -4,7 +4,7 @@ export default defineConfig({
   resolve: { tsconfigPaths: true },
   test: {
     silent: "passed-only",
-    name: "bb-plugin-tips",
+    name: "bb-plugin-bb--tips",
     include: ["**/*.test.{ts,tsx}"],
     exclude: ["dist/**", "node_modules/**"],
   },

@@ -1605,6 +1605,9 @@ importers:
       bb-plugin-bb--provider-usage:
         specifier: workspace:*
         version: link:../../plugins/provider-usage
+      bb-plugin-bb--tips:
+        specifier: workspace:*
+        version: link:../../plugins/tips
       bb-plugin-bb-account:
         specifier: workspace:*
         version: link:../../plugins/bb-account
@@ -1707,9 +1710,6 @@ importers:
       bb-plugin-thread-list:
         specifier: workspace:*
         version: link:../../plugins/thread-list
-      bb-plugin-tips:
-        specifier: workspace:*
-        version: link:../../plugins/tips
       bb-plugin-workflows:
         specifier: workspace:*
         version: link:../../plugins/workflows

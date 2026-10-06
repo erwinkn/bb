@@ -21,4 +21,4 @@ Use the `bb tips` command:
 - `bb tips dismiss <id>` retires one tip.
 - `bb tips reset` brings back every dismissed and retired tip.
 
-Add `--json` for machine-readable output. Turn tips off with `bb plugin config tips set enabled false`.
+Add `--json` for machine-readable output. Turn tips off with `bb plugin config bb--tips set enabled false`.

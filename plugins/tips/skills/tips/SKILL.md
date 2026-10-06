@@ -23,5 +23,5 @@ bb tips reset [--json]
 - `bb tips reset` clears dismissals, retirements, and shown counts. Features bb
   has already seen in use stay recorded, so their tips stay retired.
 
-Turn tips off or on with `bb plugin config tips set enabled false|true`. Only
+Turn tips off or on with `bb plugin config bb--tips set enabled false|true`. Only
 dismiss or reset tips when the person asks.

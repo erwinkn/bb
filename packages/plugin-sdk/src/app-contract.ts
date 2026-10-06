@@ -157,11 +157,10 @@ export interface ExperimentalQuestionFormHost {
  * the host adds room for its microphone controls when voice input is
  * available.
  */
-export interface ExperimentalVoiceInputTextareaProps
-  extends Omit<
-    ComponentPropsWithRef<"textarea">,
-    "value" | "defaultValue" | "onChange" | "children"
-  > {
+export interface ExperimentalVoiceInputTextareaProps extends Omit<
+  ComponentPropsWithRef<"textarea">,
+  "value" | "defaultValue" | "onChange" | "children"
+> {
   value: string;
   /**
    * Receives typed edits and finished transcripts, which the host appends to
@@ -3407,11 +3406,12 @@ export interface BbNavigate {
    */
   experimental_openAppRoute(path: string): boolean;
   /**
-   * Run one of bb's own app commands by id, exactly as its keyboard shortcut
-   * or palette row would, e.g. `palette.open` (quick palette),
-   * `thread.search` (thread search) or `settings.open`. Returns false for an
-   * id that is not a built-in app command, or when nothing on the current
-   * screen handled it. Plugin command ids are rejected. Experimental: see
+   * Run one of bb's navigation app commands by id, exactly as its keyboard
+   * shortcut or palette row would. Only `palette.open` (quick palette),
+   * `thread.search` (thread search), and `settings.open` are accepted; every
+   * other id, including commands that change state and plugin command ids,
+   * returns false without running. Also returns false when nothing on the
+   * current screen handled the command. Experimental: see
    * docs/api_to_audit.md.
    */
   experimental_runAppCommand(commandId: string): boolean;

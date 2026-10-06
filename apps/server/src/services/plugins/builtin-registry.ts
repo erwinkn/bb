@@ -171,7 +171,7 @@ export const BUILTIN_PLUGINS = [
   },
   {
     name: "tips",
-    pluginId: "tips",
+    pluginId: "bb--tips",
     defaultEnabled: true,
   },
   {

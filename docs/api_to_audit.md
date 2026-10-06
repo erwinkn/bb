@@ -3754,15 +3754,17 @@ or `/settings/updates#whats-new`, keeping the query and hash. It returns false
 without navigating unless the path starts with a single `/`, resolves to the
 app's own origin, and contains no backslash or control character; `/api` and
 `/api/*` are refused. `useBbNavigate().experimental_runAppCommand(commandId)`
-dispatches one built-in app command (an `AppCommandId` such as `palette.open`,
+dispatches one allowlisted navigation command (`palette.open`,
 `thread.search`, or `settings.open`) through the same handler chain as its
-keyboard shortcut, with no event target. It returns false for unknown ids,
-plugin command ids, and commands that no mounted handler accepted. The SDK
+keyboard shortcut, with no event target. It returns false for every other id,
+including state-changing app commands such as `thread.archive`,
+`question.select.*`, or `plugins.enterSafeMode`, for plugin command ids, and
+for commands that no mounted handler accepted. The SDK
 frontend harness records both as `navigateCalls` and takes `openAppRoute` /
 `runAppCommand` acceptance options. First consumer: the bundled Tips plugin.
 
 Before stabilization, decide whether routes should be typed destinations
 (settings section, plugin configuration page) instead of raw paths so bb can
-rename routes without breaking plugins, whether app command ids become a public
-versioned vocabulary or an allowlist, whether commands should accept a target
+rename routes without breaking plugins, whether the navigation allowlist should
+grow into a public versioned vocabulary, whether commands should accept a target
 or surface, and how both behave on mobile and in split panes.

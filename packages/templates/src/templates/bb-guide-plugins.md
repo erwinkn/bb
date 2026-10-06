@@ -161,7 +161,7 @@ The builtin Tips plugin shows one contextual tip at a time on the New thread
 page and at most one new tip a day. Dismissing a tip retires it for good; a tip
 also retires once its feature is in use or its action is taken. Turn tips off
 with the plugin's "Show tips" switch or
-`bb plugin config tips set enabled false`. The CLI equivalents are:
+`bb plugin config bb--tips set enabled false`. The CLI equivalents are:
 
 ```
 bb tips [--all] [--json]
