@@ -52,10 +52,15 @@ Active cleanup retains the 30-second/250-position throttle; idle and archive
 transitions also advance one policy. Repeated active calls progress without waiting
 for global idleness. Under continuous activity, the four policies rotate across
 calls; cleanup is incremental and may fall behind event production. A thread with
-no further triggers can still wait for an idle background sweep. There is no
+no further triggers can still wait for a background sweep. There is no
 promise that a single idle/archive transition finishes its cleanup. Background pruning
-runs every ten seconds when database maintenance is idle, after lifecycle and
-queued-message dispatch work. Busy skips retry on the next tick.
+runs every ten seconds after lifecycle and queued-message dispatch work. It skips
+threads that are active or starting or have pending or resolving interactions,
+without waiting for unrelated threads to become idle. Eligibility is rechecked
+inside every deletion transaction, including resumed cursor visits. Skipped
+threads are revisited on later cycles. Environment provisioning and project
+deletion still pause the whole sweep and retry on the next tick. Database vacuum
+keeps its separate workspace-wide idle gate.
 
 The background policies are `rate-limits`, `usage`, `turn-diffs`, and
 `resolved-items`, all traversing threads. `thread_pruning_cursors` is the only new

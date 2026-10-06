@@ -3,7 +3,6 @@ import {
   advanceThreadPruning,
   getNextThreadPruningPolicy,
   getDatabaseMaintenanceActivity,
-  isDatabaseMaintenanceIdle,
   THREAD_PRUNING_POLICIES,
 } from "@bb/db";
 import type { AppDeps } from "../../types.js";
@@ -38,7 +37,10 @@ export async function runThreadPruningSweep(
       completed.size < THREAD_PRUNING_POLICIES.length
     ) {
       const activity = getDatabaseMaintenanceActivity(deps.db);
-      if (!isDatabaseMaintenanceIdle(activity)) {
+      if (
+        activity.activeEnvironmentProvisioningCount > 0 ||
+        activity.activeProjectDeletionCount > 0
+      ) {
         reason = "busy";
         deps.logger.debug(
           { activity, advances },
@@ -49,7 +51,7 @@ export async function runThreadPruningSweep(
       const policy = getNextThreadPruningPolicy(deps.db, completed);
       if (policy === null) break;
       const advanceStartedAt = performance.now();
-      const result = advanceThreadPruning(deps.db, policy);
+      const result = advanceThreadPruning(deps.db, policy, true);
       const advanceElapsedMs = performance.now() - advanceStartedAt;
       maxAdvanceMs = Math.max(maxAdvanceMs, advanceElapsedMs);
       if (advanceElapsedMs >= 50)

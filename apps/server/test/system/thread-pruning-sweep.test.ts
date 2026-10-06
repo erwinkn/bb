@@ -6,6 +6,7 @@ import {
   events,
   getNextThreadPruningPolicy,
   getThreadEventRewriteGeneration,
+  pendingInteractions,
   threadPruningCursors,
   threads,
 } from "@bb/db";
@@ -48,6 +49,32 @@ function seed(harness: TestAppHarness, count: number) {
   return thread;
 }
 
+function markBusy(
+  harness: TestAppHarness,
+  threadId: string,
+  activity: "active" | "starting" | "pending" | "resolving",
+) {
+  if (activity === "active" || activity === "starting") {
+    harness.db
+      .update(threads)
+      .set({ status: activity })
+      .where(eq(threads.id, threadId))
+      .run();
+  } else {
+    harness.db
+      .insert(pendingInteractions)
+      .values({
+        id: "pruning-interaction",
+        threadId,
+        status: activity,
+        payload: "{}",
+        createdAt: 1,
+        updatedAt: 1,
+      })
+      .run();
+  }
+}
+
 async function getTimeline(
   harness: TestAppHarness,
   threadId: string,
@@ -77,52 +104,84 @@ const UNTIMED_SWEEP_LIMITS: ThreadPruningSweepLimits = {
 };
 
 describe("thread pruning sweep", () => {
-  it("skips busy work and rechecks activity after a committed advance", async () => {
-    await withTestHarness(async (harness) => {
-      const thread = seed(harness, 1200);
-      harness.db
-        .update(threads)
-        .set({ status: "active" })
-        .where(eq(threads.id, thread.id))
-        .run();
-      await runThreadPruningSweep(harness.deps, UNTIMED_SWEEP_LIMITS);
-      expect(harness.db.select().from(threadPruningCursors).all()).toEqual([]);
-      harness.db
-        .update(threads)
-        .set({ status: "idle" })
-        .where(eq(threads.id, thread.id))
-        .run();
-      const generation = getThreadEventRewriteGeneration(thread.id);
-      const notify = vi
-        .spyOn(harness.deps.hub, "notifyThread")
-        .mockImplementation(() => {});
-      const debug = vi
-        .spyOn(harness.deps.logger, "debug")
-        .mockImplementation((fields, message) => {
-          if (
-            message === "Thread pruning policy advanced" &&
-            removedEvents(fields)
-          ) {
-            expect(getThreadEventRewriteGeneration(thread.id)).toBeGreaterThan(
-              generation,
-            );
-            expect(harness.db.select().from(events).all()).toHaveLength(700);
-            harness.db
-              .update(threads)
-              .set({ status: "active" })
-              .where(eq(threads.id, thread.id))
-              .run();
-          }
-        });
-      await runThreadPruningSweep(harness.deps, UNTIMED_SWEEP_LIMITS);
-      expect(notify).toHaveBeenCalledExactlyOnceWith(thread.id, [
-        "history-compacted",
-      ]);
-      expect(harness.db.select().from(events).all()).toHaveLength(700);
-      notify.mockRestore();
-      debug.mockRestore();
-    });
-  });
+  it.each(["active", "starting", "pending", "resolving"] as const)(
+    "prunes settled history while another thread is %s, then revisits it when idle",
+    async (activity) => {
+      await withTestHarness(async (harness) => {
+        const busyThread = seed(harness, 3);
+        const settledThread = seed(harness, 3);
+        markBusy(harness, busyThread.id, activity);
+        const sequences = (threadId: string) =>
+          harness.db
+            .select({ sequence: events.sequence })
+            .from(events)
+            .where(eq(events.threadId, threadId))
+            .orderBy(events.sequence)
+            .all()
+            .map((event) => event.sequence);
+        await runThreadPruningSweep(harness.deps, UNTIMED_SWEEP_LIMITS);
+        expect(sequences(busyThread.id)).toEqual([1, 2, 3]);
+        expect(sequences(settledThread.id)).toEqual([3]);
+        harness.db
+          .update(threads)
+          .set({ status: "idle" })
+          .where(eq(threads.id, busyThread.id))
+          .run();
+        harness.db
+          .delete(pendingInteractions)
+          .where(eq(pendingInteractions.threadId, busyThread.id))
+          .run();
+        await runThreadPruningSweep(harness.deps, UNTIMED_SWEEP_LIMITS);
+        expect(sequences(busyThread.id)).toEqual([3]);
+      });
+    },
+  );
+
+  it.each(["active", "starting", "pending", "resolving"] as const)(
+    "rechecks a thread that becomes %s after a committed advance",
+    async (activity) => {
+      await withTestHarness(async (harness) => {
+        const thread = seed(harness, 1200);
+        markBusy(harness, thread.id, activity);
+        await runThreadPruningSweep(harness.deps, UNTIMED_SWEEP_LIMITS);
+        expect(harness.db.select().from(events).all()).toHaveLength(1200);
+        harness.db
+          .update(threads)
+          .set({ status: "idle" })
+          .where(eq(threads.id, thread.id))
+          .run();
+        harness.db
+          .delete(pendingInteractions)
+          .where(eq(pendingInteractions.threadId, thread.id))
+          .run();
+        const generation = getThreadEventRewriteGeneration(thread.id);
+        const notify = vi
+          .spyOn(harness.deps.hub, "notifyThread")
+          .mockImplementation(() => {});
+        const debug = vi
+          .spyOn(harness.deps.logger, "debug")
+          .mockImplementation((fields, message) => {
+            if (
+              message === "Thread pruning policy advanced" &&
+              removedEvents(fields)
+            ) {
+              expect(
+                getThreadEventRewriteGeneration(thread.id),
+              ).toBeGreaterThan(generation);
+              expect(harness.db.select().from(events).all()).toHaveLength(700);
+              markBusy(harness, thread.id, activity);
+            }
+          });
+        await runThreadPruningSweep(harness.deps, UNTIMED_SWEEP_LIMITS);
+        expect(notify).toHaveBeenCalledExactlyOnceWith(thread.id, [
+          "history-compacted",
+        ]);
+        expect(harness.db.select().from(events).all()).toHaveLength(700);
+        notify.mockRestore();
+        debug.mockRestore();
+      });
+    },
+  );
 
   it("keeps notifications for earlier commits when the next transaction fails, then resumes", async () => {
     await withTestHarness(async (harness) => {

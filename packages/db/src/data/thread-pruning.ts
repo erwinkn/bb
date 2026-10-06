@@ -4,9 +4,14 @@ import {
   emptyResolvedItemPruningProbe,
 } from "./resolved-item-pruning.js";
 import { pruneRateLimitSnapshotWindow } from "./rate-limit-pruning.js";
-import { and, eq, gt, inArray, sql } from "drizzle-orm";
+import { and, eq, gt, inArray, notExists, notInArray, sql } from "drizzle-orm";
 import type { DbConnection } from "../connection.js";
-import { events, threadPruningCursors, threads } from "../schema.js";
+import {
+  events,
+  pendingInteractions,
+  threadPruningCursors,
+  threads,
+} from "../schema.js";
 import { bumpThreadEventRewriteGeneration } from "./event-rewrite-generation.js";
 import {
   getHighWaterMarks,
@@ -59,12 +64,27 @@ export function getNextThreadPruningPolicy(
 function advanceThreadPruningTransaction(
   db: DbConnection,
   policy: ThreadPruningPolicy,
+  skipBusyThreads: boolean,
   threadScope?: string,
 ) {
   const scope = threadScope ?? "";
   const batchSize = threadScope === undefined ? BATCH_SIZE : LIVE_BATCH_SIZE;
   const result = db.transaction(
     (tx) => {
+      const backgroundEligibility = and(
+        notInArray(threads.status, ["active", "starting"]),
+        notExists(
+          tx
+            .select({ id: pendingInteractions.id })
+            .from(pendingInteractions)
+            .where(
+              and(
+                eq(pendingInteractions.threadId, threads.id),
+                inArray(pendingInteractions.status, ["pending", "resolving"]),
+              ),
+            ),
+        ),
+      );
       const latestAdvance = tx
         .select({ updatedAt: threadPruningCursors.updatedAt })
         .from(threadPruningCursors)
@@ -132,7 +152,10 @@ function advanceThreadPruningTransaction(
           .from(threads)
           .where(
             threadScope === undefined
-              ? gt(threads.id, cursor.lastThreadId)
+              ? and(
+                  gt(threads.id, cursor.lastThreadId),
+                  skipBusyThreads ? backgroundEligibility : undefined,
+                )
               : eq(threads.id, threadScope),
           )
           .orderBy(threads.id)
@@ -161,6 +184,15 @@ function advanceThreadPruningTransaction(
           .get();
         if (!thread) {
           action = "missing-thread";
+        } else if (
+          skipBusyThreads &&
+          !tx
+            .select({ id: threads.id })
+            .from(threads)
+            .where(and(eq(threads.id, threadId), backgroundEligibility))
+            .get()
+        ) {
+          action = "thread-complete";
         } else if (policy === "rate-limits") {
           const batch = pruneRateLimitSnapshotWindow(tx, {
             threadId,
@@ -335,6 +367,7 @@ function advanceThreadPruningTransaction(
 export function advanceThreadPruning(
   db: DbConnection,
   target: ThreadPruningPolicy | { threadId: string },
+  skipBusyThreads = false,
 ) {
   const timeout: unknown = db.$client.pragma("busy_timeout", { simple: true });
   if (typeof timeout !== "number")
@@ -348,7 +381,12 @@ export function advanceThreadPruning(
         ? target
         : getNextThreadPruningPolicy(db, new Set(), target.threadId);
     if (policy === null) throw new Error("Missing live pruning policy");
-    return advanceThreadPruningTransaction(db, policy, threadScope);
+    return advanceThreadPruningTransaction(
+      db,
+      policy,
+      skipBusyThreads,
+      threadScope,
+    );
   } finally {
     db.$client.pragma(`busy_timeout = ${timeout}`);
   }
