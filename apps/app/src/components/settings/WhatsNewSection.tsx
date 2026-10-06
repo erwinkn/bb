@@ -51,7 +51,7 @@ const INLINE_COMPONENTS: Components = {
     </code>
   ),
   strong: ({ children }) => (
-    <strong className="font-medium text-foreground">{children}</strong>
+    <strong className="font-semibold text-foreground">{children}</strong>
   ),
 };
 
@@ -66,14 +66,11 @@ function Inline({ text }: { text: string }) {
 function Blocks({ blocks }: { blocks: ChangelogBlock[] }) {
   return blocks.map((block, index) =>
     block.kind === "list" ? (
-      <ul
-        key={index}
-        className="mt-1.5 list-disc space-y-1 pl-4 first:mt-0 marker:text-subtle-foreground"
-      >
+      <ul key={index} className="mt-3 flex flex-col gap-2 first:mt-0">
         {block.items.map((item) => (
           <li
             key={item}
-            className="text-sm leading-normal text-muted-foreground"
+            className="relative pl-5 text-sm leading-relaxed text-muted-foreground before:absolute before:left-0.5 before:top-[0.62em] before:size-1.5 before:rounded-xs before:bg-subtle-foreground/40"
           >
             <Inline text={item} />
           </li>
@@ -82,7 +79,7 @@ function Blocks({ blocks }: { blocks: ChangelogBlock[] }) {
     ) : (
       <p
         key={index}
-        className="mt-1.5 text-sm leading-normal text-muted-foreground first:mt-0"
+        className="mt-3 text-sm leading-relaxed text-muted-foreground first:mt-0"
       >
         <Inline text={block.text} />
       </p>
@@ -138,6 +135,14 @@ function headlineFor(entry: ChangelogEntry): string {
   return RELEASE_META[entry.version]?.headline ?? `bb ${entry.version}`;
 }
 
+function SectionTitle({ title }: { title: string }) {
+  return (
+    <h4 className="mb-3 text-sm font-semibold tracking-tight text-foreground">
+      {title}
+    </h4>
+  );
+}
+
 function ReleaseNotes({ entry }: { entry: ChangelogEntry }) {
   const [expanded, setExpanded] = useState(false);
   const panelId = useId();
@@ -148,12 +153,13 @@ function ReleaseNotes({ entry }: { entry: ChangelogEntry }) {
   return (
     <div className="min-w-0">
       {lede === undefined ? null : (
-        <p className="text-sm leading-normal text-muted-foreground">
+        <p className="text-base leading-relaxed text-muted-foreground">
           <Inline text={lede.text} />
         </p>
       )}
       {primary === null && ledeList.length === 0 ? null : (
-        <div className={lede === undefined ? undefined : "mt-3"}>
+        <div className={lede === undefined ? undefined : "mt-5"}>
+          {primary === null ? null : <SectionTitle title={primary.title} />}
           <Blocks blocks={primary === null ? ledeList : primary.blocks} />
         </div>
       )}
@@ -164,7 +170,7 @@ function ReleaseNotes({ entry }: { entry: ChangelogEntry }) {
           size="sm"
           aria-expanded={expanded}
           aria-controls={panelId}
-          className="-ml-3 mt-1.5 text-muted-foreground"
+          className="-ml-3 mt-3 text-muted-foreground"
           onClick={() => setExpanded((value) => !value)}
         >
           <Icon
@@ -184,13 +190,9 @@ function ReleaseNotes({ entry }: { entry: ChangelogEntry }) {
       ) : null}
       <div id={panelId} hidden={!expanded}>
         {rest.map((section) => (
-          <div key={section.title} className="mt-3 first:mt-1">
-            <h4 className="text-xs font-medium text-subtle-foreground">
-              {section.title}
-            </h4>
-            <div className="mt-1.5">
-              <Blocks blocks={section.blocks} />
-            </div>
+          <div key={section.title} className="mt-6 first:mt-3">
+            <SectionTitle title={section.title} />
+            <Blocks blocks={section.blocks} />
           </div>
         ))}
         <ThanksLine entry={entry} />
@@ -310,7 +312,7 @@ function ReleaseHeroImage({ hero }: { hero: ReleaseHero }) {
   return (
     <div
       data-whats-new-hero
-      className="mt-3 overflow-hidden rounded-md border border-border bg-muted"
+      className="mt-4 overflow-hidden rounded-md border border-border bg-muted"
     >
       <img
         src={hero.src}
@@ -365,7 +367,7 @@ export function WhatsNewView({
             }
           >
             Full changelog
-            <Icon aria-hidden name="ArrowUpRight" className="size-3.5" />
+            <Icon aria-hidden name="ExternalLink" className="size-3.5" />
           </Button>
         }
         actionPlacement="inline"
@@ -375,14 +377,14 @@ export function WhatsNewView({
             <ReleaseRow entry={available} badge="Update available" />
           </div>
         )}
+        <p className="text-xs leading-snug text-subtle-foreground">
+          {metaLine}
+        </p>
         {meta === null ? null : (
-          <h3 className="text-sm font-semibold text-foreground">
+          <h3 className="mt-1.5 text-xl font-bold leading-tight tracking-tight text-balance text-foreground">
             {meta.headline}
           </h3>
         )}
-        <p className="mt-0.5 text-xs leading-snug text-subtle-foreground first:mt-0">
-          {metaLine}
-        </p>
         {meta?.hero === undefined ? null : (
           <ReleaseHeroImage hero={meta.hero} />
         )}
