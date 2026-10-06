@@ -34,10 +34,20 @@ export const tipActionSchema = z.discriminatedUnion("kind", [
 ]);
 export type TipAction = z.infer<typeof tipActionSchema>;
 
+export const tipToneSchema = z.enum([
+  "blue",
+  "green",
+  "amber",
+  "orange",
+  "rose",
+]);
+export type TipTone = z.infer<typeof tipToneSchema>;
+
 export const tipViewSchema = z
   .object({
     id: z.string().min(1),
     icon: z.string().min(1),
+    tone: tipToneSchema,
     title: z.string().min(1),
     body: z.string().min(1),
     action: tipActionSchema,

@@ -80,6 +80,7 @@ function testTip(
   return {
     id,
     icon: "Zap",
+    tone: "blue",
     title: `Title ${id}`,
     body: `Body ${id}.`,
     action: { kind: "prompt", label: "Try it", prompt: `Prompt ${id}` },

@@ -1,4 +1,13 @@
 import { useState, type ComponentType, type ReactNode } from "react";
+import { Button } from "@bb/shared-ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@bb/shared-ui/dropdown-menu";
+import { Icon } from "@bb/shared-ui/icon";
+import { cn } from "@bb/shared-ui/lib/utils";
 import { StoryCard, StoryRow } from "../../.ladle/story-card";
 import { StoryComposer } from "./mobile-home-story-fixtures";
 
@@ -9,9 +18,12 @@ type StoryTipAction =
   | { kind: "route"; label: string; path: string }
   | { kind: "command"; label: string; commandId: string };
 
+type StoryTipTone = "blue" | "green" | "amber" | "orange" | "rose";
+
 interface StoryTip {
   id: string;
   icon: string;
+  tone: StoryTipTone;
   title: string;
   body: string;
   action: StoryTipAction;
@@ -182,12 +194,143 @@ function LayoutStory({
   );
 }
 
+const TONE_COLOR: Record<StoryTipTone, string> = {
+  blue: "var(--timeline-accent)",
+  green: "var(--success)",
+  amber: "var(--attention)",
+  orange: "var(--warning)",
+  rose: "color-mix(in oklab, var(--destructive) 55%, var(--timeline-accent))",
+};
+
+function StoryTipsFooter({ state }: { state: TipsPageState }) {
+  return (
+    <div className="flex items-center justify-between gap-3">
+      <p
+        role="status"
+        className="min-w-0 truncate text-xs text-muted-foreground"
+      >
+        {state.notice ?? ""}
+      </p>
+      <div className="flex shrink-0 items-center">
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          className="h-7 px-2 text-muted-foreground"
+          onClick={state.more}
+        >
+          More ideas
+        </Button>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="size-7 text-muted-foreground"
+              aria-label="Tip options"
+            >
+              <Icon name="MoreHorizontal" className="size-4" aria-hidden />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            <DropdownMenuItem>Hide tips for today</DropdownMenuItem>
+            <DropdownMenuItem>Turn off tips</DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
+    </div>
+  );
+}
+
+function tintedLayout(wash: boolean) {
+  return function TintedLayout(state: TipsPageState) {
+    return (
+      <section aria-label="Tips" className="mt-28 flex flex-col gap-1.5">
+        <ul className="grid grid-cols-3 gap-3">
+          {state.tips.map((tip) => {
+            const tone = TONE_COLOR[tip.tone];
+            return (
+              <li key={tip.id}>
+                <button
+                  type="button"
+                  data-tip-id={tip.id}
+                  className={cn(
+                    "group relative flex h-full w-full flex-col gap-1 overflow-hidden rounded-xl border border-border-hairline bg-background px-4 pb-4 pt-3.5 text-left shadow-xs outline-none motion-safe:transition-[box-shadow,background-color] hover:bg-surface-raised hover:shadow-sm focus-visible:bg-surface-raised focus-visible:shadow-sm focus-visible:ring-2 focus-visible:ring-ring",
+                    state.filledId === tip.id &&
+                      "border-surface-selected-border bg-surface-selected",
+                  )}
+                  onMouseEnter={() => state.setPreviewId(tip.id)}
+                  onMouseLeave={() => state.setPreviewId(null)}
+                  onFocus={() => state.setPreviewId(tip.id)}
+                  onBlur={() => state.setPreviewId(null)}
+                  onClick={() => state.activate(tip)}
+                >
+                  {wash ? (
+                    <span
+                      aria-hidden
+                      className="pointer-events-none absolute inset-0 opacity-60 motion-safe:transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100"
+                      style={{
+                        background: `radial-gradient(140% 110% at 0% 0%, color-mix(in oklab, ${tone} 10%, transparent), transparent 55%)`,
+                      }}
+                    />
+                  ) : null}
+                  <span
+                    aria-hidden
+                    className="relative mb-2 flex size-8 items-center justify-center rounded-lg"
+                    style={{
+                      background: `color-mix(in oklab, ${tone} 14%, transparent)`,
+                      color: `color-mix(in oklab, ${tone} 45%, var(--ink))`,
+                    }}
+                  >
+                    <Icon name={tip.icon} className="size-4" />
+                  </span>
+                  <span className="relative text-sm font-medium text-foreground">
+                    {tip.title}
+                  </span>
+                  <span className="relative line-clamp-3 text-xs text-muted-foreground">
+                    {tip.body}
+                  </span>
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+        <StoryTipsFooter state={state} />
+      </section>
+    );
+  };
+}
+
+const TintedChipLayout = tintedLayout(false);
+const TintedWashLayout = tintedLayout(true);
+
 export function Control() {
   return (
     <LayoutStory
       layout={ControlLayout}
-      hint="Production layout: three raised cards with an icon chip, title, and body under the composer, with the status line, More ideas, and the menu in a slim row below them. Hover a prompt card to preview its prompt as the placeholder; click to fill the composer."
+      hint="Production layout: three raised cards with a tinted icon chip, title, and body under the composer, with the status line, More ideas, and the menu in a slim row below them. Hover a prompt card to preview its prompt as the placeholder; click to fill the composer."
     />
   );
 }
 Control.storyName = "Control (production)";
+
+export function TintedChips() {
+  return (
+    <LayoutStory
+      layout={TintedChipLayout}
+      hint="Candidate 1: each tip gets its own soft hue from the theme's accent tokens; the icon chip and icon are tinted to match. The card is otherwise unchanged."
+    />
+  );
+}
+TintedChips.storyName = "1 Tinted chips";
+
+export function TintedChipsWithWash() {
+  return (
+    <LayoutStory
+      layout={TintedWashLayout}
+      hint="Candidate 2: the same tinted chip plus a very faint wash of that hue in the card's top-left corner, slightly stronger on hover or focus."
+    />
+  );
+}
+TintedChipsWithWash.storyName = "2 Tinted chip with wash";
