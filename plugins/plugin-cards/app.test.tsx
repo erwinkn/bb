@@ -27,12 +27,12 @@ function card(overrides: Partial<PluginCard> = {}): PluginCard {
     icon: "Globe",
     iconUrl: null,
     iconTinted: false,
-    category: "Browser & Web",
-    source: { kind: "bundled" },
+    author: { name: "BB Official", github: null, official: true },
     installed: true,
-    enabled: true,
+    included: false,
     compatible: true,
     incompatibleReason: null,
+    installBadge: null,
     ...overrides,
   };
 }
@@ -60,7 +60,7 @@ describe("plugin-card directive", () => {
     ]);
   });
 
-  it("loads the card, then opens the plugin's detail page from its button", async () => {
+  it("loads the store card, then opens the plugin's detail page from it", async () => {
     const slot = renderCard({ id: "browser-automation" }, (input) => {
       expect(input).toEqual({ pluginId: "browser-automation" });
       return { kind: "found", card: card() };
@@ -69,14 +69,18 @@ describe("plugin-card directive", () => {
       slot.getByRole("status", { name: "Loading plugin browser-automation" }),
     ).toBeTruthy();
 
-    const button = await slot.findByRole("button", {
-      name: "Open Browser Automation",
+    const open = await slot.findByRole("button", {
+      name: "Open Browser Automation details",
     });
     expect(slot.getByText("Drive a real browser from any agent.")).toBeTruthy();
-    expect(slot.getByText("Enabled")).toBeTruthy();
-    expect(slot.getByText("Browser & Web · Official")).toBeTruthy();
+    expect(slot.getByText("BB Official")).toBeTruthy();
+    expect(
+      slot
+        .getByRole("button", { name: "Browser Automation installed" })
+        .getAttribute("aria-disabled"),
+    ).toBe("true");
 
-    fireEvent.click(button);
+    fireEvent.click(open);
     expect(slot.navigateCalls).toEqual([
       {
         method: "experimental_openPluginDetail",
@@ -85,54 +89,52 @@ describe("plugin-card directive", () => {
     ]);
   });
 
+  it("opens the detail page instead of installing from the install icon", async () => {
+    const slot = renderCard({ id: "future-tool" }, () => ({
+      kind: "found",
+      card: card({
+        pluginId: "future-tool",
+        displayName: "Future tool",
+        author: { name: "Ada", github: "ada", official: false },
+        installed: false,
+        installBadge: { kind: "count", installs: 1234 },
+      }),
+    }));
+    const install = await slot.findByRole("button", {
+      name: "Install Future tool — 1,234 installs",
+    });
+    expect(slot.getByText("Ada")).toBeTruthy();
+
+    fireEvent.click(install);
+    expect(slot.navigateCalls).toEqual([
+      { method: "experimental_openPluginDetail", pluginId: "future-tool" },
+    ]);
+    expect(slot.sdkCalls).toEqual([]);
+  });
+
   it.each([
     [
-      "a disabled plugin",
-      card({ enabled: false }),
-      "Disabled",
-      "Enable",
-      "Browser & Web · Official",
-    ],
-    [
-      "a community plugin that is not installed",
-      card({ installed: false, enabled: false, source: { kind: "community" } }),
-      "Not installed",
-      "Install",
-      "Browser & Web · BB Community",
-    ],
-    [
-      "an incompatible third-party plugin",
+      "an incompatible plugin",
       card({
         installed: false,
-        enabled: false,
         compatible: false,
         incompatibleReason: "requires bb 9.0.0",
-        source: { kind: "third-party", marketplace: "Acme Plugins" },
       }),
-      "Incompatible",
-      "Install",
-      "Browser & Web · Acme Plugins · Not reviewed by BB",
+      "Install Browser Automation",
     ],
     [
-      "an uncategorized local plugin",
-      card({
-        category: null,
-        source: { kind: "local", label: "path · /plugins/local-tool" },
-      }),
-      "Enabled",
-      "Open",
-      "path · /plugins/local-tool",
+      "a plugin included with bb",
+      card({ included: true, installBadge: { kind: "builtin" } }),
+      "Browser Automation installed — Built in",
     ],
-  ])("labels %s", async (_name, pluginCard, status, action, details) => {
+  ])("keeps the control inert for %s", async (_name, pluginCard, label) => {
     const slot = renderCard({ id: pluginCard.pluginId }, () => ({
       kind: "found",
       card: pluginCard,
     }));
-    await slot.findByRole("button", {
-      name: `${action} ${pluginCard.displayName}`,
-    });
-    expect(slot.getByText(status)).toBeTruthy();
-    expect(slot.getByText(details)).toBeTruthy();
+    const control = await slot.findByRole("button", { name: label });
+    expect(control.getAttribute("aria-disabled")).toBe("true");
+    fireEvent.click(control);
     expect(slot.navigateCalls).toEqual([]);
   });
 

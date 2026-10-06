@@ -2,10 +2,9 @@ When you ask an agent whether bb can do something, it can answer with a card for
 
 ## What you get
 
-- A compact card in the agent's reply with the plugin's icon, name, description, category, and source.
-- The plugin's status: **Enabled**, **Disabled**, **Not installed**, or **Incompatible**.
-- One button: **Open** for an enabled plugin, **Enable** for a disabled one, and **Install** for one you don't have yet. Clicking anywhere on the card does the same.
-- Third-party marketplace plugins are labeled **Not reviewed by BB**.
+- The same card the plugin store shows when you browse: icon, name, description, author, and install count.
+- An installed plugin shows a check; one you don't have shows a download icon, or a warning when it doesn't support your version of bb.
+- Clicking anywhere on the card, including its install icon, opens the detail page.
 
 ## How it works
 
@@ -15,6 +14,6 @@ The agent calls the `show_plugin_card` tool with a plugin id from `bb plugin sea
 ::plugin-card{id="browser-automation"}
 ```
 
-The card and its button only open the detail page. Installing and enabling still happen there, with the usual confirmation and trust warnings; the agent and the card never change your plugins themselves.
+The card only opens the detail page. Installing and enabling still happen there, with the usual confirmation and trust warnings; the agent and the card never change your plugins themselves.
 
 The BB guide plugin's `find-plugins` skill tells agents when to search the store and how to recommend plugins. Turn off Plugin cards in Settings → Plugins, or run `bb plugin disable bb--plugin-cards`, to remove the tool and cards.

@@ -15,6 +15,10 @@ function catalogResult(overrides: {
   marketplaceDisplayName?: string;
   compatible?: boolean;
   incompatibleReason?: string | null;
+  author?: { name: string; github: string | null; url: string | null } | null;
+  installs?: number | null;
+  installedByDefault?: boolean;
+  publishedAt?: string;
 }) {
   return {
     entryId: overrides.entryId ?? overrides.pluginId,
@@ -35,11 +39,14 @@ function catalogResult(overrides: {
     publisherKey: overrides.marketplace,
     publisherLabel: overrides.marketplace,
     official: overrides.marketplace.startsWith("bb-"),
-    author: null,
+    author: overrides.author ?? null,
     installed: false,
-    installedByDefault: false,
+    installedByDefault: overrides.installedByDefault ?? false,
     conflictingInstallSource: null,
-    installs: null,
+    installs: overrides.installs ?? null,
+    ...(overrides.publishedAt === undefined
+      ? {}
+      : { publishedAt: overrides.publishedAt }),
     compatible: overrides.compatible ?? true,
     incompatibleReason: overrides.incompatibleReason ?? null,
   };
@@ -51,6 +58,8 @@ const catalog = [
     displayName: "Browser extras",
     marketplace: "acme",
     marketplaceDisplayName: "Acme Plugins",
+    author: { name: "Ada", github: "ada", url: null },
+    installs: 1234,
   }),
   catalogResult({
     pluginId: "browser-automation",
@@ -69,6 +78,7 @@ const catalog = [
     marketplace: "bb-community",
     compatible: false,
     incompatibleReason: "requires bb 9.0.0",
+    publishedAt: new Date().toISOString(),
   }),
 ];
 
@@ -197,7 +207,7 @@ describe("show_plugin_card tool", () => {
 });
 
 describe("getPluginCard rpc", () => {
-  it("combines the catalog entry with installed and enabled state", async () => {
+  it("returns the store card fields with installed state", async () => {
     const { host } = createHost([{ id: "browser-automation", enabled: false }]);
     await expect(
       host.harness.behavior.callRpc("getPluginCard", {
@@ -212,18 +222,30 @@ describe("getPluginCard rpc", () => {
         icon: "Globe",
         iconUrl: null,
         iconTinted: false,
-        category: "Browser & Web",
-        source: { kind: "bundled" },
+        author: { name: "BB Official", github: null, official: true },
         installed: true,
-        enabled: false,
+        included: false,
         compatible: true,
         incompatibleReason: null,
+        installBadge: null,
       },
     });
   });
 
-  it("labels community and third-party sources and keeps incompatibility", async () => {
+  it("credits the author and badges installs, new listings, and incompatibility", async () => {
     const { host } = createHost();
+    await expect(
+      host.harness.behavior.callRpc("getPluginCard", {
+        pluginId: "browser-automation-extras",
+      }),
+    ).resolves.toMatchObject({
+      kind: "found",
+      card: {
+        author: { name: "Ada", github: "ada", official: false },
+        installed: false,
+        installBadge: { kind: "count", installs: 1234 },
+      },
+    });
     await expect(
       host.harness.behavior.callRpc("getPluginCard", {
         pluginId: "future-tool",
@@ -231,20 +253,29 @@ describe("getPluginCard rpc", () => {
     ).resolves.toMatchObject({
       kind: "found",
       card: {
-        source: { kind: "community" },
-        installed: false,
-        enabled: false,
+        author: { name: "bb-community", github: null, official: false },
         compatible: false,
         incompatibleReason: "requires bb 9.0.0",
+        installBadge: { kind: "new" },
       },
     });
+  });
+
+  it("falls back to an installed plugin the store does not list", async () => {
+    const { host } = createHost([{ id: "local-tool", enabled: true }]);
     await expect(
       host.harness.behavior.callRpc("getPluginCard", {
-        pluginId: "browser-automation-extras",
+        pluginId: "local-tool",
       }),
     ).resolves.toMatchObject({
       kind: "found",
-      card: { source: { kind: "third-party", marketplace: "Acme Plugins" } },
+      card: {
+        pluginId: "local-tool",
+        author: { name: "Local", github: null, official: false },
+        installed: true,
+        included: false,
+        installBadge: null,
+      },
     });
   });
 

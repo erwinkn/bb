@@ -11,21 +11,27 @@ import {
   pluginCardDirective,
 } from "./shared.js";
 
-const BUNDLED_MARKETPLACE = "bb-official";
-const COMMUNITY_MARKETPLACE = "bb-community";
+const OFFICIAL_MARKETPLACE = "bb-official";
+const INSTALL_COUNT_DISPLAY_MINIMUM = 25;
+const NEW_PLUGIN_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
 
 const TOOL_DESCRIPTION =
   "Show the user an inline card for an existing bb plugin. The card opens the plugin's detail page, where the user can review, enable, or install it. Pass the exact `pluginId` from `bb plugin search <terms> --json` or `bb plugin list --json`. This never installs or enables anything.";
 
 const AGENT_INSTRUCTIONS = `When you recommend an existing bb plugin, call ${TOOL_NAME} with its pluginId and copy the returned \`::${DIRECTIVE_ID}\` line into your reply on its own line.`;
 
-const pluginCardSourceSchema = z.discriminatedUnion("kind", [
-  z.object({ kind: z.literal("bundled") }).strict(),
-  z.object({ kind: z.literal("community") }).strict(),
-  z
-    .object({ kind: z.literal("third-party"), marketplace: z.string() })
-    .strict(),
-  z.object({ kind: z.literal("local"), label: z.string() }).strict(),
+const pluginCardAuthorSchema = z
+  .object({
+    name: z.string(),
+    github: z.string().nullable(),
+    official: z.boolean(),
+  })
+  .strict();
+
+const pluginCardInstallBadgeSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("builtin") }).strict(),
+  z.object({ kind: z.literal("new") }).strict(),
+  z.object({ kind: z.literal("count"), installs: z.number().int() }).strict(),
 ]);
 
 const pluginCardSchema = z
@@ -36,17 +42,20 @@ const pluginCardSchema = z
     icon: z.string().nullable(),
     iconUrl: z.string().nullable(),
     iconTinted: z.boolean(),
-    category: z.string().nullable(),
-    source: pluginCardSourceSchema,
+    author: pluginCardAuthorSchema,
     installed: z.boolean(),
-    enabled: z.boolean(),
+    included: z.boolean(),
     compatible: z.boolean(),
     incompatibleReason: z.string().nullable(),
+    installBadge: pluginCardInstallBadgeSchema.nullable(),
   })
   .strict();
 
 export type PluginCard = z.infer<typeof pluginCardSchema>;
-export type PluginCardSource = z.infer<typeof pluginCardSourceSchema>;
+type PluginCardInstallBadge = z.infer<typeof pluginCardInstallBadgeSchema>;
+type CatalogEntry = Awaited<
+  ReturnType<BbPluginApi["sdk"]["plugins"]["catalog"]["search"]>
+>["results"][number];
 
 type PluginCardLookup =
   | { kind: "found"; card: PluginCard }
@@ -62,12 +71,43 @@ export const pluginCardsRpcContract = defineRpcContract({
   },
 });
 
-function catalogSource(marketplace: string, displayName: string) {
-  if (marketplace === BUNDLED_MARKETPLACE) return { kind: "bundled" } as const;
-  if (marketplace === COMMUNITY_MARKETPLACE) {
-    return { kind: "community" } as const;
+function catalogAuthor(entry: CatalogEntry): PluginCard["author"] {
+  const official = entry.marketplace === OFFICIAL_MARKETPLACE;
+  return {
+    name: official
+      ? "BB Official"
+      : (entry.author?.name ?? entry.publisherLabel),
+    github: entry.author?.github ?? null,
+    official,
+  };
+}
+
+function localAuthor(
+  installed: Awaited<
+    ReturnType<BbPluginApi["sdk"]["plugins"]["list"]>
+  >["plugins"][number],
+): PluginCard["author"] {
+  const official = installed.provenance === "builtin";
+  return {
+    name: official ? "BB Official" : (installed.publisherLabel ?? "Local"),
+    github: null,
+    official,
+  };
+}
+
+function catalogInstallBadge(
+  entry: CatalogEntry,
+  now: number,
+): PluginCardInstallBadge | null {
+  if (entry.installedByDefault) return { kind: "builtin" };
+  const installs = entry.installs ?? null;
+  if (installs !== null && installs >= INSTALL_COUNT_DISPLAY_MINIMUM) {
+    return { kind: "count", installs };
   }
-  return { kind: "third-party", marketplace: displayName } as const;
+  const publishedAt =
+    entry.publishedAt === undefined ? NaN : Date.parse(entry.publishedAt);
+  if (now - publishedAt < NEW_PLUGIN_WINDOW_MS) return { kind: "new" };
+  return installs === null ? null : { kind: "count", installs };
 }
 
 export async function lookupPluginCard(
@@ -98,12 +138,12 @@ export async function lookupPluginCard(
         icon: entry.icon,
         iconUrl: entry.iconUrl,
         iconTinted: entry.iconTinted,
-        category: entry.category ?? null,
-        source: catalogSource(entry.marketplace, entry.marketplaceDisplayName),
+        author: catalogAuthor(entry),
         installed: installed !== undefined,
-        enabled: installed?.enabled ?? false,
+        included: entry.source.startsWith("builtin:"),
         compatible: entry.compatible,
         incompatibleReason: entry.incompatibleReason,
+        installBadge: catalogInstallBadge(entry, Date.now()),
       },
     };
   }
@@ -117,12 +157,12 @@ export async function lookupPluginCard(
         icon: installed.icon,
         iconUrl: installed.iconUrl,
         iconTinted: false,
-        category: installed.category ?? null,
-        source: { kind: "local", label: installed.sourceDisplay },
+        author: localAuthor(installed),
         installed: true,
-        enabled: installed.enabled,
+        included: installed.provenance === "builtin",
         compatible: true,
         incompatibleReason: null,
+        installBadge: null,
       },
     };
   }

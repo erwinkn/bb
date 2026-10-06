@@ -5,17 +5,16 @@ import {
   useRpc,
   type PluginMessageDirectiveProps,
 } from "@get-bb/plugin-sdk/app";
-import { Button } from "@/components/ui/button";
-import { CONTEXT_CARD_CLASS } from "@/components/ui/chrome-style-tokens";
-import { PluginBrandIcon } from "@/components/ui/plugin-icon";
+import {
+  PluginBrowseCard,
+  PluginCatalogAuthorByline,
+  PluginCatalogIconChip,
+  PluginCatalogInstallControl,
+  pluginInstallBadgePresentation,
+} from "@/components/ui/plugin-catalog-card";
 import { Skeleton } from "@/components/ui/skeleton";
-import { cn } from "@/lib/utils";
 import { DIRECTIVE_ID, PLUGIN_ID_PATTERN } from "./shared.js";
-import type {
-  PluginCard,
-  PluginCardSource,
-  pluginCardsRpcContract,
-} from "./server.js";
+import type { PluginCard, pluginCardsRpcContract } from "./server.js";
 
 type CardState =
   | { status: "loading" }
@@ -23,40 +22,8 @@ type CardState =
   | { status: "not-found" }
   | { status: "error"; message: string };
 
-export function pluginCardStatus(card: PluginCard): string {
-  if (card.installed) return card.enabled ? "Enabled" : "Disabled";
-  return card.compatible ? "Not installed" : "Incompatible";
-}
-
-export function pluginCardActionLabel(card: PluginCard): string {
-  if (!card.installed) return "Install";
-  return card.enabled ? "Open" : "Enable";
-}
-
-export function pluginCardSourceLabel(source: PluginCardSource): string {
-  switch (source.kind) {
-    case "bundled":
-      return "Official";
-    case "community":
-      return "BB Community";
-    case "third-party":
-      return `${source.marketplace} · Not reviewed by BB`;
-    case "local":
-      return source.label;
-  }
-}
-
-function CardFrame({ children }: { children: ReactNode }) {
-  return (
-    <div
-      className={cn(
-        "relative my-2 flex max-w-md items-center gap-3 p-3",
-        CONTEXT_CARD_CLASS,
-      )}
-    >
-      {children}
-    </div>
-  );
+function CardSlot({ children }: { children: ReactNode }) {
+  return <div className="my-2 w-full max-w-xs">{children}</div>;
 }
 
 function CardNotice({ children }: { children: ReactNode }) {
@@ -71,62 +38,47 @@ function CardNotice({ children }: { children: ReactNode }) {
 }
 
 function ReadyCard({ card, onOpen }: { card: PluginCard; onOpen: () => void }) {
-  const status = pluginCardStatus(card);
-  const details = [card.category, pluginCardSourceLabel(card.source)].filter(
-    (part): part is string => part !== null && part.length > 0,
-  );
+  const count = pluginInstallBadgePresentation(card.installBadge);
   return (
-    <CardFrame>
-      <span className="flex size-9 shrink-0 items-center justify-center rounded-md border border-border bg-background text-foreground">
-        <PluginBrandIcon
-          icon={card.icon}
-          iconUrl={card.iconUrl}
-          iconTinted={card.iconTinted}
-          className="size-5"
-        />
-      </span>
-      <div className="min-w-0 flex-1">
-        <div className="flex min-w-0 items-baseline gap-2">
-          <span className="truncate text-sm font-medium text-foreground">
-            {card.displayName}
-          </span>
-          <span
-            className={cn(
-              "shrink-0 text-xs",
-              card.installed && card.enabled
-                ? "text-foreground"
-                : "text-muted-foreground",
-            )}
+    <CardSlot>
+      <PluginBrowseCard
+        leading={<PluginCatalogIconChip entry={card} compact />}
+        title={card.displayName}
+        description={card.description || undefined}
+        byline={
+          <PluginCatalogAuthorByline
+            name={card.author.name}
+            github={card.author.github}
+            official={card.author.official}
           >
-            {status}
-          </span>
-        </div>
-        {card.description.length > 0 ? (
-          <p
-            className="truncate text-xs text-muted-foreground"
-            title={card.description}
-          >
-            {card.description}
-          </p>
-        ) : null}
-        <p
-          className="truncate text-xs text-subtle-foreground"
-          title={card.incompatibleReason ?? undefined}
-        >
-          {details.join(" · ")}
-        </p>
-      </div>
-      <Button
-        type="button"
-        size="sm"
-        variant="outline"
-        aria-label={`${pluginCardActionLabel(card)} ${card.displayName}`}
-        className="shrink-0 after:absolute after:inset-0 after:rounded-lg"
-        onClick={onOpen}
-      >
-        {pluginCardActionLabel(card)}
-      </Button>
-    </CardFrame>
+            {card.author.name}
+          </PluginCatalogAuthorByline>
+        }
+        footerAction={
+          card.installed ? (
+            <PluginCatalogInstallControl
+              displayName={card.displayName}
+              installed
+              subtle
+              included={card.included}
+              count={count}
+            />
+          ) : (
+            <PluginCatalogInstallControl
+              displayName={card.displayName}
+              installed={false}
+              subtle
+              disabled={!card.compatible}
+              unavailableReason={card.incompatibleReason}
+              count={count}
+              onInstall={onOpen}
+            />
+          )
+        }
+        openLabel={`Open ${card.displayName} details`}
+        onOpen={onOpen}
+      />
+    </CardSlot>
   );
 }
 
@@ -172,20 +124,21 @@ function PluginCardDirective({ attributes }: PluginMessageDirectiveProps) {
   }
   if (state.status === "loading") {
     return (
-      <CardFrame>
+      <CardSlot>
         <div
           role="status"
           aria-busy="true"
           aria-label={`Loading plugin ${pluginId}`}
-          className="flex flex-1 items-center gap-3"
+          className="flex min-h-36 flex-col gap-2 rounded-xl border border-border bg-card p-3"
         >
-          <Skeleton className="size-9 shrink-0 rounded-md" />
-          <div className="flex flex-1 flex-col gap-1.5">
+          <div className="flex items-center gap-3">
+            <Skeleton className="size-6 shrink-0 rounded" />
             <Skeleton className="h-4 w-1/3" />
-            <Skeleton className="h-3 w-2/3" />
           </div>
+          <Skeleton className="h-3 w-full" />
+          <Skeleton className="h-3 w-2/3" />
         </div>
-      </CardFrame>
+      </CardSlot>
     );
   }
   if (state.status === "not-found") {
