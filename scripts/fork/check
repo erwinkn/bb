@@ -1,0 +1,173 @@
+#!/usr/bin/env bash
+source "$(dirname "$0")/lib.sh"
+
+usage() {
+  cat <<'EOF'
+Usage: scripts/fork/check [--tarball <path>] [--keep] [--port <n>] [--dry-run]
+       scripts/fork/check --stop
+
+Runs a build in an isolated BB on a sanitized copy of the live data, prints a
+summary, then stops it and deletes the copy.
+
+  --tarball <path>  build to test (default: newest .fork-build/bb-app-*.tgz)
+  --keep            leave the instance running for manual or browser checks
+  --port <n>        server port (default 48886; the daemon uses n+1)
+  --stop            stop a kept instance and delete it
+
+The copy lives in .fork-build/check, on disk. It never touches the live
+service: separate HOME, data dir and ports, env -i, no host-id, and before the
+first start it deletes the Connect, push and account credentials, disables
+providers and automations, and points every plugin at copied sources.
+EOF
+}
+
+D="$FORK_BUILD/check"
+PORT=48886
+KEEP=0
+STOP=0
+TARBALL=""
+PLUGIN_DATA="initiatives advisor plans questions sidebar editor machine-load threads"
+EXTRA_COPIES="$HOME/Code/erwinkn.com-main/packages"
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --tarball) TARBALL=$2; shift ;;
+    --keep) KEEP=1 ;;
+    --stop) STOP=1 ;;
+    --port) PORT=$2; shift ;;
+    --dry-run) DRY_RUN=1 ;;
+    -h|--help) usage; exit 0 ;;
+    *) usage >&2; exit 2 ;;
+  esac
+  shift
+done
+
+stop_instance() {
+  if [ -x "$D/env.sh" ]; then
+    run "$D/env.sh" bb-app stop || true
+  fi
+  run rm -rf "$D"
+}
+
+if [ "$STOP" = 1 ]; then
+  stop_instance
+  say "stopped and removed $D"
+  exit 0
+fi
+
+TARBALL=${TARBALL:-$(newest_tarball)}
+[ -f "$TARBALL" ] || die "no tarball; run scripts/fork/build first"
+stop_instance
+for port in "$PORT" "$((PORT + 1))"; do
+  if ss -ltn "sport = :$port" | grep -q LISTEN; then
+    die "port $port is in use; stop whatever listens there or pass --port"
+  fi
+done
+
+step "Install $(basename "$TARBALL") into $D/prefix"
+run mkdir -p "$D/home" "$D/data/plugins" "$D/src"
+if [ "$DRY_RUN" = 0 ]; then
+  cat > "$D/env.sh" <<EOF
+#!/usr/bin/env bash
+exec env -i HOME=$D/home USER=$USER LANG=C.UTF-8 TERM=dumb TZ=${TZ:-Europe/Paris} \\
+  PATH=$D/prefix/bin:/usr/local/bin:/usr/bin:/bin \\
+  XDG_CONFIG_HOME=$D/home/.config XDG_DATA_HOME=$D/home/.local/share XDG_CACHE_HOME=$D/home/.cache \\
+  BB_DATA_DIR=$D/data BB_SERVER_PORT=$PORT BB_HOST_DAEMON_PORT=$((PORT + 1)) BB_TELEMETRY=false \\
+  BB_SERVER_URL=http://127.0.0.1:$PORT npm_config_cache=$HOME/.npm "\$@"
+EOF
+  chmod +x "$D/env.sh"
+fi
+run_sh "'$D/env.sh' npm install -g --prefix '$D/prefix' '$TARBALL' > '$D/install.log' 2>&1"
+PKG="$D/prefix/$PKG_SUFFIX"
+
+step "Copy the live databases (VACUUM INTO)"
+started=$(date +%s.%N)
+run sqlite3 "$LIVE_DATA/bb.db" "VACUUM INTO '$D/data/bb.db'"
+say "bb.db copied in $(echo "$(date +%s.%N) - $started" | bc | cut -c1-4) s"
+for plugin in $PLUGIN_DATA; do
+  [ -s "$LIVE_DATA/plugins/$plugin/data.db" ] || continue
+  run mkdir -p "$D/data/plugins/$plugin"
+  run sqlite3 "$LIVE_DATA/plugins/$plugin/data.db" "VACUUM INTO '$D/data/plugins/$plugin/data.db'"
+done
+
+step "Copy path plugin sources"
+if [ "$DRY_RUN" = 0 ]; then
+  sources=$(sqlite3 "$D/data/bb.db" "select source_path from plugins where source_kind='path' and source_path is not null")
+else
+  sources=$(sqlite3 -readonly "$LIVE_DATA/bb.db" "select source_path from plugins where source_kind='path' and source_path is not null")
+fi
+for dir in $( (for s in $sources; do dirname "$s"; done; for e in $EXTRA_COPIES; do echo "$e"; done) | sort -u); do
+  [ -d "$dir" ] || { warn "missing $dir"; continue; }
+  run mkdir -p "$D/src$(dirname "$dir")"
+  run cp -a "$dir" "$D/src$dir"
+done
+
+step "Sanitize the copy"
+run_sh "sqlite3 '$D/data/bb.db' <<'SQL'
+DELETE FROM plugin_kv WHERE plugin_id IN ('connect','push-notifications','account-pool','account-pool-local','executor');
+UPDATE plugins SET enabled=0 WHERE id IN ('connect','push-notifications','provider-codex','provider-claude-code',
+  'provider-pi','provider-acp','automations','scheduled-send','provider-retry','account-pool');
+UPDATE plugins SET source=replace(source,':/',':$D/src/'), root_dir='$D/src'||root_dir,
+  source_path='$D/src'||source_path WHERE source_kind='path';
+UPDATE plugins SET root_dir='$PKG/server/dist/builtin-plugins/'||substr(root_dir, instr(root_dir,'/builtin-plugins/')+17)
+  WHERE source_kind='builtin' AND instr(root_dir,'/builtin-plugins/')>0;
+SQL"
+if [ "$DRY_RUN" = 0 ]; then
+  outside=$(sqlite3 "$D/data/bb.db" "select id from plugins where source_kind in ('path','builtin') and root_dir not like '$D/%'")
+  [ -z "$outside" ] || die "plugins still point outside the copy: $outside"
+fi
+migrations_before=$( [ "$DRY_RUN" = 1 ] && echo "?" || sqlite3 "$D/data/bb.db" "select count(*) from __drizzle_migrations")
+
+step "Start the isolated BB on port $PORT"
+if [ "$DRY_RUN" = 1 ]; then
+  say "[dry-run] start $D/prefix/bin/bb-app, wait for /health, print the summary"
+  exit 0
+fi
+if [ "$KEEP" = 0 ]; then trap stop_instance EXIT; fi
+started=$(date +%s.%N)
+setsid nohup "$D/env.sh" "$D/prefix/bin/bb-app" start > "$D/bb-app.log" 2>&1 < /dev/null &
+for _ in $(seq 1 360); do
+  curl -sf "http://127.0.0.1:$PORT/health" > /dev/null && break
+  sleep 0.5
+done
+curl -sf "http://127.0.0.1:$PORT/health" > /dev/null || { tail -n 20 "$D/bb-app.log"; die "isolated BB did not become healthy; logs in $D/data/logs"; }
+grep -q "\"serverUrl\": \"http://127.0.0.1:$PORT\"" "$D/data/bb-app-runtime.json" 2>/dev/null \
+  || { tail -n 20 "$D/bb-app.log"; die "port $PORT answered, but not from the isolated BB"; }
+healthy_after=$(echo "$(date +%s.%N) - $started" | bc | cut -c1-4)
+sleep 10
+
+step "Summary"
+say "build:       $(basename "$TARBALL") $(curl -s "http://127.0.0.1:$PORT/install/version")"
+say "migrations:  $migrations_before -> $(sqlite3 "$D/data/bb.db" "select count(*) from __drizzle_migrations"), healthy after $healthy_after s"
+"$D/env.sh" bb plugin list > "$D/plugins.txt" 2>&1 || true
+say "plugins:     $(grep -cE '^[^ ].*  running' "$D/plugins.txt") running, $(grep -cE '^[^ ].*  needs-configuration' "$D/plugins.txt") need configuration, $(grep -cE '^[^ ].*  (failed|error|crashed)' "$D/plugins.txt") failed"
+grep -E '^[^ ].*  (failed|error|crashed|needs-configuration)' "$D/plugins.txt" | sed 's/^/             /' || true
+node -e '
+const fs = require("fs"), dir = process.argv[1];
+let errors = 0, warnings = 0; const seen = [];
+for (const f of fs.readdirSync(dir).filter(f => /^server\.\d+\.log$/.test(f))) {
+  for (const line of fs.readFileSync(`${dir}/${f}`, "utf8").split("\n")) {
+    let j; try { j = JSON.parse(line); } catch { continue; }
+    if (j.level >= 50) { errors++; if (seen.length < 5) seen.push(j.msg); } else if (j.level >= 40) warnings++;
+  }
+}
+console.log(`server log:  ${errors} errors, ${warnings} warnings`);
+for (const m of seen) console.log(`             ${m}`);
+' "$D/data/logs"
+connect=$("$D/env.sh" bb connect status 2>&1 || true)
+say "connect:     ${connect%%$'\n'*}"
+if MAIN=$(service_main_pid); then
+  mapfile -t reasons < <(full_restart_reasons "$PKG" "$(running_server_package "$MAIN")" "$(running_daemon_package "$MAIN")")
+  if [ ${#reasons[@]} -eq 0 ]; then
+    say "deploy:      server-only restart (agents keep running)"
+  else
+    say "deploy:      full restart, because: $(IFS=';'; echo "${reasons[*]}" | sed 's/;/; /g')"
+  fi
+fi
+
+if [ "$KEEP" = 1 ]; then
+  say ""
+  say "Kept running: http://127.0.0.1:$PORT  (CLI: $D/env.sh bb ...)"
+  say "Screenshots: agent-browser --args --no-sandbox open http://127.0.0.1:$PORT/"
+  say "Stop with:   scripts/fork/check --stop"
+fi

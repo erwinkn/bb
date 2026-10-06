@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+source "$(dirname "$0")/lib.sh"
+
+usage() {
+  cat <<'EOF'
+Usage: scripts/fork/build [--dry-run]
+
+Builds bb-app from this checkout and packs it into .fork-build/bb-app-<version>.tgz,
+replacing an older tarball of the same version. Prints the tarball path last.
+Touches nothing outside the checkout.
+EOF
+}
+
+for arg in "$@"; do
+  case "$arg" in
+    --dry-run) DRY_RUN=1 ;;
+    -h|--help) usage; exit 0 ;;
+    *) usage >&2; exit 2 ;;
+  esac
+done
+
+cd "$REPO"
+mkdir -p "$FORK_BUILD"
+version=$(package_version "$REPO/packages/bb-app")
+log="$FORK_BUILD/build-$version.log"
+
+step "Build bb-app $version at $(describe_head) (log: $log)"
+run_sh "pnpm install --frozen-lockfile > '$log' 2>&1"
+run_sh "pnpm exec turbo run build --filter=bb-app >> '$log' 2>&1" || { tail -30 "$log"; die "build failed"; }
+run rm -f "$FORK_BUILD/bb-app-$version.tgz"
+run_sh "cd packages/bb-app && npm pack --pack-destination '$FORK_BUILD' >> '$log' 2>&1"
+say "$FORK_BUILD/bb-app-$version.tgz"

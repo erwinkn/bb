@@ -1,0 +1,82 @@
+#!/usr/bin/env bash
+source "$(dirname "$0")/lib.sh"
+
+usage() {
+  cat <<'EOF'
+Usage: scripts/fork/status [--fetch]
+
+Read-only. Shows which build the live BB runs, where `current` and the last
+deploy point, how branch erwin relates to upstream and origin, and the newest
+database backup. --fetch first runs `git fetch upstream --tags` and
+`git fetch origin` to see newer releases.
+EOF
+}
+
+FETCH=0
+for arg in "$@"; do
+  case "$arg" in
+    --fetch) FETCH=1 ;;
+    -h|--help) usage; exit 0 ;;
+    *) usage >&2; exit 2 ;;
+  esac
+done
+
+step "Live service"
+if MAIN=$(service_main_pid); then
+  SERVER_PKG=$(running_server_package "$MAIN")
+  DAEMON_PKG=$(running_daemon_package "$MAIN")
+  say "service:   active since $(systemctl --user show -p ActiveEnterTimestamp --value "$SERVICE")"
+  say "server:    $(build_name_of "${SERVER_PKG:-?}")"
+  say "daemon:    $(build_name_of "${DAEMON_PKG:-?}") (also the launcher)"
+  say "health:    $(curl -sf --max-time 3 "$LIVE_URL/install/version" || echo "not answering")"
+  if [ -n "$DAEMON_PKG" ] && ! has_follow_install "$DAEMON_PKG"; then
+    say "note:      the running launcher predates the launcher patch; the next deploy is a full restart"
+  fi
+else
+  say "service:   $SERVICE is not running"
+fi
+if [ -L "$CURRENT" ]; then
+  say "current:   $(readlink "$CURRENT")"
+else
+  say "current:   (not set up yet; the first deploy creates it)"
+fi
+say "previous:  $(cat "$PREVIOUS_FILE" 2>/dev/null || echo "(none)")"
+if dropin_uses_current; then
+  say "drop-in:   starts $CURRENT/bin/bb-app"
+elif [ -f "$DROPIN" ]; then
+  say "drop-in:   $(grep '^ExecStart=.' "$DROPIN" | cut -d= -f2-)"
+else
+  say "drop-in:   none (the unit runs npm bb-app)"
+fi
+say "builds:    $(ls "$BUILDS" 2>/dev/null | grep -v -e '^current$' -e '^previous$' -e '\.txt$' | tr '\n' ' ')"
+
+step "Checkout $REPO"
+if [ "$FETCH" = 1 ]; then
+  git -C "$REPO" fetch -q upstream --tags
+  git -C "$REPO" fetch -q origin
+fi
+base=$(base_tag erwin)
+newest=$(git -C "$REPO" tag -l 'desktop-v*' --sort=-v:refname | sed -n 1p)
+say "branch:    $(git -C "$REPO" rev-parse --abbrev-ref HEAD) at $(describe_head)"
+say "erwin:     $base + $(git -C "$REPO" rev-list --count "$base..erwin") commits"
+if [ "$newest" != "$base" ]; then
+  say "upstream:  $newest is available (scripts/fork/upgrade $newest)"
+else
+  say "upstream:  $base is the newest known tag$([ "$FETCH" = 1 ] || echo "; --fetch to check")"
+fi
+if git -C "$REPO" rev-parse -q --verify origin/erwin > /dev/null; then
+  counts=$(git -C "$REPO" rev-list --left-right --count origin/erwin...erwin)
+  say "origin:    erwin is ${counts#*	} ahead, ${counts%	*} behind origin/erwin"
+fi
+dirty=$(git -C "$REPO" status --porcelain | wc -l)
+[ "$dirty" = 0 ] || say "dirty:     $dirty changed files"
+
+step "Backups"
+latest=$(ls -t "$BACKUPS" 2>/dev/null | sed -n 1p || true)
+if [ -n "$latest" ]; then
+  say "newest:    $BACKUPS/$latest ($(du -sh "$BACKUPS/$latest" | cut -f1), $(date -r "$BACKUPS/$latest" '+%F %T'))"
+else
+  say "newest:    none in $BACKUPS"
+fi
+[ -f "$LAST_CHECK_FILE" ] && say "last post-restart check: $LAST_CHECK_FILE ($(date -r "$LAST_CHECK_FILE" '+%F %T'))"
+exit 0

@@ -1,0 +1,107 @@
+#!/usr/bin/env bash
+source "$(dirname "$0")/lib.sh"
+
+usage() {
+  cat <<'EOF'
+Usage: scripts/fork/upgrade <upstream-tag> [--continue] [--no-check] [--dry-run]
+
+Moves branch erwin onto an upstream release, e.g. desktop-v0.46.0:
+
+  1. git fetch upstream --tags (also in --dry-run; it moves no branch)
+  2. keeps the old stack as branch erwin-on-<old version>
+  3. git rebase --onto <tag> <old base tag> erwin
+  4. scripts/fork/build, then scripts/fork/check on a copy of the live data
+  5. prints what changed: commits replayed, host protocol, plugin SDK,
+     migrations, changelog sections
+
+On a rebase conflict it stops and prints the conflicted files. Resolve them,
+`git add` them, `git rebase --continue`, then rerun with --continue.
+`git rebase --abort` returns erwin to where it was.
+
+Pushing and deploying stay with the coordinator.
+EOF
+}
+
+NEW=""
+CONTINUE=0
+CHECK=1
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --continue) CONTINUE=1 ;;
+    --no-check) CHECK=0 ;;
+    --dry-run) DRY_RUN=1 ;;
+    -h|--help) usage; exit 0 ;;
+    -*) usage >&2; exit 2 ;;
+    *) NEW=$1 ;;
+  esac
+  shift
+done
+[ -n "$NEW" ] || { usage >&2; exit 2; }
+cd "$REPO"
+STATE="$FORK_BUILD/upgrade-from"
+mkdir -p "$FORK_BUILD"
+
+[ "$(git rev-parse --abbrev-ref HEAD)" = erwin ] || die "check out branch erwin first"
+[ -z "$(git status --porcelain)" ] || die "the checkout has uncommitted changes"
+[ ! -d "$(git rev-parse --git-path rebase-merge)" ] || die "a rebase is in progress; finish it, then rerun with --continue"
+
+source_facts() {
+  local ref=$1
+  printf 'protocol %s, plugin SDK %s, %s migrations' \
+    "$(git grep -h -o 'HOST_DAEMON_PROTOCOL_VERSION = [0-9]*' "$ref" -- packages/host-daemon-contract/src | grep -o '[0-9]*$')" \
+    "$(git grep -h -o '"[0-9]*\.[0-9]*\.[0-9]*"' "$ref" -- packages/domain/src/plugin-sdk-version.ts | sed -n 1p | tr -d '"')" \
+    "$(git ls-tree -r --name-only "$ref" | grep -cE 'drizzle/[0-9]+[^/]*\.sql$')"
+}
+
+if [ "$CONTINUE" = 0 ]; then
+  step "Fetch upstream tags"
+  git fetch -q upstream --tags
+  git rev-parse -q --verify "refs/tags/$NEW" > /dev/null || die "no tag $NEW upstream"
+  OLD=$(base_tag erwin)
+  [ "$OLD" != "$NEW" ] || die "erwin is already based on $NEW"
+  say "erwin is $OLD + $(git rev-list --count "$OLD..erwin") commits:"
+  git log --format='  %h %s' --reverse "$OLD..erwin"
+
+  keep="erwin-on-${OLD#desktop-v}"
+  if git rev-parse -q --verify "refs/heads/$keep" > /dev/null; then keep="$keep-$(date +%Y%m%d-%H%M)"; fi
+  step "Keep the old stack as $keep, rebase onto $NEW"
+  run git branch "$keep" erwin
+  run_sh "printf '%s\n' '$OLD' > '$STATE'"
+  if ! run git rebase --onto "$NEW" "$OLD" erwin; then
+    say ""
+    say "Rebase stopped on a conflict. Conflicted files:"
+    git diff --name-only --diff-filter=U | sed 's/^/  /'
+    say ""
+    say "Next: resolve them (keep upstream's intent, re-apply ours), git add, git rebase --continue,"
+    say "then: scripts/fork/upgrade $NEW --continue"
+    say "Or undo everything: git rebase --abort   (erwin returns to $OLD + our commits; $keep keeps it too)"
+    exit 2
+  fi
+fi
+[ "$DRY_RUN" = 1 ] && { say "[dry-run] then build, check and summarize"; exit 0; }
+
+[ -f "$STATE" ] || die "no upgrade in progress ($STATE is missing)"
+OLD_BASE=$(cat "$STATE")
+[ "$(base_tag erwin)" = "$NEW" ] || die "erwin is not based on $NEW yet"
+
+"$REPO/scripts/fork/build"
+check_output=""
+if [ "$CHECK" = 1 ]; then
+  "$REPO/scripts/fork/check" 2>&1 | tee "$FORK_BUILD/check-last.txt" || die "the isolated check failed; see above"
+  check_output=$(sed -n '/^== Summary/,$p' "$FORK_BUILD/check-last.txt")
+fi
+
+step "Upgrade summary: $OLD_BASE -> $NEW"
+say "commits:   $(git rev-list --count "$NEW..erwin") replayed"
+git log --format='  %h %s' --reverse "$NEW..erwin"
+say "before:    $(source_facts "$OLD_BASE")"
+say "after:     $(source_facts "$NEW")"
+say "changelog: $(git diff "$OLD_BASE" "$NEW" -- CHANGELOG.md | grep '^+## ' | sed 's/^+## //' | tr '\n' ' ')"
+[ -z "$check_output" ] || printf '%s\n' "$check_output" | sed '1d'
+rm -f "$STATE"
+say ""
+say "For the coordinator: git push --force-with-lease origin erwin, then scripts/fork/deploy"
+say "(a new upstream version always means a full restart)."
+if [ "$(source_facts "$OLD_BASE" | cut -d, -f1)" != "$(source_facts "$NEW" | cut -d, -f1)" ]; then
+  say "The host protocol changed: enrolled Macs update themselves from this server after the deploy."
+fi
