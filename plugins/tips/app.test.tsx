@@ -34,18 +34,6 @@ const COMMAND_TIP: TipView = {
   action: { kind: "command", label: "Open palette", commandId: "palette.open" },
 };
 
-const NEXT_TIP: TipView = {
-  id: "build-plugin",
-  tone: "amber",
-  title: "Ask the agent to build you a tool",
-  body: "Your agent can write bb plugins for you.",
-  action: {
-    kind: "prompt",
-    label: "Try it",
-    prompt: "Build me a bb plugin that ",
-  },
-};
-
 const IPHONE =
   "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148";
 
@@ -106,8 +94,6 @@ function renderTips(
     {
       rpc: {
         current: () => ({ tips }),
-        more: () => ({ tips: [NEXT_TIP] }),
-        hide: () => ({ ok: true }),
         setEnabled: () => ({ ok: true }),
         act: () => ({ ok: true }),
       },
@@ -132,7 +118,7 @@ describe("Tips homepage section", () => {
     expect(section()).not.toHaveProperty("title");
   });
 
-  it("shows three tiles for the selected project with clear outcomes", async () => {
+  it("shows three tips as a feed for the selected project", async () => {
     const slot = renderTips();
     expect(await slot.findByText("Run work in parallel")).toBeTruthy();
     expect(slot.getByRole("region", { name: "Tips" })).toBeTruthy();
@@ -150,7 +136,6 @@ describe("Tips homepage section", () => {
     );
     expect(slot.queryByText("Adds prompt")).toBeNull();
     expect(slot.queryByText("Get the app")).toBeNull();
-    expect(slot.queryByRole("button", { name: /dismiss/iu })).toBeNull();
     expect(slot.inspection.rpcCalls[0]).toEqual({
       method: "current",
       input: {
@@ -176,7 +161,7 @@ describe("Tips homepage section", () => {
     expect(slot.queryByRole("region", { name: "Tips" })).toBeNull();
   });
 
-  it("renders nothing when the page is too narrow for three tiles", async () => {
+  it("renders nothing when the page is too narrow", async () => {
     setCompactLayout(false);
     setSectionWidth(390);
     const slot = renderTips();
@@ -270,52 +255,25 @@ describe("Tips homepage section", () => {
     await waitFor(() => expect(methods(slot)).toContain("act"));
   });
 
-  it("rotates to more ideas", async () => {
+  it("turns tips off from Hide tips and undoes it", async () => {
     const slot = renderTips();
     await slot.findByText("Run work in parallel");
-    fireEvent.click(slot.getByRole("button", { name: "More ideas" }));
+    fireEvent.click(slot.getByRole("button", { name: /Hide tips/u }));
+    expect(await slot.findByText(/Tips are off\./u)).toBeTruthy();
     expect(
-      await slot.findByText("Ask the agent to build you a tool"),
+      slot.getByText(/Show tips in the Tips plugin settings/u),
     ).toBeTruthy();
-    expect(slot.queryByText("Run work in parallel")).toBeNull();
-    expect(slot.inspection.rpcCalls).toContainEqual({
-      method: "more",
-      input: {
-        client: { surface: "web", os: expect.any(String) },
-        projectId: "proj_1",
-      },
-    });
-  });
-
-  it("hides tips for today from the menu and undoes it", async () => {
-    const slot = renderTips();
-    await slot.findByText("Run work in parallel");
-    fireEvent.pointerDown(slot.getByRole("button", { name: "Tip options" }));
-    fireEvent.click(await slot.findByText("Hide tips for today"));
-    expect(await slot.findByText("Tips hidden for today.")).toBeTruthy();
     expect(slot.queryByRole("region", { name: "Tips" })).toBeNull();
-    expect(slot.inspection.rpcCalls).toContainEqual({
-      method: "hide",
-      input: { hidden: true },
-    });
-    fireEvent.click(slot.getByRole("button", { name: "Undo" }));
-    expect(slot.inspection.rpcCalls).toContainEqual({
-      method: "hide",
-      input: { hidden: false },
-    });
-    expect(await slot.findByText("Run work in parallel")).toBeTruthy();
-  });
-
-  it("turns tips off from the menu", async () => {
-    const slot = renderTips();
-    await slot.findByText("Run work in parallel");
-    fireEvent.pointerDown(slot.getByRole("button", { name: "Tip options" }));
-    fireEvent.click(await slot.findByText("Turn off tips"));
-    expect(await slot.findByText("Tips turned off.")).toBeTruthy();
     expect(slot.inspection.rpcCalls).toContainEqual({
       method: "setEnabled",
       input: { enabled: false },
     });
+    fireEvent.click(slot.getByRole("button", { name: "Undo" }));
+    expect(slot.inspection.rpcCalls).toContainEqual({
+      method: "setEnabled",
+      input: { enabled: true },
+    });
+    expect(await slot.findByText("Run work in parallel")).toBeTruthy();
   });
 
   it("refetches when tips change elsewhere", async () => {

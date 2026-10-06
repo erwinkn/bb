@@ -92,7 +92,6 @@ export const TIPS_PER_SET = 3;
 
 export const tipsRpcContract = defineRpcContract({
   current: { input: tipSetInputSchema, output: tipSetOutputSchema },
-  more: { input: tipSetInputSchema, output: tipSetOutputSchema },
   hide: {
     input: z.object({ hidden: z.boolean() }).strict(),
     output: okSchema,

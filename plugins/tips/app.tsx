@@ -24,8 +24,6 @@ const TIPS_CHANGED_CHANNEL = "tips-changed";
 const COMPACT_LAYOUT_QUERY = "(max-width: 767px)";
 const MIN_GALLERY_WIDTH = 520;
 
-type HiddenState = "today" | "off" | null;
-
 function subscribeCompactLayout(listener: () => void): () => void {
   if (typeof window.matchMedia !== "function") return () => {};
   const query = window.matchMedia(COMPACT_LAYOUT_QUERY);
@@ -83,7 +81,7 @@ function TipsGallerySection({
   const [previewId, setPreviewId] = useState<string | null>(null);
   const [filledId, setFilledId] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
-  const [hidden, setHidden] = useState<HiddenState>(null);
+  const [dismissed, setDismissed] = useState(false);
   const isEmpty = composer.isEmpty;
 
   useRealtime(TIPS_CHANGED_CHANNEL, () => {
@@ -139,47 +137,18 @@ function TipsGallerySection({
     [composer, navigate, rpc],
   );
 
-  const more = useCallback(() => {
-    setPreviewId(null);
-    setNotice(null);
-    rpc.call("more", { client, projectId }).then(
-      (result) => setTips(result.tips),
-      () => {},
-    );
-  }, [client, projectId, rpc]);
-
-  const hide = useCallback(() => {
-    setHidden("today");
-    setPreviewId(null);
-    void rpc.call("hide", { hidden: true }).catch(() => {});
-  }, [rpc]);
-
   const turnOff = useCallback(() => {
-    setHidden("off");
+    setDismissed(true);
     setPreviewId(null);
     void rpc.call("setEnabled", { enabled: false }).catch(() => {});
   }, [rpc]);
 
   const undo = useCallback(() => {
-    const wasHidden = hidden;
-    setHidden(null);
-    if (wasHidden === "today") {
-      void rpc.call("hide", { hidden: false }).catch(() => {});
-    } else if (wasHidden === "off") {
-      void rpc.call("setEnabled", { enabled: true }).catch(() => {});
-    }
-  }, [hidden, rpc]);
+    setDismissed(false);
+    void rpc.call("setEnabled", { enabled: true }).catch(() => {});
+  }, [rpc]);
 
-  if (hidden !== null) {
-    return (
-      <TipsHiddenNotice
-        message={
-          hidden === "today" ? "Tips hidden for today." : "Tips turned off."
-        }
-        onUndo={undo}
-      />
-    );
-  }
+  if (dismissed) return <TipsHiddenNotice onUndo={undo} />;
   if (!enabled || tips.length === 0) return null;
   return (
     <TipsGallery
@@ -188,9 +157,7 @@ function TipsGallerySection({
       notice={notice}
       onPreview={setPreviewId}
       onActivate={activate}
-      onMore={more}
-      onHide={hide}
-      onTurnOff={turnOff}
+      onDismiss={turnOff}
     />
   );
 }

@@ -15,7 +15,6 @@ import {
   hideTips,
   listTips,
   localDay,
-  moreTips,
   observeLiveSignals,
   parseTipsState,
   rankEligibleTips,
@@ -24,7 +23,7 @@ import {
   type LiveSignals,
   type TipsState,
 } from "./engine.js";
-import { isWaitingOnUser } from "./signals.js";
+import { classifyAudience, isWaitingOnUser } from "./signals.js";
 
 const DAY_MS = 86_400_000;
 const START = Date.UTC(2026, 9, 5, 12);
@@ -111,25 +110,6 @@ function showOn(
   overrides: Partial<TipSignals> = {},
 ): { state: TipsState; ids: string[] } {
   const selection = selectTips(
-    state,
-    signals(overrides),
-    day(offset),
-    START + offset * DAY_MS,
-    catalog,
-  );
-  return {
-    state: selection.state,
-    ids: selection.tips.map((definition) => definition.id),
-  };
-}
-
-function moreOn(
-  state: TipsState,
-  offset: number,
-  catalog: readonly TipDefinition[],
-  overrides: Partial<TipSignals> = {},
-): { state: TipsState; ids: string[] } {
-  const selection = moreTips(
     state,
     signals(overrides),
     day(offset),
@@ -320,34 +300,41 @@ describe("selectTips", () => {
   });
 });
 
-describe("moreTips", () => {
-  it("rotates to the next three tips, then wraps around", () => {
+describe("daily rotation", () => {
+  it("shows unseen tips before repeating any, even across reloads", () => {
     const catalog = numbered(7);
-    const first = showOn(createTipsState(START, "1.0.0"), 0, catalog);
-    expect(first.ids).toEqual(["t1", "t2", "t3"]);
-    const second = moreOn(first.state, 0, catalog);
-    expect(second.ids).toEqual(["t4", "t5", "t6"]);
-    expect(showOn(second.state, 0, catalog).ids).toEqual(["t4", "t5", "t6"]);
-    const third = moreOn(second.state, 0, catalog);
-    expect(third.ids).toEqual(["t7", "t1", "t2"]);
-    const fourth = moreOn(third.state, 0, catalog);
-    expect(fourth.ids).toEqual(["t3", "t4", "t5"]);
-    expect(fourth.state.records.t4?.shownDays).toBe(1);
+    let state = createTipsState(START, "1.0.0");
+    const days: string[][] = [];
+    for (let offset = 0; offset < 3; offset += 1) {
+      const first = showOn(state, offset, catalog);
+      const reloaded = showOn(first.state, offset, catalog);
+      expect(reloaded.ids).toEqual(first.ids);
+      state = reloaded.state;
+      days.push(first.ids);
+    }
+    expect(days).toEqual([
+      ["t1", "t2", "t3"],
+      ["t4", "t5", "t6"],
+      ["t7", "t1", "t2"],
+    ]);
+  });
+});
+
+describe("classifyAudience", () => {
+  const now = START;
+
+  it("treats an install with no threads, or only recent ones, as new", () => {
+    expect(classifyAudience(0, [], now)).toBe("new");
+    expect(classifyAudience(2, [now - 3 * DAY_MS, now - DAY_MS], now)).toBe(
+      "new",
+    );
   });
 
-  it("keeps the set when no other tip is eligible and tops up a short pool", () => {
-    const three = numbered(3);
-    const first = showOn(createTipsState(START, "1.0.0"), 0, three);
-    expect(moreOn(first.state, 0, three).ids).toEqual(["t1", "t2", "t3"]);
-    const four = numbered(4);
-    const start = showOn(createTipsState(START, "1.0.0"), 0, four);
-    expect(moreOn(start.state, 0, four).ids).toEqual(["t4", "t1", "t2"]);
-  });
-
-  it("shows nothing while tips are hidden", () => {
-    const catalog = numbered(4);
-    const hidden = hideTips(createTipsState(START, "1.0.0"), true, day(0));
-    expect(moreOn(hidden, 0, catalog).ids).toEqual([]);
+  it("treats an install with a thread older than two weeks, or many threads, as existing", () => {
+    expect(classifyAudience(2, [now - 20 * DAY_MS, now - DAY_MS], now)).toBe(
+      "existing",
+    );
+    expect(classifyAudience(500, [], now)).toBe("existing");
   });
 });
 

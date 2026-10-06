@@ -24,7 +24,6 @@ import {
   hideTips,
   listTips,
   localDay,
-  moreTips,
   observeLiveSignals,
   parseTipsState,
   resetTips,
@@ -33,7 +32,11 @@ import {
   type TipSelection,
   type TipsState,
 } from "./engine.js";
-import { collectLiveSignals, createAppVersionReader } from "./signals.js";
+import {
+  collectLiveSignals,
+  createAppVersionReader,
+  readAudience,
+} from "./signals.js";
 
 const STATE_KEY = "state";
 
@@ -96,7 +99,7 @@ function formatList(view: ListView, all: boolean): string {
   const lines: string[] = [];
   if (!view.enabled) {
     lines.push(
-      "Tips are turned off. Turn them on in Settings → Installed plugins → Tips.",
+      "Tips are off. Turn them on with `bb plugin config bb--tips set enabled true` or the Show tips switch in Settings → Installed plugins → Tips.",
     );
   } else if (view.hiddenToday) {
     lines.push(
@@ -109,11 +112,6 @@ function formatList(view: ListView, all: boolean): string {
     lines.push(...view.tips.map((entry) => formatTipLine(entry, all)));
   }
   return lines.join("\n");
-}
-
-function formatSet(tips: readonly TipView[]): string {
-  if (tips.length === 0) return "No tips are eligible right now.";
-  return tips.map((tip) => `${tip.id}\n  ${tip.title}: ${tip.body}`).join("\n");
 }
 
 function recordObservation(
@@ -142,8 +140,7 @@ export default async function tipsPlugin(bb: BbPluginApi): Promise<void> {
       type: "boolean",
       label: "Show tips",
       description:
-        "Show three tips under the composer on the New thread page on desktop and web. The set changes once a day.",
-      default: true,
+        "Show three tips under the composer on the New thread page on desktop and web. On by default for people new to bb; the set changes once a day.",
     },
   });
   const readAppVersion = createAppVersionReader(bb);
@@ -198,8 +195,24 @@ export default async function tipsPlugin(bb: BbPluginApi): Promise<void> {
     });
   }
 
+  function decideAudience(): Promise<boolean> {
+    return serialize(async () => {
+      const state = await loadState();
+      const audience = state.audience ?? (await readAudience(bb, Date.now()));
+      if (state.audience === null) {
+        await bb.storage.kv.set(STATE_KEY, { ...state, audience });
+      }
+      const enabled = audience === "new";
+      if ((await settings.get()).enabled === undefined) {
+        await settings.experimental_set({ enabled });
+      }
+      return enabled;
+    });
+  }
+
   async function isEnabled(): Promise<boolean> {
-    return (await settings.get()).enabled;
+    const chosen = (await settings.get()).enabled;
+    return chosen ?? decideAudience();
   }
 
   async function tipSet(
@@ -215,15 +228,6 @@ export default async function tipsPlugin(bb: BbPluginApi): Promise<void> {
         result: selection.tips.map((tip) => renderTip(tip, signals)),
       };
     });
-  }
-
-  async function rotate(
-    client: TipClient | null,
-    projectId: string | null,
-  ): Promise<TipView[]> {
-    const tips = await tipSet(client, projectId, moreTips);
-    bb.realtime.publish(TIPS_CHANGED_CHANNEL, {});
-    return tips;
   }
 
   async function listView(
@@ -282,9 +286,6 @@ export default async function tipsPlugin(bb: BbPluginApi): Promise<void> {
     async current({ client, projectId }) {
       return { tips: await tipSet(client, projectId, selectTips) };
     },
-    async more({ client, projectId }) {
-      return { tips: await rotate(client, projectId) };
-    },
     async hide({ hidden }) {
       await setHidden(hidden);
       return { ok: true as const };
@@ -336,30 +337,12 @@ export default async function tipsPlugin(bb: BbPluginApi): Promise<void> {
   bb.cli.register(
     defineCli({
       name: "tips",
-      summary: "List, rotate, hide, dismiss, or reset bb tips",
+      summary: "List, hide, dismiss, or reset bb tips",
       description:
-        "bb shows three tips under the composer on the desktop and web New thread page, the same set all day. Dismissing a tip retires it for good, and a tip retires itself once you use its feature or take its action.",
+        "bb shows three tips under the composer on the desktop and web New thread page, the same set all day. Tips are on by default for people new to bb and off for existing installs until turned on. Dismissing a tip retires it for good, and a tip retires itself once you use its feature or take its action.",
       root: listCommand,
       commands: {
         list: listCommand,
-        more: cliCommand({
-          summary: "Show the next three tips",
-          description:
-            "Rotates today's tips to the next three, as More ideas does on the New thread page.",
-          options: { json: JSON_OPTION },
-          async run(input) {
-            const enabled = await isEnabled();
-            const tips = enabled ? await rotate(null, null) : [];
-            return {
-              exitCode: 0,
-              stdout: input.options.json
-                ? JSON.stringify({ enabled, tips })
-                : enabled
-                  ? formatSet(tips)
-                  : "Tips are turned off.",
-            };
-          },
-        }),
         hide: cliCommand({
           summary: "Hide tips for the rest of today",
           options: {

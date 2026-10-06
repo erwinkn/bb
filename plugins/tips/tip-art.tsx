@@ -11,14 +11,14 @@ const TONE_COLOR: Record<TipTone, string> = {
 
 const LINE = {
   stroke: "currentColor",
-  strokeWidth: 1.5,
+  strokeWidth: 1.1,
   strokeLinecap: "round",
   strokeLinejoin: "round",
   fill: "none",
 } as const;
 
-const WASH = 0.07;
-const SOFT = 0.35;
+const WASH = 0.1;
+const SOFT = 0.4;
 
 function Panel(props: SVGProps<SVGRectElement>) {
   return (
@@ -95,20 +95,44 @@ const ART: Record<string, Art> = {
   ),
   subthreads: (accent) => (
     <>
-      <Panel x={4} y={5} width={24} height={9} rx={2.5} />
-      <Dot cx={8.5} cy={9.5} />
-      <Rule x={12} y={9.5} width={11} />
-      <path {...LINE} d="M9 14v24M9 19.5h7M9 29h7M9 38.5h7" />
-      {[19.5, 29, 38.5].map((y, index) => (
+      <circle
+        {...LINE}
+        cx={8}
+        cy={24}
+        r={4.5}
+        fill="currentColor"
+        fillOpacity={0.18}
+      />
+      <path
+        {...LINE}
+        d="M12.5 24C18 24 18 12 24 12M12.5 24H24M12.5 24C18 24 18 36 24 36"
+      />
+      {[
+        [12, 0.75],
+        [24, 0.45],
+        [36, 0.6],
+      ].map(([y, progress], index) => (
         <g key={y}>
-          <Panel x={16} y={y - 3.5} width={27} height={7} rx={2} />
-          <Dot
-            cx={20}
-            cy={y}
-            r={1.5}
-            fill={index === 1 ? accent : "currentColor"}
+          <rect
+            {...LINE}
+            x={24}
+            y={y - 3}
+            width={20}
+            height={6}
+            rx={3}
+            fill="currentColor"
+            fillOpacity={WASH}
           />
-          <Rule x={23.5} y={y} width={index === 2 ? 9 : 13} soft />
+          <rect
+            x={25}
+            y={y - 2}
+            width={18 * progress}
+            height={4}
+            rx={2}
+            fill="currentColor"
+            fillOpacity={index === 1 ? 1 : 0.55}
+            style={index === 1 ? { color: accent } : undefined}
+          />
         </g>
       ))}
     </>
@@ -174,7 +198,7 @@ const ART: Record<string, Art> = {
       <path
         d="M36 35.5l1.8 1.8 3.2-3.4"
         style={{ stroke: "var(--canvas)" }}
-        strokeWidth={1.5}
+        strokeWidth={1.1}
         strokeLinecap="round"
         strokeLinejoin="round"
         fill="none"
@@ -183,32 +207,29 @@ const ART: Record<string, Art> = {
   ),
   "build-plugin": (accent) => (
     <>
+      <Panel x={3} y={6} width={34} height={30} />
+      <Rule x={3} y={12} width={34} soft />
+      <Dot cx={7} cy={9} r={1} />
+      <Dot cx={10.5} cy={9} r={1} />
       <rect
         {...LINE}
-        x={4}
-        y={18}
-        width={30}
-        height={26}
-        rx={3}
+        x={8}
+        y={17}
+        width={10}
+        height={13}
+        rx={1.5}
         strokeOpacity={SOFT}
       />
-      <path
-        {...LINE}
-        fill="currentColor"
-        fillOpacity={WASH}
-        d="M9 27h6.5a3 3 0 1 1 6 0H28v12H9Z"
-      />
-      <path
-        {...LINE}
-        fillOpacity={0.15}
-        d="M30 5h13v13H30v-4a2.5 2.5 0 1 0 0-5Z"
-        style={{ stroke: accent, fill: accent }}
-      />
-      <path
-        {...LINE}
-        strokeOpacity={SOFT}
-        d="M27 20.5l-2.5 2.5M31 22.5l-1.5 1.5"
-      />
+      <Rule x={22} y={19} width={10} soft />
+      <Rule x={22} y={24} width={7} soft />
+      <g transform="translate(23 20) scale(1)">
+        <path
+          {...LINE}
+          strokeWidth={1.3}
+          d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"
+          style={{ stroke: accent, fill: "var(--canvas)" }}
+        />
+      </g>
     </>
   ),
   "open-threads-that-need-me": (accent) => (
@@ -231,7 +252,7 @@ const ART: Record<string, Art> = {
             height={10}
             rx={1.5}
             stroke="currentColor"
-            strokeWidth={1.5}
+            strokeWidth={1.1}
             fill="currentColor"
             fillOpacity={index === 1 ? 0.18 : WASH}
             style={index === 1 ? { color: accent } : undefined}
@@ -279,7 +300,7 @@ const ART: Record<string, Art> = {
         width={17}
         height={10}
         rx={3}
-        strokeWidth={1.5}
+        strokeWidth={1.1}
         fillOpacity={0.18}
         style={{ stroke: accent, fill: accent }}
       />
@@ -355,40 +376,51 @@ const ART: Record<string, Art> = {
       />
       <circle cx={25.5} cy={26} r={1.75} style={{ fill: accent }} />
       <Rule x={28.5} y={26} width={5} />
-      <path {...LINE} strokeWidth={2.5} d="M36.5 32.5l6 6" />
+      <path {...LINE} strokeWidth={2} d="M36.5 32.5l6 6" />
     </>
   ),
   "command-palette": (accent) => (
     <>
-      <Panel x={4} y={6} width={40} height={11} />
-      <circle {...LINE} cx={10} cy={11.5} r={2.5} />
-      <path {...LINE} d="M12 13.5l1.5 1.5" />
-      <rect {...LINE} x={33} y={8.5} width={8} height={6} rx={1.5} />
+      <Panel x={3} y={4} width={42} height={40} rx={4} />
+      <circle {...LINE} cx={9.5} cy={12} r={2.5} />
+      <path {...LINE} d="M11.3 13.8l1.7 1.7" />
+      <Rule x={16} y={12} width={8} soft />
+      <rect
+        {...LINE}
+        x={29}
+        y={7}
+        width={13}
+        height={10}
+        rx={2}
+        style={{ fill: "var(--canvas)" }}
+      />
       <text
-        x={37}
-        y={13.1}
-        fontSize={4.5}
+        x={35.5}
+        y={14.4}
+        fontSize={7}
+        fontWeight={600}
         textAnchor="middle"
         fill="currentColor"
         fontFamily="inherit"
       >
         ⌘K
       </text>
+      <Rule x={3} y={20.5} width={42} soft />
       <rect
-        x={4}
-        y={21}
-        width={40}
-        height={7}
+        x={6}
+        y={24}
+        width={36}
+        height={6}
         rx={2}
         fill="currentColor"
-        fillOpacity={WASH * 1.6}
+        fillOpacity={WASH * 1.5}
       />
-      <Dot cx={9} cy={24.5} r={1.5} fill={accent} />
-      <Rule x={13} y={24.5} width={18} />
-      <Dot cx={9} cy={33} r={1.5} />
-      <Rule x={13} y={33} width={14} soft />
-      <Dot cx={9} cy={40} r={1.5} />
-      <Rule x={13} y={40} width={20} soft />
+      <Dot cx={10} cy={27} r={1.5} fill={accent} />
+      <Rule x={14} y={27} width={18} />
+      <Dot cx={10} cy={34} r={1.5} />
+      <Rule x={14} y={34} width={14} soft />
+      <Dot cx={10} cy={40} r={1.5} />
+      <Rule x={14} y={40} width={20} soft />
     </>
   ),
   "provider-usage": (accent) => (
@@ -414,7 +446,7 @@ const ART: Record<string, Art> = {
           height={height}
           rx={1.5}
           stroke="currentColor"
-          strokeWidth={1.5}
+          strokeWidth={1.1}
           fill="currentColor"
           fillOpacity={index === 1 ? 0.25 : WASH * 1.6}
           style={index === 1 ? { color: accent } : undefined}
@@ -430,7 +462,8 @@ export function TipArt({ tipId, tone }: { tipId: string; tone: TipTone }) {
     <svg
       aria-hidden
       viewBox="0 0 48 48"
-      className="mb-2.5 size-11 shrink-0 text-foreground"
+      className="size-16 shrink-0"
+      style={{ color: "color-mix(in oklch, var(--ink) 82%, var(--canvas))" }}
     >
       {draw?.(TONE_COLOR[tone])}
     </svg>

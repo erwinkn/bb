@@ -22,8 +22,34 @@ const listResultSchema = z.object({
   tips: z.array(tipListEntrySchema),
 });
 
+const DAY_MS = 86_400_000;
+
+function listEntry(createdAt: number) {
+  return {
+    ...makeThreadResponse({ createdAt }),
+    activity: {
+      activeWorkflowCount: 0,
+      activeBackgroundAgentCount: 0,
+      activeBackgroundCommandCount: 0,
+      activePlanModeCount: 0,
+      activeGoalCount: 0,
+    },
+    queuedWork: "none" as const,
+    pinSortKey: null,
+    hasPendingInteraction: false,
+    environmentHostId: null,
+    environmentName: null,
+    environmentBranchName: null,
+    environmentPath: null,
+    environmentProviderId: null,
+    environmentIsWorktree: null,
+    environmentWorkspaceDisplayKind: "other" as const,
+  };
+}
+
 interface Fixture {
   version?: string;
+  threadAges?: number[];
   threadCount?: number;
   finishedThreadCount?: number;
   plugins?: Record<string, boolean>;
@@ -47,7 +73,14 @@ async function setup(fixture: Fixture = {}) {
                 : (fixture.threadCount ?? 0),
           };
         },
-        list: async () => [],
+        list: async (args) =>
+          args?.hasParent === true ||
+          args?.originPluginId !== undefined ||
+          args?.projectId !== undefined
+            ? []
+            : (fixture.threadAges ?? []).map((age) =>
+                listEntry(Date.now() - age * DAY_MS),
+              ),
       },
       providers: { catalog: async () => [] },
       plugins: {
@@ -73,16 +106,6 @@ async function setup(fixture: Fixture = {}) {
         )
         .tips.map((tip) => tip.id);
     },
-    async more(projectId: string | null = null) {
-      return setResultSchema
-        .parse(
-          await harness.behavior.callRpc("more", {
-            client: WEB_MAC,
-            projectId,
-          }),
-        )
-        .tips.map((tip) => tip.id);
-    },
     async listAll() {
       return listResultSchema.parse(
         await harness.behavior.callRpc("list", { client: WEB_MAC, all: true }),
@@ -96,22 +119,21 @@ const REGULAR = { threadCount: 10, finishedThreadCount: 3 };
 const NEW_USER_SET = ["subthreads", "set-up-for-me", "phone"];
 
 describe("tips plugin registration", () => {
-  it("declares an on-by-default switch and the bb tips command", async () => {
+  it("declares a Show tips switch and the bb tips command", async () => {
     const { harness } = await setup();
     expect(harness.registrations.settingsDescriptors.enabled).toMatchObject({
       type: "boolean",
-      default: true,
     });
+    expect(
+      harness.registrations.settingsDescriptors.enabled,
+    ).not.toHaveProperty("default");
     expect(harness.registrations.cli?.name).toBe("tips");
     expect(
       harness.registrations.cli?.commands.map((command) => command.name),
-    ).toEqual(
-      expect.arrayContaining(["list", "more", "hide", "dismiss", "reset"]),
-    );
+    ).toEqual(expect.arrayContaining(["list", "hide", "dismiss", "reset"]));
     expect(harness.registrations.rpcMethods).toEqual(
       expect.arrayContaining([
         "current",
-        "more",
         "hide",
         "setEnabled",
         "dismiss",
@@ -217,21 +239,45 @@ describe("current tips", () => {
   });
 });
 
-describe("more ideas, hiding, and turning off", () => {
-  it("rotates to three different tips and keeps them as today's set", async () => {
-    const host = await setup(REGULAR);
-    const first = await host.current();
-    expect(first).toHaveLength(3);
-    const next = await host.more();
-    expect(next).toHaveLength(3);
-    expect(next.filter((id) => first.includes(id))).toEqual([]);
-    expect(await host.current()).toEqual(next);
-    expect(host.harness.realtimeSignals).toContainEqual({
-      channel: "tips-changed",
-      payload: {},
-    });
+describe("default for new and existing users", () => {
+  it("turns tips on for a new install and records that choice in the setting", async () => {
+    const host = await setup({ ...NEW_USER, threadAges: [2] });
+    expect(await host.current()).toEqual(NEW_USER_SET);
+    expect((await host.listAll()).enabled).toBe(true);
   });
 
+  it("keeps tips off for an existing install and says how to turn them on", async () => {
+    const host = await setup({ ...NEW_USER, threadAges: [40, 3] });
+    expect(await host.current()).toEqual([]);
+    expect((await host.listAll()).enabled).toBe(false);
+    const result = await host.harness.behavior.runCli([]);
+    expect(result.stdout).toContain("Tips are off.");
+    expect(result.stdout).toContain(
+      "bb plugin config bb--tips set enabled true",
+    );
+  });
+
+  it("lets an explicit setting win over the classification", async () => {
+    const host = await setup({
+      ...NEW_USER,
+      threadAges: [40],
+      settings: { enabled: true },
+    });
+    expect(await host.current()).toEqual(NEW_USER_SET);
+  });
+
+  it("decides once and does not flip when threads later age past the window", async () => {
+    const fixture: Fixture = { ...NEW_USER, threadAges: [1] };
+    const host = await setup(fixture);
+    expect(await host.current()).toEqual(NEW_USER_SET);
+    await host.harness.behavior.setSettings({ enabled: null });
+    fixture.threadAges = [90];
+    expect(await host.current()).toEqual(NEW_USER_SET);
+    expect((await host.listAll()).enabled).toBe(true);
+  });
+});
+
+describe("hiding and turning off", () => {
   it("hides tips for today and brings them back on undo", async () => {
     const host = await setup(NEW_USER);
     await host.current();
@@ -319,21 +365,6 @@ describe("bb tips", () => {
     expect(view.tips.find((entry) => entry.id === "subthreads")?.status).toBe(
       "eligible",
     );
-  });
-
-  it("rotates to the next three tips like More ideas", async () => {
-    const host = await setup(REGULAR);
-    const first = await host.current();
-    const result = await host.harness.behavior.runCli(["more", "--json"]);
-    expect(result.exitCode).toBe(0);
-    const view = z
-      .object({ enabled: z.literal(true), tips: z.array(tipViewSchema) })
-      .parse(JSON.parse(result.stdout));
-    const ids = view.tips.map((tip) => tip.id);
-    expect(ids).toHaveLength(3);
-    expect(ids.filter((id) => first.includes(id))).toEqual([]);
-    const text = await host.harness.behavior.runCli(["more"]);
-    expect(text.stdout).toMatch(/^[\w-]+\n {2}.+: .+$/mu);
   });
 
   it("hides tips for today and undoes it", async () => {

@@ -19,9 +19,7 @@ interface StoryTip {
 
 interface ControlsProps {
   notice: string | null;
-  onMore(): void;
-  onHide(): void;
-  onTurnOff(): void;
+  onDismiss(): void;
 }
 
 interface GalleryModule {
@@ -71,14 +69,7 @@ const STORY_SIGNALS = {
   appVersion: "0.42.0",
 };
 
-const CARD_TIPS = [
-  "subthreads",
-  "set-up-for-me",
-  "phone",
-  "browser-automation",
-  "build-plugin",
-  "account-pool",
-].flatMap((id) => {
+const CARD_TIPS = ["subthreads", "set-up-for-me", "phone"].flatMap((id) => {
   const definition = catalog.TIP_CATALOG.find((entry) => entry.id === id);
   return definition === undefined
     ? []
@@ -99,7 +90,6 @@ interface TipsPageState {
   notice: string | null;
   setPreviewId(id: string | null): void;
   activate(tip: StoryTip): void;
-  more(): void;
 }
 
 function NewThreadPage({
@@ -108,13 +98,11 @@ function NewThreadPage({
   children: (state: TipsPageState) => ReactNode;
 }) {
   const [draft, setDraft] = useState("");
-  const [page, setPage] = useState(0);
   const [previewId, setPreviewId] = useState<string | null>(null);
   const [filledId, setFilledId] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [focusRequest, setFocusRequest] = useState<string | undefined>();
-  const offset = (page % 2) * 3;
-  const tips = CARD_TIPS.slice(offset, offset + 3);
+  const tips = CARD_TIPS;
   const preview = tips.find((tip) => tip.id === previewId)?.action;
   const state: TipsPageState = {
     tips,
@@ -131,10 +119,6 @@ function NewThreadPage({
       setFilledId(tip.id);
       setFocusRequest(`${tip.id}:${Date.now()}`);
       setNotice(`Added “${tip.title}” to the composer`);
-    },
-    more() {
-      setPage((current) => current + 1);
-      setPreviewId(null);
     },
   };
   return (
@@ -168,9 +152,7 @@ function ControlLayout(state: TipsPageState) {
       notice={state.notice}
       onPreview={state.setPreviewId}
       onActivate={state.activate}
-      onMore={state.more}
-      onHide={() => {}}
-      onTurnOff={() => {}}
+      onDismiss={() => {}}
     />
   );
 }
@@ -195,7 +177,7 @@ export function Control() {
   return (
     <LayoutStory
       layout={ControlLayout}
-      hint="Production layout: three raised cards with a small illustration, title, and body under the composer, with the status line, More ideas, and the menu in a slim row below them. Hover a prompt card to preview its prompt as the placeholder; click to fill the composer."
+      hint="Production layout: a calm feed of three tips under the composer, each row an illustration with a title and body, with Hide tips above it. Hover a prompt row to preview its prompt as the placeholder; click to fill the composer."
     />
   );
 }
@@ -210,7 +192,7 @@ export function Illustrations() {
     <StoryCard labelWidth="160px">
       <StoryRow
         label="every tip"
-        hint="The static illustration each catalog tip shows at the top of its card, in catalog order."
+        hint="The static illustration each catalog tip shows at the start of its row, in catalog order."
       >
         <div className="grid w-[760px] grid-cols-5 gap-x-4 gap-y-6 rounded-xl border border-border bg-background p-6">
           {ALL_TIPS.map((tip) => (

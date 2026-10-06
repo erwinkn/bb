@@ -343,18 +343,20 @@ bb concurrency-limit global [unlimited|<limit>] [--json]
 bb concurrency-limit host <host-id> [auto|<limit>] [--json]
 ```
 
-The builtin Tips plugin shows three contextual tips under the composer on the
-desktop and web New thread page, never on phones or compact layouts. The set
-stays the same for the day, and "More ideas" rotates to the next three. A tip
+The builtin Tips plugin shows three contextual tips as a small feed under the
+composer on the desktop and web New thread page, never on phones or compact
+layouts. The set stays the same for the day and shows unseen tips first. A tip
 retires once bb sees its feature in use, its action is taken, it is dismissed,
-or it has shown on two days. The tips menu hides tips for the day or turns them
-off. Its "Show tips" switch (`enabled`, on by default) hides tips everywhere;
-set it with `bb plugin config bb--tips set enabled false`. Inspect or change
-tips from an agent or terminal with:
+or it has shown on two days. Its "Show tips" switch (`enabled`) has no fixed
+default: the first time Tips runs it turns tips on for new installs (no
+threads, or none older than two weeks) and off for existing ones, saves that
+to the switch, and never revisits it. An explicit choice always wins. "Hide
+tips" on the page turns the switch off; set it with
+`bb plugin config bb--tips set enabled true|false`. Inspect or change tips from
+an agent or terminal with:
 
 ```sh
 bb tips [--all] [--json]
-bb tips more [--json]
 bb tips hide [--undo] [--json]
 bb tips dismiss <id> [--json]
 bb tips reset [--json]

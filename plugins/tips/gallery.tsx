@@ -1,11 +1,11 @@
 import { Button } from "@/components/ui/button";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
 import { Icon } from "@/components/ui/icon";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import type { TipView } from "./contract.js";
 import { TipArt } from "./tip-art.js";
@@ -16,9 +16,7 @@ export interface TipsGalleryProps {
   notice: string | null;
   onPreview(id: string | null): void;
   onActivate(tip: TipView): void;
-  onMore(): void;
-  onHide(): void;
-  onTurnOff(): void;
+  onDismiss(): void;
 }
 
 function actionDescription(tip: TipView): string {
@@ -32,96 +30,50 @@ function actionDescription(tip: TipView): string {
   }
 }
 
-function TipsMenu({
-  onHide,
-  onTurnOff,
-}: Pick<TipsGalleryProps, "onHide" | "onTurnOff">) {
+function DismissTips({ onDismiss }: Pick<TipsGalleryProps, "onDismiss">) {
   return (
-    <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon"
-          className="size-7 text-muted-foreground"
-          aria-label="Tip options"
-        >
-          <Icon name="MoreHorizontal" className="size-4" aria-hidden />
-        </Button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="end">
-        <DropdownMenuItem onSelect={onHide}>
-          Hide tips for today
-        </DropdownMenuItem>
-        <DropdownMenuItem onSelect={onTurnOff}>Turn off tips</DropdownMenuItem>
-      </DropdownMenuContent>
-    </DropdownMenu>
+    <TooltipProvider>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="h-7 gap-1 px-2 text-muted-foreground"
+            onClick={onDismiss}
+          >
+            Hide tips
+            <Icon name="X" className="size-3.5" aria-hidden />
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent side="top">
+          Turns tips off. Turn them back on with Show tips in the Tips plugin
+          settings.
+        </TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
   );
 }
 
-function TipsFooter({
-  notice,
-  onMore,
-  onHide,
-  onTurnOff,
-}: Pick<TipsGalleryProps, "notice" | "onMore" | "onHide" | "onTurnOff">) {
-  return (
-    <div className="flex items-center justify-between gap-3">
-      <p
-        role="status"
-        className="min-w-0 truncate text-xs text-muted-foreground"
-      >
-        {notice ?? ""}
-      </p>
-      <div className="flex shrink-0 items-center">
-        <Button
-          type="button"
-          variant="ghost"
-          size="sm"
-          className="h-7 px-2 text-muted-foreground"
-          onClick={onMore}
-        >
-          More ideas
-        </Button>
-        <TipsMenu onHide={onHide} onTurnOff={onTurnOff} />
-      </div>
-    </div>
-  );
-}
-
-const TIP_CARD_CLASS =
-  "flex h-full w-full flex-col gap-1 rounded-xl border border-border-hairline bg-background px-4 pb-4 pt-3.5 text-left shadow-xs outline-none motion-safe:transition-[box-shadow,background-color] hover:bg-surface-raised hover:shadow-sm focus-visible:bg-surface-raised focus-visible:shadow-sm focus-visible:ring-2 focus-visible:ring-ring";
-
-function TipCardText({ tip }: { tip: TipView }) {
-  return (
-    <>
-      <TipArt tipId={tip.id} tone={tip.tone} />
-      <span className="text-sm font-medium text-foreground">{tip.title}</span>
-      <span className="line-clamp-3 text-xs text-muted-foreground">
-        {tip.body}
-      </span>
-      <span className="sr-only">{actionDescription(tip)}</span>
-    </>
-  );
-}
-
-export function TipsGrid({
+export function TipsFeed({
   tips,
   filledId,
   onPreview,
   onActivate,
 }: Pick<TipsGalleryProps, "tips" | "filledId" | "onPreview" | "onActivate">) {
   return (
-    <ul className="grid grid-cols-3 gap-3">
+    <ul className="overflow-hidden rounded-xl border border-border-hairline bg-background shadow-xs">
       {tips.map((tip) => (
-        <li key={tip.id}>
+        <li
+          key={tip.id}
+          className="border-b border-border-hairline last:border-b-0"
+        >
           <button
             type="button"
             data-tip-id={tip.id}
             className={cn(
-              TIP_CARD_CLASS,
-              filledId === tip.id &&
-                "border-surface-selected-border bg-surface-selected",
+              "flex w-full items-center gap-4 px-4 py-3 text-left outline-none motion-safe:transition-colors hover:bg-surface-raised focus-visible:bg-surface-raised focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
+              filledId === tip.id && "bg-surface-selected",
             )}
             onMouseEnter={() => onPreview(tip.id)}
             onMouseLeave={() => onPreview(null)}
@@ -129,7 +81,16 @@ export function TipsGrid({
             onBlur={() => onPreview(null)}
             onClick={() => onActivate(tip)}
           >
-            <TipCardText tip={tip} />
+            <TipArt tipId={tip.id} tone={tip.tone} />
+            <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+              <span className="text-sm font-medium text-foreground">
+                {tip.title}
+              </span>
+              <span className="line-clamp-2 text-xs text-muted-foreground">
+                {tip.body}
+              </span>
+              <span className="sr-only">{actionDescription(tip)}</span>
+            </span>
           </button>
         </li>
       ))}
@@ -137,46 +98,37 @@ export function TipsGrid({
   );
 }
 
-const TIPS_SECTION_CLASS = "mt-28 flex flex-col gap-1.5";
-
 export function TipsGallery({
   tips,
   filledId,
   notice,
   onPreview,
   onActivate,
-  onMore,
-  onHide,
-  onTurnOff,
+  onDismiss,
 }: TipsGalleryProps) {
   return (
-    <section aria-label="Tips" className={TIPS_SECTION_CLASS}>
-      <TipsGrid
+    <section aria-label="Tips" className="mt-20 flex flex-col gap-1.5">
+      <div className="flex justify-end">
+        <DismissTips onDismiss={onDismiss} />
+      </div>
+      <TipsFeed
         tips={tips}
         filledId={filledId}
         onPreview={onPreview}
         onActivate={onActivate}
       />
-      <TipsFooter
-        notice={notice}
-        onMore={onMore}
-        onHide={onHide}
-        onTurnOff={onTurnOff}
-      />
+      <p role="status" className="min-h-4 text-xs text-muted-foreground">
+        {notice ?? ""}
+      </p>
     </section>
   );
 }
 
-export function TipsHiddenNotice({
-  message,
-  onUndo,
-}: {
-  message: string;
-  onUndo: () => void;
-}) {
+export function TipsHiddenNotice({ onUndo }: { onUndo: () => void }) {
   return (
-    <p role="status" className="mt-28 text-xs text-muted-foreground">
-      {message}{" "}
+    <p role="status" className="mt-20 text-xs text-muted-foreground">
+      Tips are off. Turn them back on anytime with Show tips in the Tips plugin
+      settings.{" "}
       <button
         type="button"
         className="underline underline-offset-2 hover:text-foreground"

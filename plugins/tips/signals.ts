@@ -1,9 +1,53 @@
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { AUTOMATIONS_PLUGIN_ID } from "./catalog.js";
-import type { LiveSignals, TipsState } from "./engine.js";
+import type { LiveSignals, TipsAudience, TipsState } from "./engine.js";
 
 const SIGNAL_TIMEOUT_MS = 5_000;
 const WAITING_SCAN_LIMIT = 100;
+const AUDIENCE_SCAN_LIMIT = 200;
+export const NEW_USER_WINDOW_MS = 14 * 86_400_000;
+
+export function classifyAudience(
+  threadCount: number,
+  createdAts: readonly number[],
+  now: number,
+): TipsAudience {
+  if (threadCount === 0) return "new";
+  if (threadCount > AUDIENCE_SCAN_LIMIT) return "existing";
+  if (createdAts.length === 0) return "new";
+  return now - Math.min(...createdAts) <= NEW_USER_WINDOW_MS
+    ? "new"
+    : "existing";
+}
+
+export async function readAudience(
+  bb: BbPluginApi,
+  now: number,
+): Promise<TipsAudience> {
+  const threadCount = await settle(
+    bb,
+    "the thread count",
+    async (signal) => (await bb.sdk.threads.count({ signal })).total,
+    0,
+  );
+  if (threadCount === 0 || threadCount > AUDIENCE_SCAN_LIMIT) {
+    return classifyAudience(threadCount, [], now);
+  }
+  const createdAts = await settle(
+    bb,
+    "thread ages",
+    async (signal) =>
+      (
+        await bb.sdk.threads.list({
+          limit: AUDIENCE_SCAN_LIMIT,
+          includeHidden: true,
+          signal,
+        })
+      ).map((thread) => thread.createdAt),
+    [],
+  );
+  return classifyAudience(threadCount, createdAts, now);
+}
 
 export interface WaitingThreadRow {
   status: string;

@@ -39,6 +39,9 @@ const tipsCurrentSetSchema = z
   .strict();
 export type TipsCurrentSet = z.infer<typeof tipsCurrentSetSchema>;
 
+export const tipsAudienceSchema = z.enum(["new", "existing"]);
+export type TipsAudience = z.infer<typeof tipsAudienceSchema>;
+
 export const tipsStateSchema = z
   .object({
     version: z.literal(2),
@@ -46,6 +49,7 @@ export const tipsStateSchema = z
     firstSeenVersion: z.string().nullable(),
     current: tipsCurrentSetSchema.nullable(),
     hiddenDay: z.string().nullable(),
+    audience: tipsAudienceSchema.nullable(),
     records: z.record(z.string(), tipRecordSchema),
     observed: z
       .object({
@@ -109,6 +113,7 @@ export function createTipsState(
     firstSeenVersion: appVersion,
     current: null,
     hiddenDay: null,
+    audience: null,
     records: {},
     observed: {
       finishedThread: false,
@@ -448,50 +453,6 @@ export function selectTips(
   if (unchanged && added.length === 0) return { state: next, tips };
   return {
     state: storeSet(next, tips, existing?.seen ?? [], signals, today),
-    tips,
-  };
-}
-
-export function moreTips(
-  state: TipsState,
-  signals: TipSignals,
-  today: string,
-  now: number,
-  catalog: readonly TipDefinition[] = TIP_CATALOG,
-): TipSelection {
-  const selection = selectTips(state, signals, today, now, catalog);
-  if (selection.tips.length === 0) return selection;
-  const current = selection.state.current;
-  const currentKeys = new Set(
-    selection.tips.map((definition) => keyOf(definition, signals)),
-  );
-  const ranked = rankEligibleTips(selection.state, signals, today, catalog);
-  const others = ranked.filter(
-    (definition) => !currentKeys.has(keyOf(definition, signals)),
-  );
-  if (others.length === 0) return selection;
-  const seen = new Set(current?.seen ?? []);
-  const unseen = others.filter(
-    (definition) => !seen.has(keyOf(definition, signals)),
-  );
-  const restart = unseen.length === 0;
-  const pool = restart
-    ? others
-    : [
-        ...unseen,
-        ...others.filter((definition) => seen.has(keyOf(definition, signals))),
-      ];
-  const picks = pool.slice(0, TIPS_PER_SET);
-  const filler = selection.tips.slice(0, TIPS_PER_SET - picks.length);
-  const tips = [...picks, ...filler];
-  return {
-    state: storeSet(
-      selection.state,
-      tips,
-      restart ? [...currentKeys] : (current?.seen ?? []),
-      signals,
-      today,
-    ),
     tips,
   };
 }
