@@ -1,5 +1,6 @@
 import ArrowDown01Icon from "@hugeicons/core-free-icons/ArrowDown01Icon";
 import GithubIcon from "@hugeicons/core-free-icons/GithubIcon";
+import NewTwitterIcon from "@hugeicons/core-free-icons/NewTwitterIcon";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { useEffect, useRef, type ReactNode } from "react";
 
@@ -7,7 +8,7 @@ import { DASHBOARD_PATH } from "../lib/connect-return-to";
 import { COMPARE_LINKS, GUIDE_LINKS, type ContentLink } from "./content-links";
 import { DiscordLink, DownloadLink, GitHubLink, XLink } from "./cta";
 import { useDesktopPlatform } from "./desktop-platform";
-import { DESKTOP_DOWNLOADS } from "./site";
+import { DESKTOP_DOWNLOADS, GITHUB_URL } from "./site";
 
 type SiteNavPage = "blog" | "changelog" | "plugins" | "plugin-guide";
 
@@ -153,7 +154,10 @@ export function SiteFooter({ current }: { current?: string }) {
     <footer className="footer">
       <div className="footer-brand">
         <span className="bb-mark footer-mark" aria-hidden="true" />
-        <p>Free and open source (MIT).</p>
+        <p>Free and open source</p>
+        <a className="footer-license" href={`${GITHUB_URL}/blob/main/LICENSE`}>
+          MIT license
+        </a>
         <p className="footer-legal">
           <a href="/privacy">Privacy</a>
         </p>
@@ -199,7 +203,13 @@ export function SiteFooter({ current }: { current?: string }) {
           <DiscordLink placement="footer">Discord</DiscordLink>
         </li>
         <li>
-          <XLink placement="footer">X</XLink>
+          <XLink placement="footer" aria-label="X">
+            <HugeiconsIcon
+              icon={NewTwitterIcon}
+              className="footer-x"
+              aria-hidden="true"
+            />
+          </XLink>
         </li>
       </FooterColumn>
     </footer>

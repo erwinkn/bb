@@ -808,8 +808,8 @@ body {
   display: flex;
   align-items: center;
   width: max-content;
-  animation: company-proof-scroll
-    calc(var(--company-proof-logos, 11) * 8s) linear infinite;
+  animation: company-proof-scroll calc(var(--company-proof-logos, 11) * 8s)
+    linear infinite;
   will-change: transform;
 }
 
@@ -2970,10 +2970,33 @@ html.js .mock[data-construct]:not(.constructing):not(.constructed) {
   margin-top: 14px;
   font-size: 13.5px;
   line-height: 1.5;
+  text-wrap: balance;
+}
+
+.footer-brand .footer-license {
+  display: inline-flex;
+  align-items: center;
+  margin-top: 10px;
+  padding: 2px 9px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.6;
+}
+
+.footer-brand .footer-license:hover {
+  border-color: var(--ink);
+}
+
+.footer-x {
+  display: block;
+  width: 16px;
+  height: 16px;
 }
 
 .footer-brand .footer-legal {
-  margin-top: 10px;
+  margin-top: 14px;
 }
 
 .footer-title {

@@ -83,7 +83,7 @@ export function DiscordLink(props: CtaLinkProps) {
   );
 }
 
-export function XLink(props: CtaLinkProps) {
+export function XLink(props: CtaLinkProps & { "aria-label"?: string }) {
   return (
     <TrackedExternalLink {...props} href={X_URL} event="landing_x_clicked" />
   );
