@@ -166,7 +166,9 @@ npm install -g --prefix "$FORK" ~/Code/bb/.fork-build/bb-app-0.43.1.tgz
 # 2. Back up the database. This is optional for the same version and required
 #    when the build changes version, because migrations are forward-only.
 mkdir -p ~/.bb-backups
-sqlite3 ~/.bb/bb.db ".backup '$HOME/.bb-backups/bb-$(date +%F-%H%M).db'"
+# VACUUM INTO copies one consistent snapshot in seconds; `.backup` restarts its
+# copy whenever BB writes, so it never finishes on a live database.
+sqlite3 ~/.bb/bb.db "VACUUM INTO '$HOME/.bb-backups/bb-$(date +%F-%H%M).db'"
 
 # 3. Point the unit at the fork.
 mkdir -p ~/.config/systemd/user/bb-app.service.d
