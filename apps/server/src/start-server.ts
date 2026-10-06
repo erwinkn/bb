@@ -33,6 +33,7 @@ import { createLauncherChannel } from "./services/system/launcher-channel.js";
 import { createBbAppManagedConfigReloader } from "./services/system/bb-app-managed-config.js";
 import { startGatedPerformanceDiagnostics } from "./services/system/performance-diagnostics.js";
 import { startEventLoopStallMonitor } from "./services/system/event-loop-stall-monitor.js";
+import { startEventLoopStallSampler } from "./services/system/event-loop-stall-sampler.js";
 import {
   runPeriodicSweeps,
   runStartupRecoverySweep,
@@ -366,6 +367,7 @@ export async function runServer(serverConfig: ServerConfig): Promise<void> {
     logger,
     thresholdMs: () => (diagnosticsEnabled() ? 100 : 500),
   });
+  const eventLoopStallSampler = startEventLoopStallSampler({ logger });
   const stopDaemonLivenessChecks = startDaemonLivenessChecks({
     config: runtimeConfig,
     db,
@@ -478,6 +480,7 @@ export async function runServer(serverConfig: ServerConfig): Promise<void> {
       providerModelCatalogPrewarm?.stop();
       eventLoopStallMonitor.stop();
       await performanceDiagnostics.stop();
+      eventLoopStallSampler.stop();
       stopDaemonLivenessChecks();
       if (sweepInterval !== null) {
         clearInterval(sweepInterval);

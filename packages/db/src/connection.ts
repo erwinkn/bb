@@ -24,7 +24,13 @@ export interface SlowDbQueryLogger {
   info(fields: SlowDbQueryLogFields, message: string): void;
 }
 
+export interface DbQueryTiming {
+  durationMs: number;
+  source: string;
+}
+
 export interface CreateConnectionOptions {
+  onQuery?: (timing: DbQueryTiming) => void;
   slowQueryLogger?: SlowDbQueryLogger;
   slowQueryThresholdMs?: number | (() => number);
   slowQueryDiagnosticsEnabled?: () => boolean;
@@ -64,6 +70,7 @@ export function prepareCachedQuery<TQuery>(
 
 interface SlowDbQueryConfig {
   logger: SlowDbQueryLogger;
+  onQuery: ((timing: DbQueryTiming) => void) | undefined;
   thresholdMs: number | (() => number);
   walPath: string | null;
   diagnosticsEnabled: () => boolean;
@@ -114,6 +121,9 @@ function runTimedStatementOperation<TValue>(
     return args.work();
   } finally {
     const durationMs = performance.now() - startedAt;
+    if (args.operation !== "transaction") {
+      args.config.onQuery?.({ durationMs, source: args.source });
+    }
     const thresholdMs =
       typeof args.config.thresholdMs === "function"
         ? args.config.thresholdMs()
@@ -192,6 +202,7 @@ function instrumentSqliteClient(
 
   const config: SlowDbQueryConfig = {
     logger: options.slowQueryLogger,
+    onQuery: options.onQuery,
     thresholdMs:
       options.slowQueryThresholdMs ?? DEFAULT_SLOW_DB_QUERY_LOG_THRESHOLD_MS,
     walPath: sqlite.memory ? null : `${resolve(sqlite.name)}-wal`,

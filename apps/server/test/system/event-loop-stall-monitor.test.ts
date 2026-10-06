@@ -147,11 +147,15 @@ describe("event loop stall monitor", () => {
       logger,
       thresholdMs: () => (enabled ? 100 : 500),
     });
+    const stallLogs = () =>
+      logger.info.mock.calls.filter(
+        ([, message]) => message === "Event loop stalled",
+      );
     vi.advanceTimersByTime(EVENT_LOOP_STALL_MONITOR_INTERVAL_MS);
-    expect(logger.info).toHaveBeenCalledTimes(1);
+    expect(stallLogs()).toHaveLength(1);
     enabled = false;
     vi.advanceTimersByTime(EVENT_LOOP_STALL_MONITOR_INTERVAL_MS);
-    expect(logger.info).toHaveBeenCalledTimes(1);
+    expect(stallLogs()).toHaveLength(1);
     monitor.stop();
   });
 
