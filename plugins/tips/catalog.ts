@@ -137,7 +137,7 @@ export const TIP_CATALOG: readonly TipDefinition[] = [
   tip({
     id: "account-pool",
     title: "Keep working through usage limits",
-    body: "Account Pooler moves Claude Code and Codex threads to another account you own when one runs out.",
+    body: "When an account hits its limit, Account Pooler moves the thread to another one you own.",
     action: {
       kind: "route",
       label: "Set up",
@@ -153,7 +153,7 @@ export const TIP_CATALOG: readonly TipDefinition[] = [
   tip({
     id: "subthreads",
     title: "Run work in parallel",
-    body: "Ask bb to spin up subthreads that try three approaches at once, or one that reviews this work.",
+    body: "Ask bb to try three approaches at once in subthreads, or to have one review this work.",
     action: {
       kind: "prompt",
       label: "Try it",
@@ -194,7 +194,7 @@ export const TIP_CATALOG: readonly TipDefinition[] = [
   tip({
     id: "browser-automation",
     title: "Let the agent test your app",
-    body: "Ask your agent to turn on Browser Automation, then click through your app and report what breaks.",
+    body: "Your agent can turn on Browser Automation, click through your app, and report what breaks.",
     action: {
       kind: "prompt",
       label: "Try it",
@@ -240,7 +240,7 @@ export const TIP_CATALOG: readonly TipDefinition[] = [
   tip({
     id: "morning-digest",
     title: "Get a morning email digest",
-    body: "Ask the agent to build an automation that reads your inbox in bb's browser each morning and sends you a short digest.",
+    body: "An automation can read your inbox in bb's browser each morning and send you a short digest.",
     action: {
       kind: "prompt",
       label: "Try it",
@@ -257,7 +257,7 @@ export const TIP_CATALOG: readonly TipDefinition[] = [
   tip({
     id: "decision-buttons",
     title: "Turn decisions into buttons",
-    body: "Ask the agent to build a plugin that shows the choices it needs from you as one-click buttons.",
+    body: "Ask the agent for a plugin that shows the choices it needs from you as one-click buttons.",
     action: {
       kind: "prompt",
       label: "Try it",
@@ -285,7 +285,7 @@ export const TIP_CATALOG: readonly TipDefinition[] = [
   tip({
     id: "queue-or-steer",
     title: "Add to a running turn",
-    body: "While the agent works, steer to change course now, or queue a follow-up that runs when it finishes.",
+    body: "While the agent works, steer to change course now or queue a follow-up for when it finishes.",
     action: {
       kind: "route",
       label: "Choose what Enter does",

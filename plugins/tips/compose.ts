@@ -31,10 +31,3 @@ export function composeTipDraft(
     })),
   };
 }
-
-export function taskFromDraft(text: string, prompt: string | null): string {
-  if (prompt !== null && text.startsWith(prompt)) {
-    return text.slice(prompt.length).trim();
-  }
-  return text.trim();
-}

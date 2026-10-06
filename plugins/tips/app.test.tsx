@@ -131,7 +131,7 @@ describe("Tips homepage section", () => {
   it("shows three tiles for the selected project with clear outcomes", async () => {
     const slot = renderTips();
     expect(await slot.findByText("Run work in parallel")).toBeTruthy();
-    expect(slot.getByRole("region", { name: "Ideas to try" })).toBeTruthy();
+    expect(slot.getByRole("region", { name: "Tips" })).toBeTruthy();
     expect(slot.getAllByRole("listitem")).toHaveLength(3);
     expect(
       slot.getByRole("button", {
@@ -169,7 +169,7 @@ describe("Tips homepage section", () => {
     const slot = renderTips();
     await Promise.resolve();
     expect(methods(slot)).toEqual([]);
-    expect(slot.queryByRole("region", { name: "Ideas to try" })).toBeNull();
+    expect(slot.queryByRole("region", { name: "Tips" })).toBeNull();
   });
 
   it("renders nothing when the page is too narrow for three tiles", async () => {
@@ -178,14 +178,14 @@ describe("Tips homepage section", () => {
     const slot = renderTips();
     await Promise.resolve();
     expect(methods(slot)).toEqual([]);
-    expect(slot.queryByRole("region", { name: "Ideas to try" })).toBeNull();
+    expect(slot.queryByRole("region", { name: "Tips" })).toBeNull();
   });
 
   it("asks for nothing while tips are turned off", async () => {
     const slot = renderTips(undefined, { settings: { enabled: false } });
     await Promise.resolve();
     expect(methods(slot)).toEqual([]);
-    expect(slot.queryByRole("region", { name: "Ideas to try" })).toBeNull();
+    expect(slot.queryByRole("region", { name: "Tips" })).toBeNull();
   });
 
   it("previews a prompt tip as the composer placeholder on hover and focus", async () => {
@@ -289,7 +289,7 @@ describe("Tips homepage section", () => {
     fireEvent.pointerDown(slot.getByRole("button", { name: "Tip options" }));
     fireEvent.click(await slot.findByText("Hide tips for today"));
     expect(await slot.findByText("Tips hidden for today.")).toBeTruthy();
-    expect(slot.queryByRole("region", { name: "Ideas to try" })).toBeNull();
+    expect(slot.queryByRole("region", { name: "Tips" })).toBeNull();
     expect(slot.inspection.rpcCalls).toContainEqual({
       method: "hide",
       input: { hidden: true },

@@ -1,5 +1,5 @@
 import { useState, type ComponentType, type ReactNode } from "react";
-import { Icon } from "@bb/shared-ui/icon";
+import { cn } from "@bb/shared-ui/lib/utils";
 import { StoryCard, StoryRow } from "../../.ladle/story-card";
 import { StoryComposer } from "./mobile-home-story-fixtures";
 
@@ -17,17 +17,8 @@ interface StoryTip {
   action: StoryTipAction;
 }
 
-interface GridProps {
-  tips: readonly StoryTip[];
-  previewId: string | null;
-  filledId: string | null;
-  task: string | null;
-  onPreview(id: string | null): void;
-  onActivate(tip: StoryTip): void;
-}
-
-interface HeaderProps {
-  label: ReactNode;
+interface ControlsProps {
+  notice: string | null;
   onMore(): void;
   onHide(): void;
   onTurnOff(): void;
@@ -35,13 +26,16 @@ interface HeaderProps {
 
 interface GalleryModule {
   TipsGallery: ComponentType<
-    GridProps &
-      Omit<HeaderProps, "label"> & {
-        notice: string | null;
-      }
+    ControlsProps & {
+      tips: readonly StoryTip[];
+      filledId: string | null;
+      onPreview(id: string | null): void;
+      onActivate(tip: StoryTip): void;
+    }
   >;
-  TipsHeader: ComponentType<HeaderProps>;
-  TipsGrid: ComponentType<GridProps>;
+  TipsFooter: ComponentType<ControlsProps>;
+  TipCardText: ComponentType<{ tip: StoryTip }>;
+  TIP_CARD_CLASS: string;
   TIPS_SECTION_CLASS: string;
 }
 
@@ -72,29 +66,19 @@ const STORY_SIGNALS = {
   appVersion: "0.42.0",
 };
 
-function renderCatalog(ids: readonly string[]): StoryTip[] {
-  return ids.flatMap((id) => {
-    const definition = catalog.TIP_CATALOG.find((entry) => entry.id === id);
-    return definition === undefined
-      ? []
-      : [catalog.renderTip(definition, STORY_SIGNALS)];
-  });
-}
-
-const CARD_TIPS = renderCatalog([
+const CARD_TIPS = [
   "subthreads",
   "set-up-for-me",
   "phone",
   "browser-automation",
   "build-plugin",
   "account-pool",
-]);
-
-const WRITTEN_TIPS = renderCatalog([
-  "command-palette",
-  "queue-or-steer",
-  "thread-search",
-]);
+].flatMap((id) => {
+  const definition = catalog.TIP_CATALOG.find((entry) => entry.id === id);
+  return definition === undefined
+    ? []
+    : [catalog.renderTip(definition, STORY_SIGNALS)];
+});
 
 function composeTip(prompt: string, draft: string): string {
   const task = draft.trim();
@@ -106,10 +90,7 @@ function composeTip(prompt: string, draft: string): string {
 
 interface TipsPageState {
   tips: readonly StoryTip[];
-  written: StoryTip | undefined;
-  previewId: string | null;
   filledId: string | null;
-  task: string | null;
   notice: string | null;
   setPreviewId(id: string | null): void;
   activate(tip: StoryTip): void;
@@ -130,13 +111,9 @@ function NewThreadPage({
   const offset = (page % 2) * 3;
   const tips = CARD_TIPS.slice(offset, offset + 3);
   const preview = tips.find((tip) => tip.id === previewId)?.action;
-  const filled = draft.trim() === "" ? null : filledId;
   const state: TipsPageState = {
     tips,
-    written: WRITTEN_TIPS[page % WRITTEN_TIPS.length],
-    previewId,
-    filledId: filled,
-    task: draft.trim() === "" ? null : draft.trim(),
+    filledId: draft.trim() === "" ? null : filledId,
     notice,
     setPreviewId,
     activate(tip) {
@@ -178,59 +155,11 @@ function NewThreadPage({
   );
 }
 
-function WrittenTip({ tip }: { tip: StoryTip | undefined }) {
-  if (tip === undefined) return null;
-  return (
-    <p className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
-      <Icon name="Explore" className="size-3.5 shrink-0" aria-hidden />
-      <span className="truncate">Tip: {tip.body}</span>
-    </p>
-  );
-}
-
-function Grid({ state }: { state: TipsPageState }) {
-  return (
-    <gallery.TipsGrid
-      tips={state.tips}
-      previewId={state.previewId}
-      filledId={state.filledId}
-      task={state.task}
-      onPreview={state.setPreviewId}
-      onActivate={state.activate}
-    />
-  );
-}
-
-function Status({ state }: { state: TipsPageState }) {
-  return (
-    <p role="status" className="min-h-4 text-xs text-muted-foreground">
-      {state.notice ?? ""}
-    </p>
-  );
-}
-
-function header(state: TipsPageState, label: ReactNode) {
-  return (
-    <gallery.TipsHeader
-      label={label}
-      onMore={state.more}
-      onHide={() => {}}
-      onTurnOff={() => {}}
-    />
-  );
-}
-
-const TRY_WITH_BB = (
-  <h2 className="text-xs font-medium text-muted-foreground">Try with bb</h2>
-);
-
 function ControlLayout(state: TipsPageState) {
   return (
     <gallery.TipsGallery
       tips={state.tips}
-      previewId={state.previewId}
       filledId={state.filledId}
-      task={state.task}
       notice={state.notice}
       onPreview={state.setPreviewId}
       onActivate={state.activate}
@@ -241,23 +170,36 @@ function ControlLayout(state: TipsPageState) {
   );
 }
 
-function StripAboveLayout(state: TipsPageState) {
+function BorderlessLayout(state: TipsPageState) {
   return (
-    <section aria-label="Ideas to try" className={gallery.TIPS_SECTION_CLASS}>
-      <WrittenTip tip={state.written} />
-      {header(state, TRY_WITH_BB)}
-      <Grid state={state} />
-      <Status state={state} />
-    </section>
-  );
-}
-
-function StripAsHeaderLayout(state: TipsPageState) {
-  return (
-    <section aria-label="Ideas to try" className={gallery.TIPS_SECTION_CLASS}>
-      {header(state, <WrittenTip tip={state.written} />)}
-      <Grid state={state} />
-      <Status state={state} />
+    <section aria-label="Tips" className={gallery.TIPS_SECTION_CLASS}>
+      <ul className="grid grid-cols-3 divide-x divide-border-hairline">
+        {state.tips.map((tip) => (
+          <li key={tip.id} className="px-1.5">
+            <button
+              type="button"
+              data-tip-id={tip.id}
+              className={cn(
+                gallery.TIP_CARD_CLASS,
+                state.filledId === tip.id && "bg-surface-selected",
+              )}
+              onMouseEnter={() => state.setPreviewId(tip.id)}
+              onMouseLeave={() => state.setPreviewId(null)}
+              onFocus={() => state.setPreviewId(tip.id)}
+              onBlur={() => state.setPreviewId(null)}
+              onClick={() => state.activate(tip)}
+            >
+              <gallery.TipCardText tip={tip} />
+            </button>
+          </li>
+        ))}
+      </ul>
+      <gallery.TipsFooter
+        notice={state.notice}
+        onMore={state.more}
+        onHide={() => {}}
+        onTurnOff={() => {}}
+      />
     </section>
   );
 }
@@ -282,28 +224,18 @@ export function Control() {
   return (
     <LayoutStory
       layout={ControlLayout}
-      hint="Production layout: three label-free tiles under the composer. Hover a prompt tile to preview its prompt as the placeholder; click to fill the composer."
+      hint="Production layout: three bordered text-only cards under the composer, with the status line, More ideas, and the menu in a slim row below them. Hover a prompt card to preview its prompt as the placeholder; click to fill the composer."
     />
   );
 }
 Control.storyName = "Control (production)";
 
-export function WrittenTipAbove() {
+export function TextOnlyBorderless() {
   return (
     <LayoutStory
-      layout={StripAboveLayout}
-      hint="A: one quiet written tip (shortcuts and small behaviors) above the Try with bb header."
+      layout={BorderlessLayout}
+      hint="Exploration: the same text-only cards with no border or background at rest, hairline dividers between columns, and a fill only on hover or focus."
     />
   );
 }
-WrittenTipAbove.storyName = "A Written tip above header";
-
-export function WrittenTipAsHeader() {
-  return (
-    <LayoutStory
-      layout={StripAsHeaderLayout}
-      hint="B: the written tip replaces the Try with bb label; More ideas and the menu stay on the right."
-    />
-  );
-}
-WrittenTipAsHeader.storyName = "B Written tip as header";
+TextOnlyBorderless.storyName = "Text-only borderless";

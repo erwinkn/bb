@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ComposerDraftSnapshot } from "@get-bb/plugin-sdk/app";
-import { composeTipDraft, taskFromDraft } from "./compose.js";
+import { composeTipDraft } from "./compose.js";
 
 function draft(
   text: string,
@@ -46,12 +46,5 @@ describe("composeTipDraft", () => {
   it("leaves a draft that already holds the prompt unchanged", () => {
     const current = draft(`${SLOT_PROMPT}fix it`);
     expect(composeTipDraft(SLOT_PROMPT, current)).toBe(current);
-  });
-});
-
-describe("taskFromDraft", () => {
-  it("reads the task after a filled prompt, or the whole draft otherwise", () => {
-    expect(taskFromDraft(`${SLOT_PROMPT}fix it `, SLOT_PROMPT)).toBe("fix it");
-    expect(taskFromDraft(" my draft ", null)).toBe("my draft");
   });
 });

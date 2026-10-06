@@ -16,7 +16,7 @@ import {
   type PluginHomepageSectionProps,
 } from "@get-bb/plugin-sdk/app";
 import { detectTipClient, readTipClientEnvironment } from "./client.js";
-import { composeTipDraft, taskFromDraft } from "./compose.js";
+import { composeTipDraft } from "./compose.js";
 import type { TipView, tipsRpcContract } from "./contract.js";
 import { TipsGallery, TipsHiddenNotice } from "./gallery.js";
 
@@ -85,7 +85,6 @@ function TipsGallerySection({
   const [notice, setNotice] = useState<string | null>(null);
   const [hidden, setHidden] = useState<HiddenState>(null);
   const isEmpty = composer.isEmpty;
-  const text = composer.text;
 
   useRealtime(TIPS_CHANGED_CHANNEL, () => {
     setRevision((current) => current + 1);
@@ -118,11 +117,6 @@ function TipsGallerySection({
   }, [composer, isEmpty, preview]);
 
   const filled = isEmpty ? null : filledId;
-  const task = useMemo(() => {
-    const prompt = promptOf(tips.find((tip) => tip.id === filled));
-    const value = taskFromDraft(text, prompt);
-    return value === "" ? null : value;
-  }, [filled, text, tips]);
 
   const activate = useCallback(
     (tip: TipView) => {
@@ -190,9 +184,7 @@ function TipsGallerySection({
   return (
     <TipsGallery
       tips={tips}
-      previewId={previewId}
       filledId={filled}
-      task={task}
       notice={notice}
       onPreview={setPreviewId}
       onActivate={activate}

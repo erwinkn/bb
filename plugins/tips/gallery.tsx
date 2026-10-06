@@ -1,4 +1,3 @@
-import type { ReactNode } from "react";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -9,13 +8,10 @@ import {
 import { Icon } from "@/components/ui/icon";
 import { cn } from "@/lib/utils";
 import type { TipView } from "./contract.js";
-import { TipGraphic } from "./scenes.js";
 
 export interface TipsGalleryProps {
   tips: readonly TipView[];
-  previewId: string | null;
   filledId: string | null;
-  task: string | null;
   notice: string | null;
   onPreview(id: string | null): void;
   onActivate(tip: TipView): void;
@@ -62,17 +58,20 @@ function TipsMenu({
   );
 }
 
-export function TipsHeader({
-  label,
+export function TipsFooter({
+  notice,
   onMore,
   onHide,
   onTurnOff,
-}: Pick<TipsGalleryProps, "onMore" | "onHide" | "onTurnOff"> & {
-  label: ReactNode;
-}) {
+}: Pick<TipsGalleryProps, "notice" | "onMore" | "onHide" | "onTurnOff">) {
   return (
     <div className="flex items-center justify-between gap-3">
-      <div className="min-w-0">{label}</div>
+      <p
+        role="status"
+        className="min-w-0 truncate text-xs text-muted-foreground"
+      >
+        {notice ?? ""}
+      </p>
       <div className="flex shrink-0 items-center">
         <Button
           type="button"
@@ -89,67 +88,59 @@ export function TipsHeader({
   );
 }
 
+export const TIP_CARD_CLASS =
+  "flex h-full w-full flex-col gap-1 rounded-lg px-4 py-3.5 text-left outline-none hover:bg-state-hover focus-visible:bg-state-hover focus-visible:ring-2 focus-visible:ring-ring";
+
+export function TipCardText({ tip }: { tip: TipView }) {
+  return (
+    <>
+      <span className="text-sm font-medium text-foreground">{tip.title}</span>
+      <span className="line-clamp-3 text-xs text-muted-foreground">
+        {tip.body}
+      </span>
+      <span className="sr-only">{actionDescription(tip)}</span>
+    </>
+  );
+}
+
 export function TipsGrid({
   tips,
-  previewId,
   filledId,
-  task,
   onPreview,
   onActivate,
-}: Pick<
-  TipsGalleryProps,
-  "tips" | "previewId" | "filledId" | "task" | "onPreview" | "onActivate"
->) {
+}: Pick<TipsGalleryProps, "tips" | "filledId" | "onPreview" | "onActivate">) {
   return (
     <ul className="grid grid-cols-3 gap-3">
-      {tips.map((tip) => {
-        const filled = filledId === tip.id;
-        return (
-          <li key={tip.id}>
-            <button
-              type="button"
-              data-tip-id={tip.id}
-              className={cn(
-                "flex h-full w-full flex-col overflow-hidden rounded-lg border border-border-hairline text-left outline-none",
-                "hover:bg-state-hover focus-visible:ring-2 focus-visible:ring-ring",
-                filled && "border-surface-selected-border bg-surface-selected",
-              )}
-              onMouseEnter={() => onPreview(tip.id)}
-              onMouseLeave={() => onPreview(null)}
-              onFocus={() => onPreview(tip.id)}
-              onBlur={() => onPreview(null)}
-              onClick={() => onActivate(tip)}
-            >
-              <TipGraphic
-                tipId={tip.id}
-                active={previewId === tip.id || filled}
-                task={task}
-                className="h-24 w-full border-b border-border-hairline"
-              />
-              <span className="flex flex-col gap-0.5 px-3 pb-2.5 pt-2">
-                <span className="text-sm font-medium text-foreground">
-                  {tip.title}
-                </span>
-                <span className="line-clamp-2 text-xs text-muted-foreground">
-                  {tip.body}
-                </span>
-                <span className="sr-only">{actionDescription(tip)}</span>
-              </span>
-            </button>
-          </li>
-        );
-      })}
+      {tips.map((tip) => (
+        <li key={tip.id}>
+          <button
+            type="button"
+            data-tip-id={tip.id}
+            className={cn(
+              TIP_CARD_CLASS,
+              "border border-border-hairline",
+              filledId === tip.id &&
+                "border-surface-selected-border bg-surface-selected",
+            )}
+            onMouseEnter={() => onPreview(tip.id)}
+            onMouseLeave={() => onPreview(null)}
+            onFocus={() => onPreview(tip.id)}
+            onBlur={() => onPreview(null)}
+            onClick={() => onActivate(tip)}
+          >
+            <TipCardText tip={tip} />
+          </button>
+        </li>
+      ))}
     </ul>
   );
 }
 
-export const TIPS_SECTION_CLASS = "mt-6 flex flex-col gap-3";
+export const TIPS_SECTION_CLASS = "mt-6 flex flex-col gap-1.5";
 
 export function TipsGallery({
   tips,
-  previewId,
   filledId,
-  task,
   notice,
   onPreview,
   onActivate,
@@ -158,28 +149,19 @@ export function TipsGallery({
   onTurnOff,
 }: TipsGalleryProps) {
   return (
-    <section aria-label="Ideas to try" className={TIPS_SECTION_CLASS}>
-      <TipsHeader
-        label={
-          <h2 className="text-xs font-medium text-muted-foreground">
-            Try with bb
-          </h2>
-        }
+    <section aria-label="Tips" className={TIPS_SECTION_CLASS}>
+      <TipsGrid
+        tips={tips}
+        filledId={filledId}
+        onPreview={onPreview}
+        onActivate={onActivate}
+      />
+      <TipsFooter
+        notice={notice}
         onMore={onMore}
         onHide={onHide}
         onTurnOff={onTurnOff}
       />
-      <TipsGrid
-        tips={tips}
-        previewId={previewId}
-        filledId={filledId}
-        task={task}
-        onPreview={onPreview}
-        onActivate={onActivate}
-      />
-      <p role="status" className="min-h-4 text-xs text-muted-foreground">
-        {notice ?? ""}
-      </p>
     </section>
   );
 }

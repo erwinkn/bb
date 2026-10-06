@@ -1,10 +1,10 @@
-Learn what bb can do from three ideas under the composer. Tips shows three illustrated tiles on the New thread page, picked for how you use bb right now and for the project you have selected.
+Learn what bb can do from three ideas under the composer. Tips shows three short text cards on the New thread page, picked for how you use bb right now and for the project you have selected.
 
 ## What you get
 
-- Three tiles under the composer on the desktop and web New thread page, each with a small animated scene, a title, one line of explanation, and what clicking does.
-- Prompt tips say "Adds prompt". Hover or focus one to preview its prompt in the empty composer; click it to fill the composer and put the cursor at the end. Anything you had already typed moves into the prompt's "Task:" slot.
-- Setup tips name where they go, such as "Set up" for Account Pooler or "Get the app" for the mobile app, and open that page or command.
+- Three cards under the composer on the desktop and web New thread page, each with a title and a sentence or two of explanation.
+- Hover or focus a prompt tip to preview its prompt in the empty composer; click it to fill the composer and put the cursor at the end. Anything you had already typed moves into the prompt's "Task:" slot.
+- Setup tips open the right page or command, such as Account Pooler's settings or the mobile app page.
 - "More ideas" swaps in the next three. One menu hides tips for today or turns them off.
 - No tips on phones or in compact layouts.
 
