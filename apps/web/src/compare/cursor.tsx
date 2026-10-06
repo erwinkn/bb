@@ -71,7 +71,7 @@ export const BB_VS_CURSOR: Comparison = {
     "bb is a free, open-source Cursor alternative for running coding agents. Claude Code, Codex, and Cursor’s agent work together on your machines, on the plans you already pay for.",
   competitor: { name: "Cursor", logo: CURSOR_LOGO },
   headline: "The Cursor alternative for running all your coding agents",
-  sub: "Claude Code, Codex, and Cursor’s own agent work together on the plans you already pay for. Free and open source, and Cursor stays your editor.",
+  sub: "Claude Code, Codex, and Cursor’s own agent work together on the plans you already pay for. Free and open source.",
   heroVisual: <AgentSplit />,
   tailored: PLANS_SECTION,
   sections: [AWAY_SECTION, pluginsSection(PLUGINS_COPY)],
