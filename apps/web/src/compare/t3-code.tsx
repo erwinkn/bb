@@ -15,7 +15,6 @@ import {
   faqPhone,
   faqPlatforms,
   faqSchedule,
-  faqTalk,
   faqTeam,
   faqUsageLimit,
   price,
@@ -28,16 +27,11 @@ const T3_CODE_LOGO: BrandLogo = { kind: "image", src: t3CodeIcon };
 const CUSTOMIZE_SECTION = pluginsSection({
   title: "Change anything, no fork needed",
   body: (
-    <>
-      <p>
-        bb comes with worktrees, diffs, automations, and a mobile app built in.
-      </p>
-      <p>
-        When you want something different, browse the{" "}
-        <a href="/marketplace">plugin marketplace</a> or ask an agent to build
-        it. It’s ready right away, wherever you use bb, including your phone.
-      </p>
-    </>
+    <p>
+      Browse the <a href="/marketplace">plugin marketplace</a> or ask an agent
+      to build the panel, command, or agent you want. It’s ready right away,
+      wherever you use bb, including your phone.
+    </p>
   ),
 });
 
@@ -48,35 +42,15 @@ export const BB_VS_T3_CODE: Comparison = {
     "bb is a free, open-source T3 Code alternative. Claude Code, Codex, and other agents start and message each other, and plugins let you change anything without forking.",
   competitor: { name: "T3 Code", logo: T3_CODE_LOGO },
   headline: "The T3 Code alternative where your agents work together",
-  sub: "Claude Code builds, Codex reviews, and you can message either one. Free and open source, on Mac, Windows, and Linux.",
+  sub: "Claude Code builds, Codex reviews in its own thread, and you can message either one mid-run. Free and open source, on Mac, Windows, and Linux.",
   heroVisual: <AgentSplit />,
   tailored: CUSTOMIZE_SECTION,
   sections: [],
   tableNote: null,
   table: [
     {
-      title: "Price and license",
-      rows: [
-        {
-          feature: "Pricing",
-          bb: price("$0", "Any team size"),
-          competitor: price("$0", "No paid plan"),
-        },
-        {
-          feature: "Open-source license",
-          bb: cell("yes", "MIT"),
-          competitor: cell("yes", "MIT"),
-        },
-      ],
-    },
-    {
       title: "Agents",
       rows: [
-        {
-          feature: "Multi-agent support",
-          bb: cell("yes", "Claude Code, Codex, Cursor, Pi, and more"),
-          competitor: cell("yes", "Claude Code, Codex, Cursor, Pi, and more"),
-        },
         {
           feature: "Agent-to-agent handoff",
           bb: cell("yes", "Any provider, each in its own thread"),
@@ -92,6 +66,11 @@ export const BB_VS_T3_CODE: Comparison = {
           bb: cell("yes", "Automatic with Account Pooler"),
           competitor: cell("partial", "Tracks limits, you switch"),
         },
+        {
+          feature: "Multi-agent support",
+          bb: cell("yes", "Claude Code, Codex, Cursor, Pi, and more"),
+          competitor: cell("yes", "Claude Code, Codex, Cursor, Pi, and more"),
+        },
       ],
     },
     {
@@ -105,37 +84,17 @@ export const BB_VS_T3_CODE: Comparison = {
       ],
     },
     {
-      title: "Away from your desk",
+      title: "Price and license",
       rows: [
         {
-          feature: "Mobile app",
-          bb: cell("yes", "iOS beta, Android alpha"),
-          competitor: cell("yes", "iOS and Android"),
+          feature: "Pricing",
+          bb: price("$0", "Any team size"),
+          competitor: price("$0", "No paid plan"),
         },
         {
-          feature: "Run agents on other machines",
-          bb: cell("yes", "Any computer you own"),
-          competitor: cell("yes", "Pair over LAN, SSH, or relay"),
-        },
-        {
-          feature: "Scheduled automations",
-          bb: cell("yes", "Cron, one-shot, scripts"),
-          competitor: cell("yes", "Schedules and webhooks"),
-        },
-      ],
-    },
-    {
-      title: "Workspace",
-      rows: [
-        {
-          feature: "Git worktrees",
-          bb: cell("yes", ".env copy, setup, teardown"),
-          competitor: cell("yes", "Setup scripts"),
-        },
-        {
-          feature: "Diff review and merge",
-          bb: cell("yes"),
-          competitor: cell("yes"),
+          feature: "Open-source license",
+          bb: cell("yes", "MIT"),
+          competitor: cell("yes", "MIT"),
         },
       ],
     },
@@ -213,19 +172,7 @@ export const BB_VS_T3_CODE: Comparison = {
       title: "Agents",
       items: [
         FAQ_AGENTS,
-        {
-          question: "Can I message an agent that another agent started?",
-          answer: (
-            <p>
-              Yes. When an agent starts another, the new agent gets its own
-              thread in the sidebar. You can read the exact prompt it was given,
-              watch it work, and message it mid-run. When it finishes or fails,
-              the agent that started it hears back automatically.
-            </p>
-          ),
-        },
         FAQ_CODEX_TOGETHER,
-        faqTalk(""),
         faqUsageLimit(
           "T3 Code shows your accounts’ limits, but you switch accounts yourself.",
         ),
