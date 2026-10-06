@@ -79,7 +79,6 @@ function testTip(
 ): TipDefinition {
   return {
     id,
-    icon: "Zap",
     tone: "blue",
     title: `Title ${id}`,
     body: `Body ${id}.`,

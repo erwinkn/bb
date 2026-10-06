@@ -8,7 +8,6 @@ const app = await loadPluginApp(() => import("./app"));
 
 const PROMPT_TIP: TipView = {
   id: "subthreads",
-  icon: "GitBranch",
   tone: "blue",
   title: "Run work in parallel",
   body: "Ask bb to spin up subthreads that try three approaches at once.",
@@ -21,7 +20,6 @@ const PROMPT_TIP: TipView = {
 
 const ROUTE_TIP: TipView = {
   id: "phone",
-  icon: "Smartphone",
   tone: "rose",
   title: "Check on your agents from your phone",
   body: "The bb mobile app lets you follow threads away from your desk.",
@@ -30,7 +28,6 @@ const ROUTE_TIP: TipView = {
 
 const COMMAND_TIP: TipView = {
   id: "command-palette",
-  icon: "Zap",
   tone: "rose",
   title: "Do anything from the keyboard",
   body: "Press ⌘⇧P to search bb's commands and settings.",
@@ -39,7 +36,6 @@ const COMMAND_TIP: TipView = {
 
 const NEXT_TIP: TipView = {
   id: "build-plugin",
-  icon: "Puzzle",
   tone: "amber",
   title: "Ask the agent to build you a tool",
   body: "Your agent can write bb plugins for you.",

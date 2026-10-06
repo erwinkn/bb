@@ -7,7 +7,8 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Icon } from "@/components/ui/icon";
 import { cn } from "@/lib/utils";
-import type { TipTone, TipView } from "./contract.js";
+import type { TipView } from "./contract.js";
+import { TipArt } from "./tip-art.js";
 
 export interface TipsGalleryProps {
   tips: readonly TipView[];
@@ -88,30 +89,13 @@ function TipsFooter({
   );
 }
 
-const TONE_COLOR: Record<TipTone, string> = {
-  blue: "var(--timeline-accent)",
-  green: "var(--success)",
-  amber: "var(--attention)",
-  orange: "var(--warning)",
-  rose: "color-mix(in oklab, var(--destructive) 55%, var(--timeline-accent))",
-};
-
 const TIP_CARD_CLASS =
   "flex h-full w-full flex-col gap-1 rounded-xl border border-border-hairline bg-background px-4 pb-4 pt-3.5 text-left shadow-xs outline-none motion-safe:transition-[box-shadow,background-color] hover:bg-surface-raised hover:shadow-sm focus-visible:bg-surface-raised focus-visible:shadow-sm focus-visible:ring-2 focus-visible:ring-ring";
 
 function TipCardText({ tip }: { tip: TipView }) {
   return (
     <>
-      <span
-        aria-hidden
-        className="mb-2 flex size-8 items-center justify-center rounded-lg"
-        style={{
-          background: `color-mix(in oklab, ${TONE_COLOR[tip.tone]} 14%, transparent)`,
-          color: `color-mix(in oklab, ${TONE_COLOR[tip.tone]} 45%, var(--ink))`,
-        }}
-      >
-        <Icon name={tip.icon} className="size-4" />
-      </span>
+      <TipArt tipId={tip.id} tone={tip.tone} />
       <span className="text-sm font-medium text-foreground">{tip.title}</span>
       <span className="line-clamp-3 text-xs text-muted-foreground">
         {tip.body}
