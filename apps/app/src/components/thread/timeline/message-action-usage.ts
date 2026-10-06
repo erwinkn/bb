@@ -4,8 +4,8 @@ import { z } from "zod";
 import { createJsonLocalStorage } from "@/lib/browser-storage";
 
 export const MESSAGE_ACTION_USAGE_STORAGE_KEY = "bb.messageActionUsage.v1";
-export const MESSAGE_ACTION_PROMOTION_SCORE = 1.5;
-export const PROMOTED_MESSAGE_ACTION_SLOTS = 2;
+const MESSAGE_ACTION_PROMOTION_SCORE = 1.5;
+const PROMOTED_MESSAGE_ACTION_SLOTS = 2;
 
 const USAGE_HALF_LIFE_MS = 14 * 24 * 60 * 60 * 1000;
 const MAX_TRACKED_ACTIONS = 64;
@@ -61,7 +61,7 @@ export function recordMessageActionUsage(
   );
 }
 
-export interface RankableMessageAction {
+interface RankableMessageAction {
   usageKey: string;
   promotable: boolean;
 }

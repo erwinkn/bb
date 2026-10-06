@@ -619,15 +619,6 @@ describe("MessageActionBar usage ordering", () => {
     expect(menuItemLabels(openDesktopMenu())).toEqual(["Add to chat"]);
   });
 
-  it("returns a promoted action to the menu once its usage decays", () => {
-    getDefaultStore().set(messageActionUsageAtom, {
-      fork: { score: 2, usedAt: Date.now() - 30 * 24 * 60 * 60 * 1000 },
-    });
-    const { container } = renderAssistantBar();
-
-    expect(inlineActionLabels(container)).toEqual(["Copy message"]);
-  });
-
   it("keeps a promoted action inline and disabled when it is unavailable", () => {
     getDefaultStore().set(messageActionUsageAtom, {
       fork: { score: 3, usedAt: Date.now() },

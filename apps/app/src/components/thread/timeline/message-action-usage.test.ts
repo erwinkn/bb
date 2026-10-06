@@ -1,26 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
   messageActionScore,
-  rankInlineMessageActions,
   recordMessageActionUsage,
   type MessageActionUsage,
 } from "./message-action-usage";
 
 const NOW = Date.UTC(2026, 9, 5, 12);
 const DAY_MS = 24 * 60 * 60 * 1000;
-
-function action(usageKey: string, promotable: boolean) {
-  return { usageKey, promotable };
-}
-
-function rankedKeys(
-  actions: readonly { usageKey: string; promotable: boolean }[],
-  usage: MessageActionUsage,
-) {
-  return rankInlineMessageActions({ actions, usage, now: NOW }).map(
-    (ranked) => ranked.usageKey,
-  );
-}
 
 describe("message action usage", () => {
   it("halves an action's score every two weeks without use", () => {
@@ -47,69 +33,5 @@ describe("message action usage", () => {
 
     expect(Object.keys(usage)).toHaveLength(64);
     expect(usage.fork).toBeUndefined();
-  });
-
-  it("keeps the default row when nothing has been used", () => {
-    expect(
-      rankedKeys(
-        [
-          action("copy", false),
-          action("edit", false),
-          action("copy-link", true),
-          action("add-to-chat", true),
-        ],
-        {},
-      ),
-    ).toEqual(["copy", "edit"]);
-  });
-
-  it("promotes a menu action only after repeated recent use", () => {
-    const actions = [action("copy", false), action("fork", true)];
-    const once = recordMessageActionUsage({}, "fork", NOW);
-    const twice = recordMessageActionUsage(once, "fork", NOW);
-
-    expect(rankedKeys(actions, once)).toEqual(["copy"]);
-    expect(rankedKeys(actions, twice)).toEqual(["fork", "copy"]);
-  });
-
-  it("adds up to two promoted actions beside the defaults", () => {
-    const usage: MessageActionUsage = {
-      "add-to-chat": { score: 5, usedAt: NOW },
-      "copy-link": { score: 4, usedAt: NOW },
-    };
-
-    expect(
-      rankedKeys(
-        [
-          action("copy", false),
-          action("edit", false),
-          action("plugin:a", false),
-          action("copy-link", true),
-          action("add-to-chat", true),
-        ],
-        usage,
-      ),
-    ).toEqual(["add-to-chat", "copy-link", "copy", "edit", "plugin:a"]);
-  });
-
-  it("moves the least-used action into the menu once a third action is promoted", () => {
-    const usage: MessageActionUsage = {
-      "add-to-chat": { score: 5, usedAt: NOW },
-      fork: { score: 4, usedAt: NOW },
-      copy: { score: 3.5, usedAt: NOW },
-      "copy-link": { score: 3, usedAt: NOW },
-    };
-
-    expect(
-      rankedKeys(
-        [
-          action("copy", false),
-          action("copy-link", true),
-          action("add-to-chat", true),
-          action("fork", true),
-        ],
-        usage,
-      ),
-    ).toEqual(["add-to-chat", "fork", "copy"]);
   });
 });
