@@ -6,9 +6,14 @@ import { useEffect, useRef, type ReactNode } from "react";
 
 import { DASHBOARD_PATH } from "../lib/connect-return-to";
 import { COMPARE_LINKS, GUIDE_LINKS, type ContentLink } from "./content-links";
-import { DiscordLink, DownloadLink, GitHubLink, XLink } from "./cta";
+import {
+  DesktopDownloadButton,
+  DiscordLink,
+  DownloadLink,
+  GitHubLink,
+  XLink,
+} from "./cta";
 import { useDesktopPlatform } from "./desktop-platform";
-import { DESKTOP_DOWNLOADS } from "./site";
 
 type SiteNavPage = "blog" | "changelog" | "plugins" | "plugin-guide";
 
@@ -102,13 +107,11 @@ export function SiteNav({ current }: { current?: SiteNavPage }) {
         >
           <HugeiconsIcon icon={GithubIcon} />
         </GitHubLink>
-        <DownloadLink
+        <DesktopDownloadButton
           placement="nav"
           platform={platform}
-          className="btn btn-primary btn-sm"
-        >
-          {DESKTOP_DOWNLOADS[platform].buttonLabel}
-        </DownloadLink>
+          className="btn btn-primary btn-sm nav-download"
+        />
       </div>
     </nav>
   );

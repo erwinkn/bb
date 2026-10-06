@@ -387,6 +387,17 @@ body {
   line-height: 1.5;
 }
 
+.nav-download {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.nav-download .btn-ic {
+  width: 14px;
+  height: 14px;
+}
+
 .btn-ic {
   width: 16px;
   height: 16px;
