@@ -111,6 +111,7 @@ import { scheduleThreadProvisioningAdvance } from "./thread-provisioning.js";
 import { isPreStartThreadStatus } from "./thread-status.js";
 import { settleDanglingBackgroundTasksForStoppedThreadInTransaction } from "./background-task-reconciliation.js";
 import { abortPluginToolCallsForThreads } from "../plugins/plugin-tool-calls.js";
+import { reviveReportedLiveThread } from "./reconnect-turn-adoption.js";
 
 type ThreadStartCommand = Awaited<ReturnType<typeof buildThreadStartCommand>>;
 type ThreadStopCommand = ReturnType<typeof buildThreadStopCommand>;
@@ -2145,8 +2146,8 @@ export async function reconcileDaemonReportedThreads(
       .all();
 
     for (const thread of erroredThreads) {
-      applyLoggedThreadLifecycleEvent(deps, {
-        event: { type: "run.started" },
+      reviveReportedLiveThread(deps, {
+        sameDaemonInstance: args.sameDaemonInstance,
         threadId: thread.id,
       });
     }
@@ -2186,7 +2187,11 @@ export async function reconcileDaemonReportedThreads(
   }
 
   const inactiveButActive = deps.db
-    .select({ environmentId: environments.id, id: threads.id })
+    .select({
+      environmentId: environments.id,
+      id: threads.id,
+      status: threads.status,
+    })
     .from(threads)
     .innerJoin(environments, eq(threads.environmentId, environments.id))
     .where(
@@ -2227,10 +2232,21 @@ export async function reconcileDaemonReportedThreads(
       }
       continue;
     }
-    applyLoggedThreadLifecycleEvent(deps, {
-      event: { type: "run.started" },
-      threadId: thread.id,
-    });
+    if (thread.status === "idle") {
+      if (
+        !reviveReportedLiveThread(deps, {
+          sameDaemonInstance: args.sameDaemonInstance,
+          threadId: thread.id,
+        })
+      ) {
+        continue;
+      }
+    } else {
+      applyLoggedThreadLifecycleEvent(deps, {
+        event: { type: "run.started" },
+        threadId: thread.id,
+      });
+    }
     clearThreadProvisionSchedule(thread.id);
   }
 }
