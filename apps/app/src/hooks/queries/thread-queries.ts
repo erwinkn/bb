@@ -682,6 +682,30 @@ export function useThread(id: string, options?: QueryOptions) {
   });
 }
 
+export function resolveThreadProjectId(
+  queryClient: QueryClient | undefined,
+  threadId: string,
+): Promise<string> {
+  if (queryClient === undefined) {
+    return sdk.threads.get({ threadId }).then((thread) => thread.projectId);
+  }
+  const cachedProjectId =
+    queryClient.getQueryData<ThreadResponse>(threadQueryKey(threadId))
+      ?.projectId ??
+    getCachedThreadListPlaceholder(queryClient, threadId)?.projectId ??
+    findSidebarNavigationThreadPlaceholder(queryClient, threadId)?.projectId;
+  if (cachedProjectId !== undefined) {
+    return Promise.resolve(cachedProjectId);
+  }
+  return queryClient
+    .fetchQuery<ThreadResponse>({
+      queryKey: threadQueryKey(threadId),
+      queryFn: ({ signal }) => sdk.threads.get({ threadId, signal }),
+      staleTime: THREAD_DETAIL_STALE_TIME_MS,
+    })
+    .then((thread) => thread.projectId);
+}
+
 function liftThreadListPlaceholder(
   thread: ThreadListEntry | undefined,
 ): ThreadResponse | undefined {

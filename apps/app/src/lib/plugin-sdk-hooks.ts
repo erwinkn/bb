@@ -8,7 +8,11 @@ import {
   useState,
   useSyncExternalStore,
 } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  QueryClientContext,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 import { matchPath, useLocation, useNavigate } from "react-router-dom";
 import type {
   BbContext,
@@ -56,6 +60,7 @@ import {
 import { sdk } from "@/lib/sdk";
 import { getPluginBoundSdk } from "@/lib/plugin-bound-sdk";
 import { useSystemProviders } from "@/hooks/queries/system-queries";
+import { resolveThreadProjectId } from "@/hooks/queries/thread-queries";
 import { useSystemEnvironmentProviders } from "@/hooks/queries/environment-provider-queries";
 import { requestComposerFocus } from "@/lib/composer-focus-requests";
 import { setComposerTextEffect } from "@/lib/composer-text-effects";
@@ -336,18 +341,16 @@ export function useBbNavigate(): BbNavigate {
   const openThreadPanelHandler = usePluginThreadPanelOpenHandler();
   const navigate = useNavigate();
   const appNavigation = useAppNavigationHost();
+  const queryClient = useContext(QueryClientContext);
   const toThread = useCallback(
     (threadId: string) => {
-      void sdk.threads
-        .get({ threadId })
-        .then((thread) =>
-          navigate(
-            getThreadRoutePath({ projectId: thread.projectId, threadId }),
-          ),
+      void resolveThreadProjectId(queryClient, threadId)
+        .then((projectId) =>
+          navigate(getThreadRoutePath({ projectId, threadId })),
         )
         .catch(() => navigate(`/threads/${threadId}`));
     },
-    [navigate],
+    [navigate, queryClient],
   );
   const toProject = useCallback(
     (projectId: string) => {
