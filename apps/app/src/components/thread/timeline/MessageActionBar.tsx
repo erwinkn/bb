@@ -3,6 +3,10 @@ import { CopyButton } from "../../ui/copy-button.js";
 import { Icon } from "@bb/shared-ui/icon";
 import { useIsCompactViewport } from "@bb/shared-ui/hooks/use-compact-viewport";
 import { usePointerCoarse } from "@bb/shared-ui/hooks/use-pointer-coarse";
+import {
+  useMessageActionRecents,
+  type MessageActionRole,
+} from "@/lib/message-action-recents";
 import { copyToClipboardWithToast } from "@/lib/clipboard";
 import {
   DropdownMenu,
@@ -42,6 +46,7 @@ function PluginActionIcon({
 }
 
 interface MessageActionBarProps {
+  messageRole: MessageActionRole;
   timestamp: number;
   messageText: string;
   alignment: "start" | "end";
@@ -62,7 +67,9 @@ interface MessageActionBarProps {
 interface MessageOverflowAction {
   icon: "Copy" | "Link" | "Edit" | "MessageSquarePlus" | "Fork";
   plugin?: { pluginId: string | null; icon: string | null };
-  key?: string;
+  key: string;
+  recencyKey?: string;
+  menuOnly?: boolean;
   label: string;
   onSelect: () => void;
   disabled?: boolean;
@@ -91,7 +98,7 @@ function MessageActionIcon({
   );
 }
 
-const DESKTOP_ACTION_WIDTH_PX = 20;
+const DESKTOP_ACTION_WIDTH_PX = 24;
 const TOUCH_ACTION_WIDTH_PX = 28;
 const ACTION_ROW_GAP_PX = 8;
 const OVERFLOW_TRIGGER_GAP_PX = 4;
@@ -177,7 +184,7 @@ export const MessageColumnWidthContext =
   createContext<SharedMessageColumnWidth | null>(null);
 
 const ACTION_BUTTON_CLASS =
-  "inline-flex size-5 cursor-pointer items-center justify-center text-muted-foreground hover:text-foreground disabled:pointer-events-none disabled:opacity-40";
+  "inline-flex size-6 cursor-pointer items-center justify-center text-muted-foreground hover:text-foreground disabled:pointer-events-none disabled:opacity-40";
 const HOVER_REVEAL_CLASS =
   "opacity-0 transition-opacity group-hover/message:opacity-100 group-focus-within/message:opacity-100";
 const MOBILE_INLINE_ACTION_CLASS =
@@ -218,7 +225,7 @@ function DesktopMessageAction({
             text={action.copyText ?? ""}
             imageUrl={action.copyImageUrl}
             label={action.label}
-            className={className}
+            className={cn("size-6", className)}
           />
         ) : (
           <button
@@ -249,7 +256,7 @@ function MessageActionMenuItems({
 }) {
   return actions.map((action) => (
     <DropdownMenuItem
-      key={action.key ?? action.label}
+      key={action.key}
       disabled={action.disabled}
       onSelect={action.onSelect}
       textValue={action.label}
@@ -305,6 +312,7 @@ function MessageTimestampFooter({ timestamp }: { timestamp: number }) {
 }
 
 export function MessageActionBar({
+  messageRole,
   timestamp,
   messageText,
   alignment,
@@ -331,6 +339,13 @@ export function MessageActionBar({
     enabled: !(isCompactTouch && mobileActionDisplay === "overflow"),
   });
   const [isMenuOpen, setIsMenuOpen] = useState(false);
+  const [isHovered, setIsHovered] = useState(false);
+  const [isFocused, setIsFocused] = useState(false);
+  const { recents, recordAction } = useMessageActionRecents(messageRole);
+  const [visibleRecents, setVisibleRecents] = useState(recents);
+  if (!isHovered && !isFocused && !isMenuOpen && visibleRecents !== recents) {
+    setVisibleRecents(recents);
+  }
   const slotRef = useCallback(
     (node: HTMLDivElement | null) => {
       measureRef(node);
@@ -350,10 +365,11 @@ export function MessageActionBar({
     }
     onAddToChat(messageText);
   }, [addToChatAttachments, messageText, onAddToChat]);
-  const inlineCandidates: MessageOverflowAction[] = [
+  const actions: MessageOverflowAction[] = [
     ...(hasCopy
       ? [
           {
+            key: "copy",
             icon: "Copy" as const,
             label: "Copy message",
             onSelect: () => {
@@ -371,6 +387,7 @@ export function MessageActionBar({
     ...(onEdit
       ? [
           {
+            key: "edit",
             icon: "Edit" as const,
             label: "Edit message",
             onSelect: onEdit,
@@ -381,14 +398,26 @@ export function MessageActionBar({
       icon: "Copy" as const,
       plugin: { pluginId: action.pluginId, icon: action.icon },
       key: action.key,
+      recencyKey: action.recencyKey ?? action.key,
       label: action.label,
       onSelect: action.onSelect,
     })),
-  ];
-  const trailingMenuActions: MessageOverflowAction[] = [
+    ...(onCopyLink
+      ? [
+          {
+            key: "copy-link",
+            icon: "Link" as const,
+            label: "Copy link",
+            onSelect: onCopyLink,
+            menuOnly: true,
+          },
+        ]
+      : []),
     ...(hasAddToChat
       ? [
           {
+            key: "add-to-chat",
+            menuOnly: true,
             icon: "MessageSquarePlus" as const,
             label: "Add to chat",
             onSelect: handleAddToChat,
@@ -398,6 +427,8 @@ export function MessageActionBar({
     ...(onFork
       ? [
           {
+            key: "fork",
+            menuOnly: true,
             icon: "Fork" as const,
             label: "Fork into new thread",
             onSelect: onFork,
@@ -406,6 +437,28 @@ export function MessageActionBar({
         ]
       : []),
   ];
+  const rank = (action: MessageOverflowAction) => {
+    if (action.kind === "copy") return -1;
+    const index = visibleRecents.indexOf(action.recencyKey ?? action.key);
+    return index === -1 ? Number.MAX_SAFE_INTEGER : index;
+  };
+  const orderedActions = actions
+    .sort((left, right) => rank(left) - rank(right))
+    .map((action) => ({
+      ...action,
+      onSelect: () => {
+        if (action.disabled) return;
+        if (action.kind !== "copy") {
+          recordAction(action.recencyKey ?? action.key);
+        }
+        action.onSelect();
+      },
+    }));
+  const inlineCandidates = orderedActions.filter(
+    (action) =>
+      !action.menuOnly ||
+      visibleRecents.includes(action.recencyKey ?? action.key),
+  );
   const layout = computeMessageActionRowLayout({
     actionCount: inlineCandidates.length,
     availableWidth,
@@ -417,19 +470,10 @@ export function MessageActionBar({
     isCompactTouch && mobileActionDisplay === "overflow"
       ? 0
       : layout.inlineCount;
-  const menuActions = [
-    ...(onCopyLink
-      ? [
-          {
-            icon: "Link" as const,
-            label: "Copy link",
-            onSelect: onCopyLink,
-          },
-        ]
-      : []),
-    ...inlineCandidates.slice(isCompactViewport ? 0 : inlineCount),
-    ...trailingMenuActions,
-  ];
+  const inlineActions = inlineCandidates.slice(0, inlineCount);
+  const menuActions = orderedActions.filter(
+    (action) => isCompactViewport || !inlineActions.includes(action),
+  );
 
   const rowClass = cn(
     ACTION_ROW_CLASS,
@@ -446,7 +490,15 @@ export function MessageActionBar({
     <TooltipProvider delayDuration={300}>
       <div
         ref={slotRef}
-        className={cn(slotClass, "h-5 max-md:pointer-coarse:h-7")}
+        className={cn(slotClass, "h-6 max-md:pointer-coarse:h-7")}
+        onPointerEnter={() => setIsHovered(true)}
+        onPointerLeave={() => setIsHovered(false)}
+        onFocusCapture={() => setIsFocused(true)}
+        onBlurCapture={(event) => {
+          if (!event.currentTarget.contains(event.relatedTarget)) {
+            setIsFocused(false);
+          }
+        }}
       >
         <div className={rowClass} data-menu-open={isMenuOpen ? "" : undefined}>
           {isCompactTouch ? (
@@ -458,7 +510,7 @@ export function MessageActionBar({
               .slice(0, inlineCount)
               .map((action) => (
                 <DesktopMessageAction
-                  key={action.key ?? action.label}
+                  key={action.key}
                   action={action}
                   className={cn(HOVER_REVEAL_CLASS, mobileDirectActionClass)}
                   collisionBoundary={collisionBoundary}
@@ -505,7 +557,7 @@ function MobileInlineActions({
   return actions.map((action) =>
     action.kind === "copy" ? (
       <CopyButton
-        key={action.key ?? action.label}
+        key={action.key}
         text={action.copyText ?? ""}
         imageUrl={action.copyImageUrl}
         label={action.label}
@@ -513,7 +565,7 @@ function MobileInlineActions({
       />
     ) : (
       <button
-        key={action.key ?? action.label}
+        key={action.key}
         type="button"
         className={cn(
           ACTION_BUTTON_CLASS,
