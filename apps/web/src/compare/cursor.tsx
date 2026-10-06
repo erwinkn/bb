@@ -26,6 +26,8 @@ import {
   anywhereSection,
   PLUGINS_COPY,
   pluginsSection,
+  SPAWN_COPY,
+  spawnSection,
 } from "./compare-sections";
 import { AgentSplit, PlansVisual, type BrandLogo } from "./compare-visuals";
 
@@ -74,7 +76,11 @@ export const BB_VS_CURSOR: Comparison = {
   sub: "Claude Code, Codex, and Cursor’s own agent work together on the plans you already pay for. Free and open source.",
   heroVisual: <AgentSplit />,
   tailored: PLANS_SECTION,
-  sections: [AWAY_SECTION, pluginsSection(PLUGINS_COPY)],
+  sections: [
+    spawnSection(SPAWN_COPY),
+    AWAY_SECTION,
+    pluginsSection(PLUGINS_COPY),
+  ],
   tableNote: "marks features that need a paid Cursor plan, from $20 a month.",
   table: [
     {
@@ -198,10 +204,10 @@ export const BB_VS_CURSOR: Comparison = {
           ),
         },
         {
-          question: "Do I have to stop using Cursor?",
+          question: "Can I use Cursor with bb?",
           answer: (
             <p>
-              No. Keep editing in Cursor, and open any thread’s worktree in it
+              Yes. Keep editing in Cursor, and open any thread’s worktree in it
               with one click. You can also pick Cursor as the agent for any bb
               thread: bb runs Cursor’s agent CLI with your own sign-in and plan,
               so your rules and MCP servers come along.
