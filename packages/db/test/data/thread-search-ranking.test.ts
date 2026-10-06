@@ -87,7 +87,7 @@ const workspace: readonly FixtureThread[] = [
     [
       "plugins blog",
       "the cafe sync link",
-      "plugin sdk in the docs",
+      "sdk notes in the docs",
       "a regression test for the sidebar",
     ],
     80,
@@ -160,7 +160,7 @@ function searchWords(text: string): string[] {
   return (
     text
       .normalize("NFD")
-      .replace(/[̀-ͯ]/gu, "")
+      .replace(/\p{M}/gu, "")
       .toLowerCase()
       .match(/[\p{L}\p{N}]+/gu) ?? []
   );
@@ -250,13 +250,18 @@ describe("thread search ranking evals", () => {
       expect([...titles].sort()).toEqual(
         expectedMatches.map(displayTitle).sort(),
       );
+      const queryWords = searchWords(query);
       for (const result of results.results) {
         for (const match of result.matches) {
-          if (match.sourceKind === "title" || match.sourceKind === "title_fallback")
-            continue;
           expect(match.highlightRanges.length).toBeGreaterThan(0);
-          for (const range of match.highlightRanges)
-            expect(range.end).toBeLessThanOrEqual(match.text.length);
+          for (const range of match.highlightRanges) {
+            const [highlighted = ""] = searchWords(
+              match.text.slice(range.start, range.end),
+            );
+            expect(
+              queryWords.some((word) => highlighted.startsWith(word)),
+            ).toBe(true);
+          }
         }
       }
     } finally {
