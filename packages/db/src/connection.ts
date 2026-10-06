@@ -18,7 +18,13 @@ export interface SlowDbQueryLogger {
   info(fields: SlowDbQueryLogFields, message: string): void;
 }
 
+export interface DbQueryTiming {
+  durationMs: number;
+  source: string;
+}
+
 export interface CreateConnectionOptions {
+  onQuery?: (timing: DbQueryTiming) => void;
   slowQueryLogger?: SlowDbQueryLogger;
   slowQueryThresholdMs?: number;
 }
@@ -37,6 +43,7 @@ export type SlowDbQueryOperation =
 
 interface SlowDbQueryConfig {
   logger: SlowDbQueryLogger;
+  onQuery: ((timing: DbQueryTiming) => void) | undefined;
   thresholdMs: number;
 }
 
@@ -82,6 +89,9 @@ function runTimedStatementOperation<TValue>(
     return args.work();
   } finally {
     const durationMs = performance.now() - startedAt;
+    if (args.operation !== "transaction") {
+      args.config.onQuery?.({ durationMs, source: args.source });
+    }
     if (durationMs >= args.config.thresholdMs) {
       const cpu = threadCpuUsage(startedCpu);
       args.config.logger.info(
@@ -146,6 +156,7 @@ function instrumentSqliteClient(
 
   const config: SlowDbQueryConfig = {
     logger: options.slowQueryLogger,
+    onQuery: options.onQuery,
     thresholdMs:
       options.slowQueryThresholdMs ?? DEFAULT_SLOW_DB_QUERY_LOG_THRESHOLD_MS,
   };

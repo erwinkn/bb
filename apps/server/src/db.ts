@@ -9,6 +9,7 @@ import {
   exportLegacyAutomationsForPluginImport,
   hasLegacyAutomationsToExport,
 } from "./legacy-automations-export.js";
+import { recordEventLoopDbQuery } from "./services/system/event-loop-stall-attribution.js";
 
 type InitDbLogger = MigrationWarningLogger &
   SlowDbQueryLogger &
@@ -24,6 +25,7 @@ export function initDb(
   options: InitDbOptions = {},
 ): DbConnection {
   const db = createConnection(databasePath, {
+    onQuery: recordEventLoopDbQuery,
     slowQueryLogger: options.logger,
   });
   try {

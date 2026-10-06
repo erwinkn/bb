@@ -1,6 +1,10 @@
 import { startEventLoopDelaySampler } from "@bb/process-utils";
 import type { ServerLogger } from "../../types.js";
 import { takeEventLoopWorkWindowSnapshot } from "./event-loop-work.js";
+import {
+  startGcAttribution,
+  takeEventLoopAttributionWindow,
+} from "./event-loop-stall-attribution.js";
 
 export interface EventLoopStallMonitorOptions {
   logger: Pick<ServerLogger, "info">;
@@ -14,12 +18,24 @@ export interface EventLoopStallMonitor {
 export function startEventLoopStallMonitor(
   options: EventLoopStallMonitorOptions,
 ): EventLoopStallMonitor {
-  return startEventLoopDelaySampler({
+  const stopGcAttribution = startGcAttribution();
+  const sampler = startEventLoopDelaySampler({
     now: options.now,
     onSample: ({ stall }) => {
       const work = takeEventLoopWorkWindowSnapshot();
-      if (stall !== null)
-        options.logger.info({ ...stall, ...work }, "Event loop stalled");
+      const attribution = takeEventLoopAttributionWindow();
+      if (stall === null) return;
+      options.logger.info({ ...stall, ...work }, "Event loop stalled");
+      options.logger.info(
+        { maxDelayMs: stall.maxDelayMs, ...attribution },
+        "Event loop stall attributed",
+      );
     },
   });
+  return {
+    stop: () => {
+      sampler.stop();
+      stopGcAttribution();
+    },
+  };
 }

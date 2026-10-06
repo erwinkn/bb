@@ -113,6 +113,11 @@ function getEventLoopWorkSnapshot(): EventLoopWorkSnapshot {
   };
 }
 
+export function getCurrentEventLoopWorkLabel(): string | null {
+  const id = currentFrameId.getStore();
+  return id === undefined ? null : (activeFrames.get(id)?.label ?? null);
+}
+
 export function takeEventLoopWorkWindowSnapshot(): EventLoopWorkSnapshot {
   const snapshot = getEventLoopWorkSnapshot();
   completedInWindow.length = 0;

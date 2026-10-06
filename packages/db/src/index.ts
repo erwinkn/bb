@@ -2,6 +2,7 @@ export { createConnection } from "./connection.js";
 export type {
   DbConnection,
   DbQueryConnection,
+  DbQueryTiming,
   DbTransaction,
   SlowDbQueryLogger,
   SlowDbQueryLogFields,

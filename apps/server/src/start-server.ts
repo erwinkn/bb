@@ -25,6 +25,7 @@ import { createAppVersionService } from "./services/system/app-version.js";
 import { createLauncherChannel } from "./services/system/launcher-channel.js";
 import { createBbAppManagedConfigReloader } from "./services/system/bb-app-managed-config.js";
 import { startEventLoopStallMonitor } from "./services/system/event-loop-stall-monitor.js";
+import { startEventLoopStallSampler } from "./services/system/event-loop-stall-sampler.js";
 import {
   runPeriodicSweeps,
   runStartupRecoverySweep,
@@ -309,6 +310,7 @@ export async function runServer(serverConfig: ServerConfig): Promise<void> {
     { sessions: serverImport.importedDaemonSessions },
   );
   const eventLoopStallMonitor = startEventLoopStallMonitor({ logger });
+  const eventLoopStallSampler = startEventLoopStallSampler({ logger });
   const stopDaemonLivenessChecks = startDaemonLivenessChecks({
     config: runtimeConfig,
     db,
@@ -420,6 +422,7 @@ export async function runServer(serverConfig: ServerConfig): Promise<void> {
       appUpdate.dispose();
       providerModelCatalogPrewarm?.stop();
       eventLoopStallMonitor.stop();
+      eventLoopStallSampler.stop();
       stopDaemonLivenessChecks();
       if (sweepInterval !== null) {
         clearInterval(sweepInterval);
