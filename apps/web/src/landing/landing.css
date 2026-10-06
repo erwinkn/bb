@@ -202,7 +202,6 @@ body {
 
 .nav-links .nav-current {
   color: var(--ink);
-  font-weight: 500;
 }
 
 .nav-menu {
