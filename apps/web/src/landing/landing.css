@@ -2970,7 +2970,6 @@ html.js .mock[data-construct]:not(.constructing):not(.constructed) {
   margin-top: 14px;
   font-size: 13.5px;
   line-height: 1.5;
-  text-wrap: balance;
 }
 
 .footer-x {

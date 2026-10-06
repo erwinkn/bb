@@ -154,7 +154,6 @@ export function SiteFooter({ current }: { current?: string }) {
     <footer className="footer">
       <div className="footer-brand">
         <span className="bb-mark footer-mark" aria-hidden="true" />
-        <p>Free and open source</p>
         <p className="footer-legal">
           <a href="/privacy">Privacy</a>
         </p>
