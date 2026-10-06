@@ -192,13 +192,12 @@ describe("MessageActionBar", () => {
     resizeObserver.reportWidth(84);
     const trigger = screen.getByRole("button", { name: "Message actions" });
     act(() => trigger.focus());
-    fireEvent.click(
-      within(openDesktopMenu()).getByRole("menuitem", { name: "Translate" }),
-    );
-    expect(onSelect).toHaveBeenCalledTimes(1);
-    act(() => {
-      trigger.blur();
+    const translate = within(openDesktopMenu()).getByRole("menuitem", {
+      name: "Translate",
     });
+    act(() => translate.focus());
+    fireEvent.click(translate);
+    expect(onSelect).toHaveBeenCalledTimes(1);
     expect(screen.getByRole("button", { name: "Translate" })).toBeTruthy();
     view.rerender(fixture(2));
     expect(screen.getByRole("button", { name: "Translate" })).toBeTruthy();

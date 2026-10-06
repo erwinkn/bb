@@ -493,7 +493,9 @@ export function MessageActionBar({
         className={cn(slotClass, "h-6 max-md:pointer-coarse:h-7")}
         onPointerEnter={() => setIsHovered(true)}
         onPointerLeave={() => setIsHovered(false)}
-        onFocusCapture={() => setIsFocused(true)}
+        onFocusCapture={(event) => {
+          setIsFocused(event.currentTarget.contains(event.target));
+        }}
         onBlurCapture={(event) => {
           if (!event.currentTarget.contains(event.relatedTarget)) {
             setIsFocused(false);
