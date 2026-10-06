@@ -6,7 +6,7 @@ import {
   type PluginThreadEventPayloads,
   type PluginTurnFailedEvent,
 } from "@get-bb/plugin-sdk";
-import { POOLED_PROVIDER_IDS } from "./catalog.js";
+import { POOLED_PROVIDER_IDS, renderTip } from "./catalog.js";
 import {
   TIPS_CHANGED_CHANNEL,
   tipsRpcContract,
@@ -21,14 +21,16 @@ import {
   deriveSignals,
   dismissTip,
   findTip,
+  hideTips,
   listTips,
   localDay,
+  moreTips,
   observeLiveSignals,
   parseTipsState,
-  renderTip,
   resetTips,
   retireTips,
-  selectTip,
+  selectTips,
+  type TipSelection,
   type TipsState,
 } from "./engine.js";
 import { collectLiveSignals, createAppVersionReader } from "./signals.js";
@@ -74,6 +76,12 @@ function isRateLimitFailure(event: PluginTurnFailedEvent): boolean {
   );
 }
 
+interface ListView {
+  enabled: boolean;
+  hiddenToday: boolean;
+  tips: TipListEntry[];
+}
+
 function formatTipLine(entry: TipListEntry, all: boolean): string {
   const status =
     entry.status === "current"
@@ -84,14 +92,15 @@ function formatTipLine(entry: TipListEntry, all: boolean): string {
   return `${entry.id}${status}\n  ${entry.title}: ${entry.body}`;
 }
 
-function formatList(
-  view: { enabled: boolean; tips: TipListEntry[] },
-  all: boolean,
-): string {
+function formatList(view: ListView, all: boolean): string {
   const lines: string[] = [];
   if (!view.enabled) {
     lines.push(
       "Tips are turned off. Turn them on in Settings → Installed plugins → Tips.",
+    );
+  } else if (view.hiddenToday) {
+    lines.push(
+      "Tips are hidden for today. Run `bb tips hide --undo` to show them.",
     );
   }
   if (view.tips.length === 0) {
@@ -100,6 +109,11 @@ function formatList(
     lines.push(...view.tips.map((entry) => formatTipLine(entry, all)));
   }
   return lines.join("\n");
+}
+
+function formatSet(tips: readonly TipView[]): string {
+  if (tips.length === 0) return "No tips are eligible right now.";
+  return tips.map((tip) => `${tip.id}\n  ${tip.title}: ${tip.body}`).join("\n");
 }
 
 function recordObservation(
@@ -113,7 +127,7 @@ function recordObservation(
     case "childThread":
       return { ...observed, childThread: true };
     case "rateLimited":
-      return { ...observed, rateLimitedAt: observed.rateLimitedAt ?? now };
+      return { ...observed, rateLimitedAt: now };
     case "queuedFollowUp":
       return {
         ...observed,
@@ -128,7 +142,7 @@ export default async function tipsPlugin(bb: BbPluginApi): Promise<void> {
       type: "boolean",
       label: "Show tips",
       description:
-        "Show one tip at a time on the New thread page. At most one new tip appears each day.",
+        "Show three tips under the composer on the New thread page on desktop and web. The set changes once a day.",
       default: true,
     },
   });
@@ -159,6 +173,7 @@ export default async function tipsPlugin(bb: BbPluginApi): Promise<void> {
 
   function evaluate<T>(
     client: TipClient | null,
+    projectId: string | null,
     use: (
       state: TipsState,
       signals: ReturnType<typeof deriveSignals>,
@@ -169,7 +184,12 @@ export default async function tipsPlugin(bb: BbPluginApi): Promise<void> {
     return serialize(async () => {
       const now = Date.now();
       const loaded = await loadState();
-      const live = await collectLiveSignals(bb, loaded, readAppVersion);
+      const live = await collectLiveSignals(
+        bb,
+        loaded,
+        readAppVersion,
+        projectId,
+      );
       const observed = observeLiveSignals(loaded, live, client, now);
       const signals = deriveSignals(observed, live, client, now);
       const { state, result } = use(observed, signals, localDay(now), now);
@@ -182,31 +202,51 @@ export default async function tipsPlugin(bb: BbPluginApi): Promise<void> {
     return (await settings.get()).enabled;
   }
 
-  async function currentTip(client: TipClient): Promise<TipView | null> {
-    if (!(await isEnabled())) return null;
-    return evaluate(client, (state, signals, today, now) => {
-      const selection = selectTip(state, signals, today, now);
+  async function tipSet(
+    client: TipClient | null,
+    projectId: string | null,
+    select: typeof selectTips,
+  ): Promise<TipView[]> {
+    if (!(await isEnabled())) return [];
+    return evaluate(client, projectId, (state, signals, today, now) => {
+      const selection: TipSelection = select(state, signals, today, now);
       return {
         state: selection.state,
-        result:
-          selection.tip === null ? null : renderTip(selection.tip, signals),
+        result: selection.tips.map((tip) => renderTip(tip, signals)),
       };
     });
+  }
+
+  async function rotate(
+    client: TipClient | null,
+    projectId: string | null,
+  ): Promise<TipView[]> {
+    const tips = await tipSet(client, projectId, moreTips);
+    bb.realtime.publish(TIPS_CHANGED_CHANNEL, {});
+    return tips;
   }
 
   async function listView(
     client: TipClient | null,
     all: boolean,
-  ): Promise<{ enabled: boolean; tips: TipListEntry[] }> {
+  ): Promise<ListView> {
     const enabled = await isEnabled();
-    const tips = await evaluate(client, (state, signals, today, now) => {
+    return evaluate(client, null, (state, signals, today, now) => {
       const retired = retireTips(state, signals, today, now);
       return {
         state: retired,
-        result: listTips(retired, signals, today, all),
+        result: {
+          enabled,
+          hiddenToday: retired.hiddenDay === today,
+          tips: listTips(retired, signals, today, all),
+        },
       };
     });
-    return { enabled, tips };
+  }
+
+  async function setHidden(hidden: boolean): Promise<void> {
+    await updateState((state) => hideTips(state, hidden, localDay(Date.now())));
+    bb.realtime.publish(TIPS_CHANGED_CHANNEL, {});
   }
 
   async function recordTip(
@@ -226,7 +266,7 @@ export default async function tipsPlugin(bb: BbPluginApi): Promise<void> {
 
   async function markObserved(observation: Observation): Promise<void> {
     if (knownObservations.has(observation)) return;
-    knownObservations.add(observation);
+    if (observation !== "rateLimited") knownObservations.add(observation);
     const now = Date.now();
     await updateState((state) => ({
       ...state,
@@ -239,8 +279,19 @@ export default async function tipsPlugin(bb: BbPluginApi): Promise<void> {
   });
 
   bb.rpc.register(tipsRpcContract, {
-    async current({ client }) {
-      return { tip: await currentTip(client) };
+    async current({ client, projectId }) {
+      return { tips: await tipSet(client, projectId, selectTips) };
+    },
+    async more({ client, projectId }) {
+      return { tips: await rotate(client, projectId) };
+    },
+    async hide({ hidden }) {
+      await setHidden(hidden);
+      return { ok: true };
+    },
+    async setEnabled({ enabled }) {
+      await settings.experimental_set({ enabled });
+      return { ok: true };
     },
     async dismiss({ id }) {
       await recordTip(id, dismissTip);
@@ -269,7 +320,7 @@ export default async function tipsPlugin(bb: BbPluginApi): Promise<void> {
   const listCommand = cliCommand({
     summary: "List the tips you could see now",
     description:
-      "Lists tips that are eligible for this setup, highest priority first. The one marked showing today is on the New thread page. Tips that need a particular app (desktop, web, or mobile) are included.",
+      "Lists tips that are eligible for this setup, highest priority first. The three marked showing today are under the composer on the New thread page. Tips that need a particular app (desktop or web) are included.",
     options: LIST_OPTIONS,
     async run(input) {
       const view = await listView(null, input.options.all);
@@ -285,12 +336,52 @@ export default async function tipsPlugin(bb: BbPluginApi): Promise<void> {
   bb.cli.register(
     defineCli({
       name: "tips",
-      summary: "List, dismiss, or reset bb tips",
+      summary: "List, rotate, hide, dismiss, or reset bb tips",
       description:
-        "bb shows at most one new tip a day on the New thread page. Dismissing a tip retires it for good, and a tip retires itself once you use its feature.",
+        "bb shows three tips under the composer on the desktop and web New thread page, the same set all day. Dismissing a tip retires it for good, and a tip retires itself once you use its feature or take its action.",
       root: listCommand,
       commands: {
         list: listCommand,
+        more: cliCommand({
+          summary: "Show the next three tips",
+          description:
+            "Rotates today's tips to the next three, as More ideas does on the New thread page.",
+          options: { json: JSON_OPTION },
+          async run(input) {
+            const enabled = await isEnabled();
+            const tips = enabled ? await rotate(null, null) : [];
+            return {
+              exitCode: 0,
+              stdout: input.options.json
+                ? JSON.stringify({ enabled, tips })
+                : enabled
+                  ? formatSet(tips)
+                  : "Tips are turned off.",
+            };
+          },
+        }),
+        hide: cliCommand({
+          summary: "Hide tips for the rest of today",
+          options: {
+            undo: {
+              type: "boolean",
+              description: "Show today's tips again",
+            },
+            json: JSON_OPTION,
+          },
+          async run(input) {
+            const hidden = !input.options.undo;
+            await setHidden(hidden);
+            return {
+              exitCode: 0,
+              stdout: input.options.json
+                ? JSON.stringify({ ok: true, hidden })
+                : hidden
+                  ? "Tips hidden for today."
+                  : "Tips are showing again.",
+            };
+          },
+        }),
         dismiss: cliCommand({
           summary: "Retire one tip for good",
           positionals: [
@@ -320,7 +411,7 @@ export default async function tipsPlugin(bb: BbPluginApi): Promise<void> {
         reset: cliCommand({
           summary: "Bring back every dismissed and retired tip",
           description:
-            "Clears dismissals, retirements, and shown counts. What bb has learned about features you use is kept, so tips for those stay retired.",
+            "Clears dismissals, retirements, shown counts, and today's hiding. What bb has learned about features you use is kept, so tips for those stay retired.",
           options: { json: JSON_OPTION },
           async run(input) {
             await reset();

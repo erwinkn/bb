@@ -3,14 +3,14 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "One quiet, contextual tip at a time on the New thread page.",
+  "description": "Three contextual ideas under the composer on the New thread page.",
   "engines": {
     "bb": ">=0.0",
     "bbPluginSdk": ">=0.6.24"
   },
   "bb": {
     "name": "Tips",
-    "description": "One quiet, contextual tip at a time on the New thread page.",
+    "description": "Three contextual ideas under the composer on the New thread page.",
     "branding": {
       "icon": "Explore"
     },

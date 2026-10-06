@@ -39,7 +39,7 @@ export const tipViewSchema = z
     id: z.string().min(1),
     title: z.string().min(1),
     body: z.string().min(1),
-    action: tipActionSchema.nullable(),
+    action: tipActionSchema,
   })
   .strict();
 export type TipView = z.infer<typeof tipViewSchema>;
@@ -70,11 +70,26 @@ export type TipListEntry = z.infer<typeof tipListEntrySchema>;
 
 const tipIdInputSchema = z.object({ id: z.string().min(1).max(64) }).strict();
 const okSchema = z.object({ ok: z.literal(true) }).strict();
+const tipSetInputSchema = z
+  .object({
+    client: tipClientSchema,
+    projectId: z.string().min(1).nullable(),
+  })
+  .strict();
+const tipSetOutputSchema = z.object({ tips: z.array(tipViewSchema) }).strict();
+
+export const TIPS_PER_SET = 3;
 
 export const tipsRpcContract = defineRpcContract({
-  current: {
-    input: z.object({ client: tipClientSchema }).strict(),
-    output: z.object({ tip: tipViewSchema.nullable() }).strict(),
+  current: { input: tipSetInputSchema, output: tipSetOutputSchema },
+  more: { input: tipSetInputSchema, output: tipSetOutputSchema },
+  hide: {
+    input: z.object({ hidden: z.boolean() }).strict(),
+    output: okSchema,
+  },
+  setEnabled: {
+    input: z.object({ enabled: z.boolean() }).strict(),
+    output: okSchema,
   },
   dismiss: { input: tipIdInputSchema, output: okSchema },
   act: { input: tipIdInputSchema, output: okSchema },
@@ -83,7 +98,11 @@ export const tipsRpcContract = defineRpcContract({
       .object({ client: tipClientSchema.nullable(), all: z.boolean() })
       .strict(),
     output: z
-      .object({ enabled: z.boolean(), tips: z.array(tipListEntrySchema) })
+      .object({
+        enabled: z.boolean(),
+        hiddenToday: z.boolean(),
+        tips: z.array(tipListEntrySchema),
+      })
       .strict(),
   },
   reset: { input: z.null(), output: okSchema },

@@ -3,6 +3,28 @@ import { AUTOMATIONS_PLUGIN_ID } from "./catalog.js";
 import type { LiveSignals, TipsState } from "./engine.js";
 
 const SIGNAL_TIMEOUT_MS = 5_000;
+const WAITING_SCAN_LIMIT = 100;
+
+export interface WaitingThreadRow {
+  status: string;
+  hasPendingInteraction: boolean;
+  lastReadAt: number | null;
+  latestAttentionAt: number;
+}
+
+const RUNNING_STATUSES: ReadonlySet<string> = new Set([
+  "pending",
+  "starting",
+  "active",
+  "stopping",
+]);
+
+export function isWaitingOnUser(thread: WaitingThreadRow): boolean {
+  if (thread.hasPendingInteraction) return true;
+  if (RUNNING_STATUSES.has(thread.status)) return false;
+  if (thread.status === "error") return true;
+  return (thread.lastReadAt ?? 0) < thread.latestAttentionAt;
+}
 
 async function settle<T>(
   bb: BbPluginApi,
@@ -38,10 +60,25 @@ export function createAppVersionReader(
   };
 }
 
+function hasThreads(
+  bb: BbPluginApi,
+  label: string,
+  filter: { projectId?: string; hasParent?: boolean; originPluginId?: string },
+): Promise<boolean> {
+  return settle(
+    bb,
+    label,
+    async (signal) =>
+      (await bb.sdk.threads.list({ ...filter, limit: 1, signal })).length > 0,
+    false,
+  );
+}
+
 export async function collectLiveSignals(
   bb: BbPluginApi,
   state: TipsState,
   readAppVersion: () => Promise<string | null>,
+  projectId: string | null,
 ): Promise<LiveSignals> {
   const [
     appVersion,
@@ -52,6 +89,9 @@ export async function collectLiveSignals(
     installedPlugins,
     hasChildThread,
     hasAutomationThread,
+    waitingThreadCount,
+    projectHasChildThread,
+    projectHasAutomationThread,
   ] = await Promise.all([
     readAppVersion(),
     settle(
@@ -103,37 +143,45 @@ export async function collectLiveSignals(
     ),
     state.observed.childThread
       ? Promise.resolve(true)
-      : settle(
-          bb,
-          "child threads",
-          async (signal) =>
-            (await bb.sdk.threads.list({ hasParent: true, limit: 1, signal }))
-              .length > 0,
-          false,
-        ),
+      : hasThreads(bb, "child threads", { hasParent: true }),
     state.observed.automationThread
       ? Promise.resolve(true)
-      : settle(
-          bb,
-          "automation threads",
-          async (signal) =>
-            (
-              await bb.sdk.threads.list({
-                originPluginId: AUTOMATIONS_PLUGIN_ID,
-                limit: 1,
-                signal,
-              })
-            ).length > 0,
-          false,
-        ),
+      : hasThreads(bb, "automation threads", {
+          originPluginId: AUTOMATIONS_PLUGIN_ID,
+        }),
+    settle(
+      bb,
+      "threads waiting on you",
+      async (signal) =>
+        (
+          await bb.sdk.threads.list({ limit: WAITING_SCAN_LIMIT, signal })
+        ).filter(isWaitingOnUser).length,
+      0,
+    ),
+    projectId === null
+      ? Promise.resolve(false)
+      : hasThreads(bb, "this project's child threads", {
+          projectId,
+          hasParent: true,
+        }),
+    projectId === null
+      ? Promise.resolve(false)
+      : hasThreads(bb, "this project's automation threads", {
+          projectId,
+          originPluginId: AUTOMATIONS_PLUGIN_ID,
+        }),
   ]);
   return {
+    projectId,
     serverPlatform: process.platform,
     appVersion,
     threadCount,
     finishedThreadCount,
     hasChildThread,
     hasAutomationThread,
+    projectHasChildThread,
+    projectHasAutomationThread,
+    waitingThreadCount,
     providersUsed,
     availableProviderCount,
     installedPlugins,

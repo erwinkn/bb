@@ -223,6 +223,9 @@ export interface ComposerLog {
   /** Whether this plugin currently holds the composer input lock. */
   inputLocked: boolean;
   inputLockCalls: boolean[];
+  /** Latest placeholder preview the plugin set, or null when it cleared it. */
+  placeholderPreview: string | null;
+  placeholderPreviewCalls: Array<string | null>;
   quotes: string[];
   mentions: PluginComposerMention[];
   focusCount: number;
@@ -2067,6 +2070,8 @@ export function renderSlot<
     textEffectCalls: [],
     inputLocked: false,
     inputLockCalls: [],
+    placeholderPreview: null,
+    placeholderPreviewCalls: [],
     quotes: [],
     mentions: [],
     focusCount: 0,
@@ -2166,6 +2171,11 @@ export function renderSlot<
         if (!composerOwnership.active) return;
         composerLog.inputLocked = locked;
         composerLog.inputLockCalls.push(locked);
+      },
+      setPlaceholderPreview(text) {
+        if (!composerOwnership.active) return;
+        composerLog.placeholderPreview = text;
+        composerLog.placeholderPreviewCalls.push(text);
       },
       onSubmitted(listener) {
         submissionListeners.add(listener);
@@ -2279,6 +2289,7 @@ export function renderSlot<
     composerOwnership.active = false;
     composerLog.textEffect = null;
     composerLog.inputLocked = false;
+    composerLog.placeholderPreview = null;
   };
   const renderSlotTree = (ui: ReactNode): ReactElement => (
     <SlotEnvContext.Provider value={env}>

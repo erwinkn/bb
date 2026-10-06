@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { TIP_CATALOG, type TipDefinition, type TipSignals } from "./catalog.js";
+import {
+  TIP_CATALOG,
+  renderTip,
+  type TipDefinition,
+  type TipSignals,
+} from "./catalog.js";
 import { tipViewSchema } from "./contract.js";
 import {
   UnknownTipError,
@@ -7,16 +12,19 @@ import {
   createTipsState,
   deriveSignals,
   dismissTip,
+  hideTips,
   listTips,
   localDay,
+  moreTips,
   observeLiveSignals,
   parseTipsState,
-  renderTip,
+  rankEligibleTips,
   resetTips,
-  selectTip,
+  selectTips,
   type LiveSignals,
   type TipsState,
 } from "./engine.js";
+import { isWaitingOnUser } from "./signals.js";
 
 const DAY_MS = 86_400_000;
 const START = Date.UTC(2026, 9, 5, 12);
@@ -24,6 +32,7 @@ const START = Date.UTC(2026, 9, 5, 12);
 function signals(overrides: Partial<TipSignals> = {}): TipSignals {
   return {
     client: { surface: "web", os: "macos" },
+    projectId: null,
     serverPlatform: "darwin",
     appVersion: "1.0.0",
     firstSeenVersion: "1.0.0",
@@ -36,7 +45,11 @@ function signals(overrides: Partial<TipSignals> = {}): TipSignals {
     finishedThreadCount: 0,
     hasChildThread: false,
     hasAutomationThread: false,
+    projectHasChildThread: false,
+    projectHasAutomationThread: false,
+    waitingThreadCount: 0,
     rateLimited: false,
+    recentlyRateLimited: false,
     queuedFollowUp: false,
     usedMobileApp: false,
     ...overrides,
@@ -45,12 +58,16 @@ function signals(overrides: Partial<TipSignals> = {}): TipSignals {
 
 function live(overrides: Partial<LiveSignals> = {}): LiveSignals {
   return {
+    projectId: null,
     serverPlatform: "darwin",
     appVersion: "1.0.0",
     threadCount: 0,
     finishedThreadCount: 0,
     hasChildThread: false,
     hasAutomationThread: false,
+    projectHasChildThread: false,
+    projectHasAutomationThread: false,
+    waitingThreadCount: 0,
     providersUsed: [],
     availableProviderCount: 1,
     installedPlugins: {},
@@ -66,13 +83,14 @@ function testTip(
     id,
     title: `Title ${id}`,
     body: `Body ${id}.`,
-    action: null,
+    action: { kind: "prompt", label: "Try it", prompt: `Prompt ${id}` },
     priority: 10,
     held: false,
     perVersion: false,
     maxShowDays: 2,
     when: () => true,
     used: () => false,
+    boost: () => 0,
     ...overrides,
   };
 }
@@ -92,56 +110,95 @@ function showOn(
   offset: number,
   catalog: readonly TipDefinition[],
   overrides: Partial<TipSignals> = {},
-): { state: TipsState; id: string | null } {
-  const selection = selectTip(
+): { state: TipsState; ids: string[] } {
+  const selection = selectTips(
     state,
     signals(overrides),
     day(offset),
     START + offset * DAY_MS,
     catalog,
   );
-  return { state: selection.state, id: selection.tip?.id ?? null };
+  return {
+    state: selection.state,
+    ids: selection.tips.map((definition) => definition.id),
+  };
 }
 
-describe("selectTip", () => {
-  it("shows the highest-priority eligible tip and keeps it for the rest of the day", () => {
-    const catalog = [
-      testTip("low", { priority: 1 }),
-      testTip("high", { priority: 5 }),
-    ];
+function moreOn(
+  state: TipsState,
+  offset: number,
+  catalog: readonly TipDefinition[],
+  overrides: Partial<TipSignals> = {},
+): { state: TipsState; ids: string[] } {
+  const selection = moreTips(
+    state,
+    signals(overrides),
+    day(offset),
+    START + offset * DAY_MS,
+    catalog,
+  );
+  return {
+    state: selection.state,
+    ids: selection.tips.map((definition) => definition.id),
+  };
+}
+
+function numbered(count: number): TipDefinition[] {
+  return Array.from({ length: count }, (_, index) =>
+    testTip(`t${index + 1}`, { priority: count - index, maxShowDays: 9 }),
+  );
+}
+
+describe("selectTips", () => {
+  it("shows the three highest-priority eligible tips and keeps them for the day", () => {
+    const catalog = numbered(5);
     const first = showOn(createTipsState(START, "1.0.0"), 0, catalog);
-    expect(first.id).toBe("high");
+    expect(first.ids).toEqual(["t1", "t2", "t3"]);
     const again = showOn(first.state, 0, catalog);
-    expect(again.id).toBe("high");
-    expect(again.state.records.high?.shownDays).toBe(1);
+    expect(again.ids).toEqual(["t1", "t2", "t3"]);
+    expect(again.state.records.t1?.shownDays).toBe(1);
+    expect(again.state.records.t4).toBeUndefined();
   });
 
-  it("shows at most one new tip per day, even after a dismissal", () => {
-    const catalog = [
-      testTip("a", { priority: 2 }),
-      testTip("b", { priority: 1 }),
-    ];
-    const first = showOn(createTipsState(START, "1.0.0"), 0, catalog);
-    expect(first.id).toBe("a");
-    const dismissed = dismissTip(first.state, "a", "1.0.0", START, catalog);
-    expect(showOn(dismissed, 0, catalog).id).toBeNull();
-    expect(showOn(dismissed, 1, catalog).id).toBe("b");
+  it("shows fewer tiles when fewer tips are eligible", () => {
+    const catalog = [testTip("a"), testTip("b", { when: () => false })];
+    expect(showOn(createTipsState(START, "1.0.0"), 0, catalog).ids).toEqual([
+      "a",
+    ]);
   });
 
-  it("rotates to unseen tips before repeating one", () => {
+  it("puts contextual tips ahead of priority order", () => {
     const catalog = [
-      testTip("a", { priority: 3 }),
-      testTip("b", { priority: 2 }),
-      testTip("c", { priority: 1 }),
+      testTip("high", { priority: 9 }),
+      testTip("medium", { priority: 5 }),
+      testTip("low", { priority: 3 }),
+      testTip("waiting", {
+        priority: 1,
+        boost: (current) => (current.waitingThreadCount > 0 ? 100 : 0),
+      }),
     ];
+    const quiet = showOn(createTipsState(START, "1.0.0"), 0, catalog);
+    expect(quiet.ids).toEqual(["high", "medium", "low"]);
+    const busy = showOn(createTipsState(START, "1.0.0"), 0, catalog, {
+      waitingThreadCount: 3,
+    });
+    expect(busy.ids).toEqual(["waiting", "high", "medium"]);
+  });
+
+  it("rotates to unseen tips on later days before repeating them", () => {
+    const catalog = numbered(5);
     let state = createTipsState(START, "1.0.0");
-    const shown: (string | null)[] = [];
-    for (let offset = 0; offset < 4; offset += 1) {
+    const days: string[][] = [];
+    for (let offset = 0; offset < 3; offset += 1) {
       const result = showOn(state, offset, catalog);
       state = result.state;
-      shown.push(result.id);
+      days.push(result.ids);
     }
-    expect(shown).toEqual(["a", "b", "c", "a"]);
+    expect(days).toEqual([
+      ["t1", "t2", "t3"],
+      ["t4", "t5", "t1"],
+      ["t2", "t3", "t4"],
+    ]);
   });
 
   it("retires a tip after its maximum number of shown days", () => {
@@ -150,25 +207,33 @@ describe("selectTip", () => {
     state = showOn(state, 0, catalog).state;
     state = showOn(state, 1, catalog).state;
     const third = showOn(state, 2, catalog);
-    expect(third.id).toBeNull();
+    expect(third.ids).toEqual([]);
     expect(third.state.records.only).toMatchObject({
       shownDays: 2,
       retiredReason: "seen",
     });
   });
 
-  it("never shows a dismissed tip again", () => {
-    const catalog = [testTip("a")];
-    const state = dismissTip(
-      createTipsState(START, "1.0.0"),
-      "a",
-      "1.0.0",
-      START,
-      catalog,
-    );
-    for (let offset = 0; offset < 5; offset += 1) {
-      expect(showOn(state, offset, catalog).id).toBeNull();
+  it("never shows a dismissed tip again and fills its tile", () => {
+    const catalog = numbered(4);
+    const first = showOn(createTipsState(START, "1.0.0"), 0, catalog);
+    const dismissed = dismissTip(first.state, "t2", "1.0.0", START, catalog);
+    expect(showOn(dismissed, 0, catalog).ids).toEqual(["t1", "t3", "t4"]);
+    for (let offset = 1; offset < 4; offset += 1) {
+      expect(showOn(dismissed, offset, catalog).ids).not.toContain("t2");
     }
+  });
+
+  it("keeps an acted-on tip in today's set and retires it after", () => {
+    const catalog = numbered(4);
+    const first = showOn(createTipsState(START, "1.0.0"), 0, catalog);
+    const acted = actOnTip(first.state, "t1", "1.0.0", START, catalog);
+    expect(acted.records.t1).toMatchObject({
+      actedAt: START,
+      retiredReason: "acted",
+    });
+    expect(showOn(acted, 0, catalog).ids).toEqual(["t1", "t2", "t3"]);
+    expect(showOn(acted, 1, catalog).ids).not.toContain("t1");
   });
 
   it("retires a tip for good once its feature is used, even if the signal later reverts", () => {
@@ -178,26 +243,11 @@ describe("selectTip", () => {
     const used = showOn(createTipsState(START, "1.0.0"), 0, catalog, {
       hasChildThread: true,
     });
-    expect(used.id).toBeNull();
+    expect(used.ids).toEqual([]);
     expect(used.state.records.feature?.retiredReason).toBe("used");
     expect(
-      showOn(used.state, 1, catalog, { hasChildThread: false }).id,
-    ).toBeNull();
-  });
-
-  it("drops today's tip when its feature is used mid-day and shows nothing else", () => {
-    const catalog = [
-      testTip("feature", {
-        priority: 5,
-        used: (current) => current.queuedFollowUp,
-      }),
-      testTip("other", { priority: 1 }),
-    ];
-    const first = showOn(createTipsState(START, "1.0.0"), 0, catalog);
-    expect(first.id).toBe("feature");
-    expect(showOn(first.state, 0, catalog, { queuedFollowUp: true }).id).toBe(
-      null,
-    );
+      showOn(used.state, 1, catalog, { hasChildThread: false }).ids,
+    ).toEqual([]);
   });
 
   it("skips held and ineligible tips", () => {
@@ -206,25 +256,39 @@ describe("selectTip", () => {
       testTip("ineligible", { priority: 8, when: () => false }),
       testTip("shown", { priority: 1 }),
     ];
-    expect(showOn(createTipsState(START, "1.0.0"), 0, catalog).id).toBe(
+    expect(showOn(createTipsState(START, "1.0.0"), 0, catalog).ids).toEqual([
       "shown",
-    );
+    ]);
   });
 
-  it("acting on a tip retires it", () => {
+  it("picks a new set when the selected project changes", () => {
     const catalog = [
-      testTip("a", { priority: 2 }),
-      testTip("b", { priority: 1 }),
+      testTip("here", {
+        priority: 9,
+        when: (current) => current.projectId !== "proj_busy",
+      }),
+      ...numbered(3),
     ];
-    const first = showOn(createTipsState(START, "1.0.0"), 0, catalog);
-    expect(first.id).toBe("a");
-    const acted = actOnTip(first.state, "a", "1.0.0", START, catalog);
-    expect(acted.records.a).toMatchObject({
-      actedAt: START,
-      retiredReason: "acted",
+    const first = showOn(createTipsState(START, "1.0.0"), 0, catalog, {
+      projectId: "proj_new",
     });
-    expect(showOn(acted, 1, catalog).id).toBe("b");
-    expect(showOn(acted, 3, catalog).id).not.toBe("a");
+    expect(first.ids).toEqual(["here", "t1", "t2"]);
+    const busy = showOn(first.state, 0, catalog, { projectId: "proj_busy" });
+    expect(busy.ids).toEqual(["t1", "t2", "t3"]);
+    expect(busy.state.records.t1?.shownDays).toBe(1);
+  });
+
+  it("hides tips for the rest of the day and shows them again on undo or tomorrow", () => {
+    const catalog = numbered(3);
+    const first = showOn(createTipsState(START, "1.0.0"), 0, catalog);
+    const hidden = hideTips(first.state, true, day(0));
+    expect(showOn(hidden, 0, catalog).ids).toEqual([]);
+    expect(showOn(hideTips(hidden, false, day(0)), 0, catalog).ids).toEqual([
+      "t1",
+      "t2",
+      "t3",
+    ]);
+    expect(showOn(hidden, 1, catalog).ids).toHaveLength(3);
   });
 
   it("rejects unknown tip ids", () => {
@@ -236,19 +300,79 @@ describe("selectTip", () => {
     ).toThrow(UnknownTipError);
   });
 
-  it("brings dismissed and retired tips back after a reset", () => {
+  it("brings dismissed, retired, and hidden tips back after a reset", () => {
     const catalog = [testTip("a")];
-    const dismissed = dismissTip(
-      showOn(createTipsState(START, "1.0.0"), 0, catalog).state,
-      "a",
-      "1.0.0",
-      START,
-      catalog,
+    const dismissed = hideTips(
+      dismissTip(
+        showOn(createTipsState(START, "1.0.0"), 0, catalog).state,
+        "a",
+        "1.0.0",
+        START,
+        catalog,
+      ),
+      true,
+      day(0),
     );
     const reset = resetTips(dismissed);
     expect(reset.records).toEqual({});
     expect(reset.current).toBeNull();
-    expect(showOn(reset, 0, catalog).id).toBe("a");
+    expect(reset.hiddenDay).toBeNull();
+    expect(showOn(reset, 0, catalog).ids).toEqual(["a"]);
+  });
+});
+
+describe("moreTips", () => {
+  it("rotates to the next three tips, then wraps around", () => {
+    const catalog = numbered(7);
+    const first = showOn(createTipsState(START, "1.0.0"), 0, catalog);
+    expect(first.ids).toEqual(["t1", "t2", "t3"]);
+    const second = moreOn(first.state, 0, catalog);
+    expect(second.ids).toEqual(["t4", "t5", "t6"]);
+    expect(showOn(second.state, 0, catalog).ids).toEqual(["t4", "t5", "t6"]);
+    const third = moreOn(second.state, 0, catalog);
+    expect(third.ids).toEqual(["t7", "t1", "t2"]);
+    const fourth = moreOn(third.state, 0, catalog);
+    expect(fourth.ids).toEqual(["t3", "t4", "t5"]);
+    expect(fourth.state.records.t4?.shownDays).toBe(1);
+  });
+
+  it("keeps the set when no other tip is eligible and tops up a short pool", () => {
+    const three = numbered(3);
+    const first = showOn(createTipsState(START, "1.0.0"), 0, three);
+    expect(moreOn(first.state, 0, three).ids).toEqual(["t1", "t2", "t3"]);
+    const four = numbered(4);
+    const start = showOn(createTipsState(START, "1.0.0"), 0, four);
+    expect(moreOn(start.state, 0, four).ids).toEqual(["t4", "t1", "t2"]);
+  });
+
+  it("shows nothing while tips are hidden", () => {
+    const catalog = numbered(4);
+    const hidden = hideTips(createTipsState(START, "1.0.0"), true, day(0));
+    expect(moreOn(hidden, 0, catalog).ids).toEqual([]);
+  });
+});
+
+describe("contextual ranking", () => {
+  it("leads with threads waiting on you, then Account Pooler after a recent rate limit", () => {
+    const context = {
+      hasFinishedThread: true,
+      finishedThreadCount: 5,
+      threadCount: 20,
+      providersUsed: ["claude-code"],
+      installedPlugins: { "account-pool": false },
+      rateLimited: true,
+    };
+    const ranked = (overrides: Partial<TipSignals>) =>
+      rankEligibleTips(
+        createTipsState(START, "1.0.0"),
+        signals({ ...context, ...overrides }),
+        day(0),
+      ).map((definition) => definition.id);
+    expect(ranked({}).slice(0, 2)).toEqual(["account-pool", "subthreads"]);
+    expect(ranked({ recentlyRateLimited: true })[0]).toBe("account-pool");
+    expect(
+      ranked({ recentlyRateLimited: true, waitingThreadCount: 4 }).slice(0, 2),
+    ).toEqual(["open-threads-that-need-me", "account-pool"]);
   });
 });
 
@@ -264,15 +388,15 @@ describe("what's new", () => {
     const upgraded = { appVersion: "1.1.0", firstSeenVersion: "1.0.0" };
     let state = createTipsState(START, "1.0.0");
     const first = showOn(state, 0, catalog, upgraded);
-    expect(first.id).toBe("whats-new");
+    expect(first.ids).toEqual(["whats-new"]);
     state = first.state;
-    expect(showOn(state, 1, catalog, upgraded).id).toBeNull();
+    expect(showOn(state, 1, catalog, upgraded).ids).toEqual([]);
     expect(
       showOn(state, 2, catalog, {
         appVersion: "1.2.0",
         firstSeenVersion: "1.0.0",
-      }).id,
-    ).toBe("whats-new");
+      }).ids,
+    ).toEqual(["whats-new"]);
   });
 
   it("names the version and opens the Updates section", () => {
@@ -290,12 +414,43 @@ describe("what's new", () => {
 });
 
 describe("catalog predicates", () => {
-  it("offers subthreads after a finished thread and retires them once a child thread exists", () => {
+  it("offers subthreads only where they are not in use yet", () => {
     const subthreads = catalogTip("subthreads");
+    const finished = { hasFinishedThread: true };
     expect(subthreads.when(signals())).toBe(false);
-    expect(subthreads.when(signals({ hasFinishedThread: true }))).toBe(true);
-    expect(subthreads.used(signals({ hasChildThread: true }))).toBe(true);
-    expect(subthreads.action?.kind).toBe("prompt");
+    expect(subthreads.when(signals(finished))).toBe(true);
+    expect(
+      subthreads.when(signals({ ...finished, hasChildThread: true })),
+    ).toBe(false);
+    expect(
+      subthreads.when(
+        signals({ ...finished, hasChildThread: true, projectId: "proj_new" }),
+      ),
+    ).toBe(true);
+    expect(
+      subthreads.when(
+        signals({
+          ...finished,
+          projectId: "proj_busy",
+          projectHasChildThread: true,
+        }),
+      ),
+    ).toBe(false);
+    expect(subthreads.action.kind).toBe("prompt");
+  });
+
+  it("offers the waiting-threads tip only when two or more threads need you", () => {
+    const waiting = catalogTip("open-threads-that-need-me");
+    expect(waiting.when(signals({ waitingThreadCount: 1 }))).toBe(false);
+    expect(waiting.when(signals({ waitingThreadCount: 2 }))).toBe(true);
+    expect(
+      waiting.when(
+        signals({
+          waitingThreadCount: 5,
+          client: { surface: "mobile-app", os: "ios" },
+        }),
+      ),
+    ).toBe(false);
   });
 
   it("offers Account Pooler to rate-limited or heavy Claude Code and Codex users until it is enabled", () => {
@@ -371,23 +526,12 @@ describe("catalog predicates", () => {
     ).toContain("Ctrl+Shift+P");
     expect(palette.action).toEqual({
       kind: "command",
-      label: "Open",
+      label: "Open palette",
       commandId: "palette.open",
     });
   });
 
-  it("offers the desktop server menu only in the macOS desktop app", () => {
-    const server = catalogTip("another-server");
-    const used = { finishedThreadCount: 3 };
-    expect(server.when(signals(used))).toBe(false);
-    expect(
-      server.when(
-        signals({ ...used, client: { surface: "desktop", os: "macos" } }),
-      ),
-    ).toBe(true);
-  });
-
-  it("retires the automations tip once an automation has spawned a thread", () => {
+  it("offers automations only where none has run yet", () => {
     const automations = catalogTip("automations");
     const ready = {
       finishedThreadCount: 5,
@@ -397,7 +541,23 @@ describe("catalog predicates", () => {
     expect(automations.when(signals({ ...ready, installedPlugins: {} }))).toBe(
       false,
     );
-    expect(automations.used(signals({ hasAutomationThread: true }))).toBe(true);
+    expect(
+      automations.when(signals({ ...ready, hasAutomationThread: true })),
+    ).toBe(false);
+    expect(
+      automations.when(
+        signals({
+          ...ready,
+          projectId: "proj_1",
+          projectHasAutomationThread: true,
+        }),
+      ),
+    ).toBe(false);
+    expect(
+      automations.when(
+        signals({ ...ready, projectId: "proj_2", hasAutomationThread: true }),
+      ),
+    ).toBe(true);
   });
 
   it("keeps every tip's copy to one sentence with a valid action", () => {
@@ -461,25 +621,66 @@ describe("observations", () => {
 });
 
 describe("listTips", () => {
-  it("marks today's tip and hides retired tips unless all are requested", () => {
+  it("marks today's three tips and hides retired tips unless all are requested", () => {
     const catalog = [
-      testTip("a", { priority: 3 }),
-      testTip("b", { priority: 2 }),
-      testTip("c", { priority: 1, when: () => false }),
+      ...numbered(4),
+      testTip("off", { priority: 0, when: () => false }),
     ];
     const first = showOn(createTipsState(START, "1.0.0"), 0, catalog);
-    const dismissed = dismissTip(first.state, "b", "1.0.0", START, catalog);
+    const dismissed = dismissTip(first.state, "t4", "1.0.0", START, catalog);
     const eligible = listTips(dismissed, signals(), day(0), false, catalog);
     expect(eligible.map((entry) => [entry.id, entry.status])).toEqual([
-      ["a", "current"],
+      ["t1", "current"],
+      ["t2", "current"],
+      ["t3", "current"],
     ]);
     const all = listTips(dismissed, signals(), day(0), true, catalog);
     expect(all.map((entry) => [entry.id, entry.status])).toEqual([
-      ["a", "current"],
-      ["b", "dismissed"],
-      ["c", "not-applicable"],
+      ["t1", "current"],
+      ["t2", "current"],
+      ["t3", "current"],
+      ["t4", "dismissed"],
+      ["off", "not-applicable"],
     ]);
     expect(all[0]).toMatchObject({ shownDays: 1, dismissed: false });
-    expect(all[1]).toMatchObject({ dismissed: true });
+    expect(all[3]).toMatchObject({ dismissed: true });
+    const hidden = listTips(
+      hideTips(dismissed, true, day(0)),
+      signals(),
+      day(0),
+      false,
+      catalog,
+    );
+    expect(hidden.map((entry) => entry.status)).toEqual([
+      "eligible",
+      "eligible",
+      "eligible",
+    ]);
+  });
+});
+
+describe("isWaitingOnUser", () => {
+  const row = {
+    status: "idle",
+    hasPendingInteraction: false,
+    lastReadAt: 10,
+    latestAttentionAt: 5,
+  };
+
+  it("counts unread results, errors, and open questions but not running or read threads", () => {
+    expect(isWaitingOnUser(row)).toBe(false);
+    expect(isWaitingOnUser({ ...row, latestAttentionAt: 20 })).toBe(true);
+    expect(isWaitingOnUser({ ...row, lastReadAt: null })).toBe(true);
+    expect(isWaitingOnUser({ ...row, status: "error" })).toBe(true);
+    expect(
+      isWaitingOnUser({ ...row, status: "active", latestAttentionAt: 20 }),
+    ).toBe(false);
+    expect(
+      isWaitingOnUser({
+        ...row,
+        status: "active",
+        hasPendingInteraction: true,
+      }),
+    ).toBe(true);
   });
 });

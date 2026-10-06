@@ -15,9 +15,10 @@ import plugin from "./server.js";
 
 const WEB_MAC: TipClient = { surface: "web", os: "macos" };
 
-const currentResultSchema = z.object({ tip: tipViewSchema.nullable() });
+const setResultSchema = z.object({ tips: z.array(tipViewSchema) });
 const listResultSchema = z.object({
   enabled: z.boolean(),
+  hiddenToday: z.boolean(),
   tips: z.array(tipListEntrySchema),
 });
 
@@ -73,10 +74,25 @@ async function setup(fixture: Fixture = {}) {
   const { harness } = fake;
   return {
     ...fake,
-    async current(client: TipClient = WEB_MAC) {
-      return currentResultSchema.parse(
-        await harness.behavior.callRpc("current", { client }),
-      ).tip;
+    async current(projectId: string | null = null) {
+      return setResultSchema
+        .parse(
+          await harness.behavior.callRpc("current", {
+            client: WEB_MAC,
+            projectId,
+          }),
+        )
+        .tips.map((tip) => tip.id);
+    },
+    async more(projectId: string | null = null) {
+      return setResultSchema
+        .parse(
+          await harness.behavior.callRpc("more", {
+            client: WEB_MAC,
+            projectId,
+          }),
+        )
+        .tips.map((tip) => tip.id);
     },
     async listAll() {
       return listResultSchema.parse(
@@ -87,6 +103,8 @@ async function setup(fixture: Fixture = {}) {
 }
 
 const NEW_USER = { threadCount: 1, finishedThreadCount: 1 };
+const REGULAR = { threadCount: 10, finishedThreadCount: 3 };
+const NEW_USER_SET = ["subthreads", "set-up-for-me", "phone"];
 
 describe("tips plugin registration", () => {
   it("declares an on-by-default switch and the bb tips command", async () => {
@@ -98,30 +116,41 @@ describe("tips plugin registration", () => {
     expect(harness.registrations.cli?.name).toBe("tips");
     expect(
       harness.registrations.cli?.commands.map((command) => command.name),
-    ).toEqual(expect.arrayContaining(["list", "dismiss", "reset"]));
+    ).toEqual(
+      expect.arrayContaining(["list", "more", "hide", "dismiss", "reset"]),
+    );
     expect(harness.registrations.rpcMethods).toEqual(
-      expect.arrayContaining(["current", "dismiss", "act", "list", "reset"]),
+      expect.arrayContaining([
+        "current",
+        "more",
+        "hide",
+        "setEnabled",
+        "dismiss",
+        "act",
+        "list",
+        "reset",
+      ]),
     );
   });
 });
 
-describe("current tip", () => {
+describe("current tips", () => {
   it("shows nothing before the first finished thread", async () => {
     const host = await setup();
-    expect(await host.current()).toBeNull();
+    expect(await host.current()).toEqual([]);
   });
 
-  it("shows subthreads after the first finished thread and keeps it for the day", async () => {
+  it("shows three tips after the first finished thread and keeps them for the day", async () => {
     const host = await setup(NEW_USER);
-    const first = await host.current();
-    expect(first?.id).toBe("subthreads");
-    expect(first?.action?.kind).toBe("prompt");
-    expect((await host.current())?.id).toBe("subthreads");
+    expect(await host.current()).toEqual(NEW_USER_SET);
+    expect(await host.current()).toEqual(NEW_USER_SET);
     const list = await host.listAll();
-    expect(list.tips.find((entry) => entry.id === "subthreads")).toMatchObject({
-      status: "current",
-      shownDays: 1,
-    });
+    for (const id of NEW_USER_SET) {
+      expect(list.tips.find((entry) => entry.id === id)).toMatchObject({
+        status: "current",
+        shownDays: 1,
+      });
+    }
   });
 
   it("puts Account Pooler first after a Codex rate limit", async () => {
@@ -140,7 +169,7 @@ describe("current tip", () => {
         },
       }),
     );
-    expect((await host.current())?.id).toBe("account-pool");
+    expect((await host.current())[0]).toBe("account-pool");
   });
 
   it("ignores rate limits from providers the pool cannot serve", async () => {
@@ -162,24 +191,24 @@ describe("current tip", () => {
         },
       }),
     );
-    expect((await host.current())?.id).toBe("subthreads");
+    expect(await host.current()).toEqual(NEW_USER_SET);
   });
 
-  it("retires subthreads once a child thread is created", async () => {
+  it("offers subthreads only in projects that have none yet", async () => {
     const host = await setup(NEW_USER);
     await host.harness.behavior.emitThreadEvent("thread.created", {
       thread: makeThreadResponse({ parentThreadId: "thread-parent" }),
     });
-    expect((await host.current())?.id).toBe("set-up-for-me");
+    expect(await host.current()).not.toContain("subthreads");
+    expect(await host.current("proj_new")).toContain("subthreads");
     const list = await host.listAll();
-    expect(list.tips.find((entry) => entry.id === "subthreads")).toMatchObject({
-      status: "retired",
-      retiredReason: "used",
-    });
+    expect(list.tips.find((entry) => entry.id === "subthreads")?.status).toBe(
+      "not-applicable",
+    );
   });
 
   it("retires queue-or-steer once a follow-up is queued behind a running turn", async () => {
-    const host = await setup({ threadCount: 3, finishedThreadCount: 3 });
+    const host = await setup(REGULAR);
     await host.harness.behavior.emitThreadEvent("message.queued", {
       entry: makeQueueEntry({ waitingOn: null }),
     });
@@ -190,7 +219,7 @@ describe("current tip", () => {
   });
 
   it("does not count a plugin-held or scheduled row as a queued follow-up", async () => {
-    const host = await setup({ threadCount: 3, finishedThreadCount: 3 });
+    const host = await setup(REGULAR);
     await host.harness.behavior.emitThreadEvent("message.queued", {
       entry: makeQueueEntry(),
     });
@@ -205,17 +234,55 @@ describe("current tip", () => {
 
   it("stays hidden and records nothing while tips are turned off", async () => {
     const host = await setup({ ...NEW_USER, settings: { enabled: false } });
-    expect(await host.current()).toBeNull();
+    expect(await host.current()).toEqual([]);
     expect(await host.bb.storage.kv.get("state")).toBeUndefined();
   });
 });
 
-describe("dismissing and acting", () => {
-  it("dismisses a tip for good and shows no other tip until tomorrow", async () => {
+describe("more ideas, hiding, and turning off", () => {
+  it("rotates to three different tips and keeps them as today's set", async () => {
+    const host = await setup(REGULAR);
+    const first = await host.current();
+    expect(first).toHaveLength(3);
+    const next = await host.more();
+    expect(next).toHaveLength(3);
+    expect(next.filter((id) => first.includes(id))).toEqual([]);
+    expect(await host.current()).toEqual(next);
+    expect(host.harness.realtimeSignals).toContainEqual({
+      channel: "tips-changed",
+      payload: {},
+    });
+  });
+
+  it("hides tips for today and brings them back on undo", async () => {
     const host = await setup(NEW_USER);
-    expect((await host.current())?.id).toBe("subthreads");
+    await host.current();
+    await host.harness.behavior.callRpc("hide", { hidden: true });
+    expect(await host.current()).toEqual([]);
+    expect((await host.listAll()).hiddenToday).toBe(true);
+    await host.harness.behavior.callRpc("hide", { hidden: false });
+    expect(await host.current()).toEqual(NEW_USER_SET);
+  });
+
+  it("turns tips off and on through the Show tips setting", async () => {
+    const host = await setup(NEW_USER);
+    await host.harness.behavior.callRpc("setEnabled", { enabled: false });
+    expect(await host.current()).toEqual([]);
+    expect((await host.listAll()).enabled).toBe(false);
+    await host.harness.behavior.callRpc("setEnabled", { enabled: true });
+    expect(await host.current()).toEqual(NEW_USER_SET);
+  });
+});
+
+describe("dismissing and acting", () => {
+  it("dismisses a tip for good and fills its tile with another", async () => {
+    const host = await setup(NEW_USER);
+    expect(await host.current()).toEqual(NEW_USER_SET);
     await host.harness.behavior.callRpc("dismiss", { id: "subthreads" });
-    expect(await host.current()).toBeNull();
+    const refilled = await host.current();
+    expect(refilled).toHaveLength(3);
+    expect(refilled).not.toContain("subthreads");
+    expect(refilled.slice(0, 2)).toEqual(["set-up-for-me", "phone"]);
     expect(host.harness.realtimeSignals).toContainEqual({
       channel: "tips-changed",
       payload: {},
@@ -227,10 +294,11 @@ describe("dismissing and acting", () => {
     });
   });
 
-  it("retires a tip once its action is taken", async () => {
+  it("retires a tip once its action is taken but keeps it on today's page", async () => {
     const host = await setup(NEW_USER);
     await host.current();
     await host.harness.behavior.callRpc("act", { id: "subthreads" });
+    expect(await host.current()).toEqual(NEW_USER_SET);
     const list = await host.listAll();
     expect(list.tips.find((entry) => entry.id === "subthreads")).toMatchObject({
       status: "retired",
@@ -248,13 +316,15 @@ describe("dismissing and acting", () => {
 });
 
 describe("bb tips", () => {
-  it("lists eligible tips and marks the one showing today", async () => {
+  it("lists eligible tips and marks the three showing today", async () => {
     const host = await setup(NEW_USER);
     await host.current();
     const result = await host.harness.behavior.runCli([]);
     expect(result.exitCode).toBe(0);
-    expect(result.stdout).toContain("subthreads (showing today)");
-    expect(result.stdout).toContain("set-up-for-me");
+    for (const id of NEW_USER_SET) {
+      expect(result.stdout).toContain(`${id} (showing today)`);
+    }
+    expect(result.stdout).toContain("build-plugin\n");
     expect(result.stdout).not.toContain("account-pool");
   });
 
@@ -264,12 +334,44 @@ describe("bb tips", () => {
     expect(result.exitCode).toBe(0);
     const view = listResultSchema.parse(JSON.parse(result.stdout));
     expect(view.enabled).toBe(true);
+    expect(view.hiddenToday).toBe(false);
     expect(view.tips.find((entry) => entry.id === "account-pool")?.status).toBe(
       "not-applicable",
     );
     expect(view.tips.find((entry) => entry.id === "subthreads")?.status).toBe(
       "eligible",
     );
+  });
+
+  it("rotates to the next three tips like More ideas", async () => {
+    const host = await setup(REGULAR);
+    const first = await host.current();
+    const result = await host.harness.behavior.runCli(["more", "--json"]);
+    expect(result.exitCode).toBe(0);
+    const view = z
+      .object({ enabled: z.literal(true), tips: z.array(tipViewSchema) })
+      .parse(JSON.parse(result.stdout));
+    const ids = view.tips.map((tip) => tip.id);
+    expect(ids).toHaveLength(3);
+    expect(ids.filter((id) => first.includes(id))).toEqual([]);
+    const text = await host.harness.behavior.runCli(["more"]);
+    expect(text.stdout).toMatch(/^[\w-]+\n {2}.+: .+$/mu);
+  });
+
+  it("hides tips for today and undoes it", async () => {
+    const host = await setup(NEW_USER);
+    const hidden = await host.harness.behavior.runCli(["hide"]);
+    expect(hidden).toMatchObject({
+      exitCode: 0,
+      stdout: "Tips hidden for today.",
+    });
+    expect(await host.current()).toEqual([]);
+    expect((await host.harness.behavior.runCli([])).stdout).toContain(
+      "Tips are hidden for today.",
+    );
+    const shown = await host.harness.behavior.runCli(["hide", "--undo"]);
+    expect(shown.stdout).toBe("Tips are showing again.");
+    expect(await host.current()).toEqual(NEW_USER_SET);
   });
 
   it("dismisses a tip by id and refuses unknown ids", async () => {
@@ -294,10 +396,10 @@ describe("bb tips", () => {
     const host = await setup(NEW_USER);
     await host.current();
     await host.harness.behavior.runCli(["dismiss", "subthreads"]);
-    expect(await host.current()).toBeNull();
+    expect(await host.current()).not.toContain("subthreads");
     const reset = await host.harness.behavior.runCli(["reset"]);
     expect(reset).toMatchObject({ exitCode: 0, stdout: "Tips reset." });
-    expect((await host.current())?.id).toBe("subthreads");
+    expect(await host.current()).toEqual(NEW_USER_SET);
   });
 
   it("says when tips are turned off", async () => {

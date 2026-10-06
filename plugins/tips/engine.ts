@@ -1,15 +1,21 @@
 import { z } from "zod";
-import { TIP_CATALOG, type TipDefinition, type TipSignals } from "./catalog.js";
 import {
+  TIP_CATALOG,
+  renderTip,
+  type TipDefinition,
+  type TipSignals,
+} from "./catalog.js";
+import {
+  TIPS_PER_SET,
   tipRetiredReasonSchema,
   type TipClient,
   type TipListEntry,
   type TipRetiredReason,
   type TipStatus,
-  type TipView,
 } from "./contract.js";
 
 const DAY_MS = 86_400_000;
+const RECENT_RATE_LIMIT_MS = 14 * DAY_MS;
 
 const tipRecordSchema = z
   .object({
@@ -23,12 +29,23 @@ const tipRecordSchema = z
   .strict();
 export type TipRecord = z.infer<typeof tipRecordSchema>;
 
+const tipsCurrentSetSchema = z
+  .object({
+    day: z.string(),
+    projectId: z.string().nullable(),
+    keys: z.array(z.string()),
+    seen: z.array(z.string()),
+  })
+  .strict();
+export type TipsCurrentSet = z.infer<typeof tipsCurrentSetSchema>;
+
 export const tipsStateSchema = z
   .object({
-    version: z.literal(1),
+    version: z.literal(2),
     firstSeenAt: z.number(),
     firstSeenVersion: z.string().nullable(),
-    current: z.object({ key: z.string(), day: z.string() }).strict().nullable(),
+    current: tipsCurrentSetSchema.nullable(),
+    hiddenDay: z.string().nullable(),
     records: z.record(z.string(), tipRecordSchema),
     observed: z
       .object({
@@ -45,12 +62,16 @@ export const tipsStateSchema = z
 export type TipsState = z.infer<typeof tipsStateSchema>;
 
 export interface LiveSignals {
+  projectId: string | null;
   serverPlatform: string;
   appVersion: string | null;
   threadCount: number;
   finishedThreadCount: number;
   hasChildThread: boolean;
   hasAutomationThread: boolean;
+  projectHasChildThread: boolean;
+  projectHasAutomationThread: boolean;
+  waitingThreadCount: number;
   providersUsed: readonly string[];
   availableProviderCount: number;
   installedPlugins: Readonly<Record<string, boolean>>;
@@ -84,10 +105,11 @@ export function createTipsState(
   appVersion: string | null,
 ): TipsState {
   return {
-    version: 1,
+    version: 2,
     firstSeenAt: now,
     firstSeenVersion: appVersion,
     current: null,
+    hiddenDay: null,
     records: {},
     observed: {
       finishedThread: false,
@@ -136,6 +158,7 @@ export function deriveSignals(
 ): TipSignals {
   return {
     client,
+    projectId: live.projectId,
     serverPlatform: live.serverPlatform,
     appVersion: live.appVersion,
     firstSeenVersion: state.firstSeenVersion,
@@ -153,7 +176,13 @@ export function deriveSignals(
     hasChildThread: state.observed.childThread || live.hasChildThread,
     hasAutomationThread:
       state.observed.automationThread || live.hasAutomationThread,
+    projectHasChildThread: live.projectHasChildThread,
+    projectHasAutomationThread: live.projectHasAutomationThread,
+    waitingThreadCount: live.waitingThreadCount,
     rateLimited: state.observed.rateLimitedAt !== null,
+    recentlyRateLimited:
+      state.observed.rateLimitedAt !== null &&
+      now - state.observed.rateLimitedAt <= RECENT_RATE_LIMIT_MS,
     queuedFollowUp: state.observed.queuedFollowUpAt !== null,
     usedMobileApp: state.observed.mobileAppAt !== null,
   };
@@ -249,28 +278,142 @@ export function retireTips(
   return next;
 }
 
-function compareCandidates(
-  left: { definition: TipDefinition; record: TipRecord; index: number },
-  right: { definition: TipDefinition; record: TipRecord; index: number },
-): number {
-  if (left.record.shownDays !== right.record.shownDays) {
-    return left.record.shownDays - right.record.shownDays;
+interface Candidate {
+  definition: TipDefinition;
+  boost: number;
+  priorShownDays: number;
+  index: number;
+}
+
+function compareCandidates(left: Candidate, right: Candidate): number {
+  if (left.boost !== right.boost) return right.boost - left.boost;
+  if (left.priorShownDays !== right.priorShownDays) {
+    return left.priorShownDays - right.priorShownDays;
   }
-  const leftDay = left.record.lastShownDay ?? "";
-  const rightDay = right.record.lastShownDay ?? "";
-  if (leftDay !== rightDay) return leftDay < rightDay ? -1 : 1;
   if (left.definition.priority !== right.definition.priority) {
     return right.definition.priority - left.definition.priority;
   }
   return left.index - right.index;
 }
 
-export interface TipSelection {
-  state: TipsState;
-  tip: TipDefinition | null;
+export function rankEligibleTips(
+  state: TipsState,
+  signals: TipSignals,
+  today: string,
+  catalog: readonly TipDefinition[] = TIP_CATALOG,
+): TipDefinition[] {
+  return catalog
+    .flatMap((definition, index): Candidate[] => {
+      if (evaluateTip(definition, state, signals) !== "eligible") return [];
+      const record = recordFor(state, definition, signals);
+      return [
+        {
+          definition,
+          boost: definition.boost(signals),
+          priorShownDays:
+            record.lastShownDay === today
+              ? record.shownDays - 1
+              : record.shownDays,
+          index,
+        },
+      ];
+    })
+    .sort(compareCandidates)
+    .map((candidate) => candidate.definition);
 }
 
-export function selectTip(
+export interface TipSelection {
+  state: TipsState;
+  tips: TipDefinition[];
+}
+
+function keyOf(definition: TipDefinition, signals: TipSignals): string {
+  return recordKey(definition, signals.appVersion);
+}
+
+function staysInTodaysSet(
+  definition: TipDefinition,
+  state: TipsState,
+  signals: TipSignals,
+  today: string,
+): boolean {
+  const status = evaluateTip(definition, state, signals);
+  if (status === "eligible") return true;
+  const record = recordFor(state, definition, signals);
+  return (
+    status === "retired" &&
+    record.retiredReason === "acted" &&
+    record.lastShownDay === today
+  );
+}
+
+function markShown(
+  state: TipsState,
+  definitions: readonly TipDefinition[],
+  signals: TipSignals,
+  today: string,
+): TipsState {
+  let next = state;
+  for (const definition of definitions) {
+    next = withRecord(next, keyOf(definition, signals), (record) =>
+      record.lastShownDay === today
+        ? record
+        : {
+            ...record,
+            shownDays: record.shownDays + 1,
+            lastShownDay: today,
+          },
+    );
+  }
+  return next;
+}
+
+function definitionsForKeys(
+  keys: readonly string[],
+  signals: TipSignals,
+  catalog: readonly TipDefinition[],
+): TipDefinition[] {
+  return keys.flatMap((key) => {
+    const definition = catalog.find(
+      (candidate) => keyOf(candidate, signals) === key,
+    );
+    return definition === undefined ? [] : [definition];
+  });
+}
+
+function todaysSet(
+  state: TipsState,
+  signals: TipSignals,
+  today: string,
+): TipsCurrentSet | null {
+  const current = state.current;
+  if (current === null) return null;
+  if (current.day !== today || current.projectId !== signals.projectId) {
+    return null;
+  }
+  return current;
+}
+
+function storeSet(
+  state: TipsState,
+  definitions: readonly TipDefinition[],
+  seen: readonly string[],
+  signals: TipSignals,
+  today: string,
+): TipsState {
+  const keys = definitions.map((definition) => keyOf(definition, signals));
+  return {
+    ...markShown(state, definitions, signals, today),
+    current: {
+      day: today,
+      projectId: signals.projectId,
+      keys,
+      seen: [...new Set([...seen, ...keys])],
+    },
+  };
+}
+
+export function selectTips(
   state: TipsState,
   signals: TipSignals,
   today: string,
@@ -278,43 +421,89 @@ export function selectTip(
   catalog: readonly TipDefinition[] = TIP_CATALOG,
 ): TipSelection {
   const next = retireTips(state, signals, today, now, catalog);
-  if (next.current !== null && next.current.day === today) {
-    const currentKey = next.current.key;
-    const current = catalog.find(
-      (definition) => recordKey(definition, signals.appVersion) === currentKey,
-    );
-    return {
-      state: next,
-      tip:
-        current !== undefined &&
-        evaluateTip(current, next, signals) === "eligible"
-          ? current
-          : null,
-    };
+  if (next.hiddenDay === today) return { state: next, tips: [] };
+  const existing = todaysSet(next, signals, today);
+  const kept = definitionsForKeys(
+    existing?.keys ?? [],
+    signals,
+    catalog,
+  ).filter((definition) => staysInTodaysSet(definition, next, signals, today));
+  const unchanged = existing !== null && kept.length === existing.keys.length;
+  if (unchanged && kept.length >= TIPS_PER_SET) {
+    return { state: next, tips: kept };
   }
-  const [chosen] = catalog
-    .map((definition, index) => ({
-      definition,
-      record: recordFor(next, definition, signals),
-      index,
-    }))
-    .filter(
-      ({ definition }) => evaluateTip(definition, next, signals) === "eligible",
-    )
-    .sort(compareCandidates);
-  if (chosen === undefined) return { state: next, tip: null };
-  const key = recordKey(chosen.definition, signals.appVersion);
+  const keptKeys = new Set(
+    kept.map((definition) => keyOf(definition, signals)),
+  );
+  const seen = new Set(existing?.seen ?? []);
+  const ranked = rankEligibleTips(next, signals, today, catalog).filter(
+    (definition) => !keptKeys.has(keyOf(definition, signals)),
+  );
+  const fresh = ranked.filter(
+    (definition) => !seen.has(keyOf(definition, signals)),
+  );
+  const repeat = ranked.filter((definition) =>
+    seen.has(keyOf(definition, signals)),
+  );
+  const added = [...fresh, ...repeat].slice(0, TIPS_PER_SET - kept.length);
+  const tips = [...kept, ...added];
+  if (unchanged && added.length === 0) return { state: next, tips };
   return {
-    state: {
-      ...withRecord(next, key, (record) => ({
-        ...record,
-        shownDays: record.shownDays + 1,
-        lastShownDay: today,
-      })),
-      current: { key, day: today },
-    },
-    tip: chosen.definition,
+    state: storeSet(next, tips, existing?.seen ?? [], signals, today),
+    tips,
   };
+}
+
+export function moreTips(
+  state: TipsState,
+  signals: TipSignals,
+  today: string,
+  now: number,
+  catalog: readonly TipDefinition[] = TIP_CATALOG,
+): TipSelection {
+  const selection = selectTips(state, signals, today, now, catalog);
+  if (selection.tips.length === 0) return selection;
+  const current = selection.state.current;
+  const currentKeys = new Set(
+    selection.tips.map((definition) => keyOf(definition, signals)),
+  );
+  const ranked = rankEligibleTips(selection.state, signals, today, catalog);
+  const others = ranked.filter(
+    (definition) => !currentKeys.has(keyOf(definition, signals)),
+  );
+  if (others.length === 0) return selection;
+  const seen = new Set(current?.seen ?? []);
+  const unseen = others.filter(
+    (definition) => !seen.has(keyOf(definition, signals)),
+  );
+  const restart = unseen.length === 0;
+  const pool = restart
+    ? others
+    : [
+        ...unseen,
+        ...others.filter((definition) => seen.has(keyOf(definition, signals))),
+      ];
+  const picks = pool.slice(0, TIPS_PER_SET);
+  const filler = selection.tips.slice(0, TIPS_PER_SET - picks.length);
+  const tips = [...picks, ...filler];
+  return {
+    state: storeSet(
+      selection.state,
+      tips,
+      restart ? [...currentKeys] : (current?.seen ?? []),
+      signals,
+      today,
+    ),
+    tips,
+  };
+}
+
+export function hideTips(
+  state: TipsState,
+  hidden: boolean,
+  today: string,
+): TipsState {
+  return { ...state, hiddenDay: hidden ? today : null };
 }
 
 export function dismissTip(
@@ -350,38 +539,7 @@ export function actOnTip(
 }
 
 export function resetTips(state: TipsState): TipsState {
-  return { ...state, current: null, records: {} };
-}
-
-function keyLabel(
-  client: TipClient | null,
-  mac: string,
-  other: string,
-): string {
-  if (client === null) return `${mac} (${other})`;
-  return client.os === "macos" ? mac : other;
-}
-
-function fillTemplate(text: string, signals: TipSignals): string {
-  return text
-    .replaceAll("{version}", signals.appVersion ?? "")
-    .replaceAll(
-      "{paletteKeys}",
-      keyLabel(signals.client, "⌘⇧P", "Ctrl+Shift+P"),
-    )
-    .replaceAll("{searchKeys}", keyLabel(signals.client, "⌘K", "Ctrl+K"));
-}
-
-export function renderTip(
-  definition: TipDefinition,
-  signals: TipSignals,
-): TipView {
-  return {
-    id: definition.id,
-    title: fillTemplate(definition.title, signals),
-    body: fillTemplate(definition.body, signals),
-    action: definition.action,
-  };
+  return { ...state, current: null, hiddenDay: null, records: {} };
 }
 
 export function listTips(
@@ -391,6 +549,11 @@ export function listTips(
   all: boolean,
   catalog: readonly TipDefinition[] = TIP_CATALOG,
 ): TipListEntry[] {
+  const showing = new Set(
+    state.current?.day === today && state.hiddenDay !== today
+      ? state.current.keys
+      : [],
+  );
   return [...catalog]
     .sort((left, right) => right.priority - left.priority)
     .flatMap((definition) => {
@@ -398,11 +561,7 @@ export function listTips(
       const record = recordFor(state, definition, signals);
       const evaluated = evaluateTip(definition, state, signals);
       const status: TipStatus =
-        evaluated === "eligible" &&
-        state.current?.key === key &&
-        state.current.day === today
-          ? "current"
-          : evaluated;
+        evaluated === "eligible" && showing.has(key) ? "current" : evaluated;
       if (!all && status !== "current" && status !== "eligible") return [];
       return [
         {

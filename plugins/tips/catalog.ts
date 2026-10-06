@@ -1,4 +1,4 @@
-import type { TipAction, TipClient } from "./contract.js";
+import type { TipAction, TipClient, TipView } from "./contract.js";
 
 export const ACCOUNT_POOL_PLUGIN_ID = "account-pool";
 export const AUTOMATIONS_PLUGIN_ID = "automations";
@@ -8,6 +8,7 @@ export const POOLED_PROVIDER_IDS: readonly string[] = ["claude-code", "codex"];
 
 export interface TipSignals {
   client: TipClient | null;
+  projectId: string | null;
   serverPlatform: string;
   appVersion: string | null;
   firstSeenVersion: string | null;
@@ -20,7 +21,11 @@ export interface TipSignals {
   finishedThreadCount: number;
   hasChildThread: boolean;
   hasAutomationThread: boolean;
+  projectHasChildThread: boolean;
+  projectHasAutomationThread: boolean;
+  waitingThreadCount: number;
   rateLimited: boolean;
+  recentlyRateLimited: boolean;
   queuedFollowUp: boolean;
   usedMobileApp: boolean;
 }
@@ -29,16 +34,21 @@ export interface TipDefinition {
   id: string;
   title: string;
   body: string;
-  action: TipAction | null;
+  action: TipAction;
   priority: number;
   held: boolean;
   perVersion: boolean;
   maxShowDays: number;
   when(signals: TipSignals): boolean;
   used(signals: TipSignals): boolean;
+  boost(signals: TipSignals): number;
 }
 
 const DEFAULT_MAX_SHOW_DAYS = 2;
+const WAITING_THREADS_FOR_TIP = 2;
+const WAITING_BOOST = 2000;
+const RATE_LIMIT_BOOST = 1500;
+const NEW_VERSION_BOOST = 1000;
 const POWER_USER_THREAD_COUNT = 50;
 const NEW_USER_DAYS = 14;
 
@@ -69,13 +79,32 @@ function never(): boolean {
   return false;
 }
 
+function noBoost(): number {
+  return 0;
+}
+
+function usesSubthreadsHere(signals: TipSignals): boolean {
+  return signals.projectId === null
+    ? signals.hasChildThread
+    : signals.projectHasChildThread;
+}
+
+function usesAutomationsHere(signals: TipSignals): boolean {
+  return signals.projectId === null
+    ? signals.hasAutomationThread
+    : signals.projectHasAutomationThread;
+}
+
 function tip(
   definition: Omit<
     TipDefinition,
-    "held" | "perVersion" | "maxShowDays" | "used"
+    "held" | "perVersion" | "maxShowDays" | "used" | "boost"
   > &
     Partial<
-      Pick<TipDefinition, "held" | "perVersion" | "maxShowDays" | "used">
+      Pick<
+        TipDefinition,
+        "held" | "perVersion" | "maxShowDays" | "used" | "boost"
+      >
     >,
 ): TipDefinition {
   return {
@@ -83,6 +112,7 @@ function tip(
     perVersion: false,
     maxShowDays: DEFAULT_MAX_SHOW_DAYS,
     used: never,
+    boost: noBoost,
     ...definition,
   };
 }
@@ -97,9 +127,10 @@ export const TIP_CATALOG: readonly TipDefinition[] = [
       label: "See what's new",
       path: "/settings/updates#whats-new",
     },
-    priority: 1000,
+    priority: 130,
     perVersion: true,
     maxShowDays: 1,
+    boost: () => NEW_VERSION_BOOST,
     when: (signals) =>
       signals.appVersion !== null &&
       signals.firstSeenVersion !== null &&
@@ -120,6 +151,7 @@ export const TIP_CATALOG: readonly TipDefinition[] = [
       signals.providersUsed.some((id) => POOLED_PROVIDER_IDS.includes(id)) &&
       (signals.rateLimited || signals.threadCount >= POWER_USER_THREAD_COUNT),
     used: (signals) => isEnabled(signals, ACCOUNT_POOL_PLUGIN_ID),
+    boost: (signals) => (signals.recentlyRateLimited ? RATE_LIMIT_BOOST : 0),
   }),
   tip({
     id: "subthreads",
@@ -132,8 +164,8 @@ export const TIP_CATALOG: readonly TipDefinition[] = [
         "Spin up three subthreads that each try a different approach to this task, then compare their results and recommend one. Task: ",
     },
     priority: 110,
-    when: (signals) => signals.hasFinishedThread,
-    used: (signals) => signals.hasChildThread,
+    when: (signals) =>
+      signals.hasFinishedThread && !usesSubthreadsHere(signals),
   }),
   tip({
     id: "set-up-for-me",
@@ -204,7 +236,9 @@ export const TIP_CATALOG: readonly TipDefinition[] = [
     },
     priority: 70,
     when: (signals) =>
-      signals.threadCount >= 5 && onClient(signals, hasKeyboard),
+      signals.waitingThreadCount >= WAITING_THREADS_FOR_TIP &&
+      onClient(signals, hasKeyboard),
+    boost: (signals) => WAITING_BOOST + signals.waitingThreadCount,
   }),
   tip({
     id: "morning-digest",
@@ -248,8 +282,8 @@ export const TIP_CATALOG: readonly TipDefinition[] = [
     priority: 55,
     when: (signals) =>
       signals.finishedThreadCount >= 5 &&
-      isEnabled(signals, AUTOMATIONS_PLUGIN_ID),
-    used: (signals) => signals.hasAutomationThread,
+      isEnabled(signals, AUTOMATIONS_PLUGIN_ID) &&
+      !usesAutomationsHere(signals),
   }),
   tip({
     id: "queue-or-steer",
@@ -265,19 +299,14 @@ export const TIP_CATALOG: readonly TipDefinition[] = [
     used: (signals) => signals.queuedFollowUp,
   }),
   tip({
-    id: "handoff",
-    title: "Hand off to another model",
-    body: "In a thread's model picker, choose Handoff to new thread to continue the work with another provider.",
-    action: null,
-    priority: 45,
-    when: (signals) =>
-      signals.availableProviderCount >= 2 && signals.threadCount >= 3,
-  }),
-  tip({
     id: "thread-search",
     title: "Jump to any thread",
     body: "Press {searchKeys} to search your threads.",
-    action: { kind: "command", label: "Search", commandId: "thread.search" },
+    action: {
+      kind: "command",
+      label: "Search threads",
+      commandId: "thread.search",
+    },
     priority: 42,
     when: (signals) =>
       signals.threadCount >= 10 && onClient(signals, hasKeyboard),
@@ -286,7 +315,11 @@ export const TIP_CATALOG: readonly TipDefinition[] = [
     id: "command-palette",
     title: "Do anything from the keyboard",
     body: "Press {paletteKeys} to search bb's commands and settings.",
-    action: { kind: "command", label: "Open", commandId: "palette.open" },
+    action: {
+      kind: "command",
+      label: "Open palette",
+      commandId: "palette.open",
+    },
     priority: 40,
     when: (signals) =>
       signals.daysSinceFirstSeen >= 3 && onClient(signals, hasKeyboard),
@@ -297,24 +330,42 @@ export const TIP_CATALOG: readonly TipDefinition[] = [
     body: "Provider usage shows how much of each account's limits you have used and when they reset.",
     action: {
       kind: "route",
-      label: "Open",
+      label: "See usage",
       path: "/settings/plugins/bb--provider-usage",
     },
     priority: 35,
     when: (signals) =>
       signals.threadCount >= 10 && isEnabled(signals, PROVIDER_USAGE_PLUGIN_ID),
   }),
-  tip({
-    id: "another-server",
-    title: "Connect to bb on another machine",
-    body: "In the bb menu, choose Desktop Settings, then Server, then Add Server to switch this app to another bb server.",
-    action: null,
-    priority: 30,
-    when: (signals) =>
-      signals.finishedThreadCount >= 3 &&
-      onClient(
-        signals,
-        (client) => client.surface === "desktop" && client.os === "macos",
-      ),
-  }),
 ];
+
+function keyLabel(
+  client: TipClient | null,
+  mac: string,
+  other: string,
+): string {
+  if (client === null) return `${mac} (${other})`;
+  return client.os === "macos" ? mac : other;
+}
+
+function fillTemplate(text: string, signals: TipSignals): string {
+  return text
+    .replaceAll("{version}", signals.appVersion ?? "")
+    .replaceAll(
+      "{paletteKeys}",
+      keyLabel(signals.client, "⌘⇧P", "Ctrl+Shift+P"),
+    )
+    .replaceAll("{searchKeys}", keyLabel(signals.client, "⌘K", "Ctrl+K"));
+}
+
+export function renderTip(
+  definition: TipDefinition,
+  signals: TipSignals,
+): TipView {
+  return {
+    id: definition.id,
+    title: fillTemplate(definition.title, signals),
+    body: fillTemplate(definition.body, signals),
+    action: definition.action,
+  };
+}

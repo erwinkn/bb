@@ -581,6 +581,7 @@ export const SURFACE_GROUPS: SurfaceGroup[] = [
           "ExperimentalComposerPopupRegistration",
           "PluginComposerApi.experimental_openPopup",
           "PluginComposerApi.experimental_closePopup",
+          "PluginComposerApi.experimental_setPlaceholderPreview",
           "PluginAppComposer.experimental_registerCommand",
           "ExperimentalComposerCommandRegistration",
           "PluginComposerApi.setSelection",

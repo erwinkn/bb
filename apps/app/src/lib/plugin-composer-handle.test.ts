@@ -140,6 +140,7 @@ function makeHandle(target: ComposerSource, pluginId = "demo") {
     composerHandleController(pluginId, target, {
       setTextEffect: () => {},
       setInputLock: () => {},
+      setPlaceholderPreview: () => {},
       onSubmitted: () => () => {},
     }),
   );
@@ -367,6 +368,7 @@ describe("composer handle", () => {
         {
           setTextEffect: () => {},
           setInputLock: () => {},
+          setPlaceholderPreview: () => {},
           onSubmitted: (listener) =>
             subscribeComposerSubmitted(scope, listener),
         },
@@ -400,6 +402,7 @@ describe("composer handle", () => {
       composerHandleController("demo", second.target, {
         setTextEffect: () => {},
         setInputLock: () => {},
+        setPlaceholderPreview: () => {},
         onSubmitted: () => () => {},
       }),
     );

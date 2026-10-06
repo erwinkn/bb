@@ -61,6 +61,7 @@ import { useSystemProviders } from "@/hooks/queries/system-queries";
 import { useSystemEnvironmentProviders } from "@/hooks/queries/environment-provider-queries";
 import { requestComposerFocus } from "@/lib/composer-focus-requests";
 import { setComposerTextEffect } from "@/lib/composer-text-effects";
+import { setComposerPlaceholderPreview } from "@/lib/composer-placeholder-previews";
 import { createKeyedListeners } from "@/lib/keyed-listeners";
 import {
   usePromptDraftController,
@@ -723,6 +724,7 @@ export function useComposer(): PluginComposerApi {
     scopeOwnership.invalidate();
     setComposerTextEffect(textEffectKey, pluginId, null, visualStateOwner);
     setComposerInputLock(textEffectKey, pluginId, false, visualStateOwner);
+    setComposerPlaceholderPreview(textEffectKey, visualStateOwner, null);
   }, [pluginId, scopeOwnership, textEffectKey, visualStateOwner]);
   const registerVisualStateOwner = useCallback(() => {
     slotOwnershipRegistry?.register(visualStateOwner, releaseVisualState);
@@ -761,6 +763,14 @@ export function useComposer(): PluginComposerApi {
       textEffectKey,
       visualStateOwner,
     ],
+  );
+  const setPlaceholderPreview = useCallback(
+    (text: string | null) => {
+      if (!scopeOwnership.isActive()) return;
+      if (text !== null) registerVisualStateOwner();
+      setComposerPlaceholderPreview(textEffectKey, visualStateOwner, text);
+    },
+    [registerVisualStateOwner, scopeOwnership, textEffectKey, visualStateOwner],
   );
   useEffect(() => {
     scopeOwnership.activate();
@@ -817,9 +827,17 @@ export function useComposer(): PluginComposerApi {
       composerHandleController(pluginId, source, {
         setTextEffect,
         setInputLock,
+        setPlaceholderPreview,
         onSubmitted,
       }),
-    [onSubmitted, pluginId, setInputLock, setTextEffect, source],
+    [
+      onSubmitted,
+      pluginId,
+      setInputLock,
+      setPlaceholderPreview,
+      setTextEffect,
+      source,
+    ],
   );
   const [binding, setBinding] = useState(() =>
     createComposerHandleBinding(textEffectKey, controller),

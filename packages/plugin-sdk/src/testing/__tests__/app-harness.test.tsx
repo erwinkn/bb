@@ -400,7 +400,7 @@ function SchemeLikeFileLinkProbe() {
 
 let capturedComposerVisualSetters: Pick<
   PluginComposerApi,
-  "setTextEffect" | "setInputLock"
+  "setTextEffect" | "setInputLock" | "experimental_setPlaceholderPreview"
 > | null = null;
 let capturedComposerSetSelection: PluginComposerApi["setSelection"] | null =
   null;
@@ -426,6 +426,8 @@ function ComposerProbe() {
   capturedComposerVisualSetters = {
     setTextEffect: composer.setTextEffect,
     setInputLock: composer.setInputLock,
+    experimental_setPlaceholderPreview:
+      composer.experimental_setPlaceholderPreview,
   };
   capturedComposerSetSelection = composer.setSelection;
   return (
@@ -2097,6 +2099,31 @@ describe("renderSlot", () => {
       ]);
       expect(slot.composer.inputLockCalls).toEqual([true]);
     }
+  });
+
+  it("records placeholder previews and clears them on unmount", () => {
+    const slot = renderSlot(
+      app.composerCustomizations[0]!.actions![0]!,
+      {},
+      { context: { projectId: "proj_1", threadId: "thr_1" } },
+    );
+    const setters = capturedComposerVisualSetters;
+    if (setters === null) throw new Error("composer setters were not captured");
+
+    setters.experimental_setPlaceholderPreview("Spin up three subthreads");
+    expect(slot.composer.placeholderPreview).toBe("Spin up three subthreads");
+    setters.experimental_setPlaceholderPreview(null);
+    expect(slot.composer.placeholderPreview).toBeNull();
+    setters.experimental_setPlaceholderPreview("Build me a bb plugin");
+
+    slot.unmount();
+    expect(slot.composer.placeholderPreview).toBeNull();
+    setters.experimental_setPlaceholderPreview("late preview");
+    expect(slot.composer.placeholderPreviewCalls).toEqual([
+      "Spin up three subthreads",
+      null,
+      "Build me a bb plugin",
+    ]);
   });
 
   it("invalidates visual-state setters when Testing Library cleans up the root", () => {

@@ -3768,3 +3768,22 @@ Before stabilization, decide whether routes should be typed destinations
 rename routes without breaking plugins, whether the navigation allowlist should
 grow into a public versioned vocabulary, whether commands should accept a target
 or surface, and how both behave on mobile and in split panes.
+
+## Composer placeholder preview (`PluginComposerApi.experimental_setPlaceholderPreview`)
+
+`useComposer().experimental_setPlaceholderPreview(text)` shows `text` as that
+composer's placeholder in place of the host's own; `null` restores it. It shows
+only while the draft is empty and never edits the draft. The editor's
+accessible label keeps the host placeholder. Each `useComposer()` call site owns
+one preview, released when it unmounts or its composer scope changes; with
+several owners, the most recently set preview shows. Handles from
+`useComposers()` warn and do nothing. The SDK frontend harness records
+`composer.placeholderPreview` and `composer.placeholderPreviewCalls`. First
+consumer: the bundled Tips plugin, which previews a tip's prompt while the
+pointer or focus is on it.
+
+Before stabilization, decide whether the preview should support rich content
+(mention pills, a highlighted task slot) instead of plain text, how it is
+announced to screen readers, whether owners in different plugins should compete
+by recency or by an explicit priority, and how it behaves in compact layouts
+that show their own placeholder.

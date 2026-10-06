@@ -2752,6 +2752,15 @@ export interface PluginComposerApi {
    */
   setInputLock(locked: boolean): void;
   /**
+   * Show `text` as this composer's placeholder in place of the host's own, or
+   * pass null to restore it. Like any placeholder it shows only while the
+   * draft is empty, and it never changes the draft. Previews are scoped to
+   * the calling surface and clear automatically when it unmounts or its
+   * composer scope changes; when several are set, the most recent one shows.
+   * Has no effect on handles from `useComposers()`.
+   */
+  experimental_setPlaceholderPreview(text: string | null): void;
+  /**
    * @internal Legacy quoting method; retained at runtime for older plugins.
    * Append text to the draft as a `> ` blockquote block and focus the
    * composer. Blank text is a no-op. This is the "reference this selection
