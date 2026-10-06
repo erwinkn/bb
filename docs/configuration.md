@@ -343,6 +343,19 @@ bb concurrency-limit global [unlimited|<limit>] [--json]
 bb concurrency-limit host <host-id> [auto|<limit>] [--json]
 ```
 
+The builtin Tips plugin shows one contextual tip at a time on the New thread
+page, with at most one new tip a day. Dismissing a tip retires it for good, and
+a tip retires itself once bb sees its feature in use. Its "Show tips" switch
+(`enabled`, on by default) hides tips everywhere; set it with
+`bb plugin config tips set enabled false`. Inspect or reset tips from an agent
+or terminal with:
+
+```sh
+bb tips [--all] [--json]
+bb tips dismiss <id> [--json]
+bb tips reset [--json]
+```
+
 The "Show diagnostic events" toggle in Settings → General → Privacy & diagnostics shows provider
 environment resolution and raw provider events that bb does not yet understand.
 It defaults to off in all builds. Warnings, errors, and model fallback remain

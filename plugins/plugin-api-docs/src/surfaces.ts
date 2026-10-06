@@ -427,7 +427,7 @@ export const SURFACE_GROUPS: SurfaceGroup[] = [
           "PluginCommandShortcut",
           "BbNavigate.experimental_runAppCommand",
         ],
-        firstParty: ["File Editor"],
+        firstParty: ["File Editor", "Tips"],
       },
     ],
   },
@@ -609,6 +609,7 @@ export const SURFACE_GROUPS: SurfaceGroup[] = [
           "PluginHomepageSectionRegistration",
           "PluginHomepageSectionProps",
         ],
+        firstParty: ["Tips"],
       },
       {
         id: "new-thread-panel",

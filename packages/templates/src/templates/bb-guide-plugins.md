@@ -157,6 +157,18 @@ bb concurrency-limit global [unlimited|<limit>] [--json]
 bb concurrency-limit host <host-id> [auto|<limit>] [--json]
 ```
 
+The builtin Tips plugin shows one contextual tip at a time on the New thread
+page and at most one new tip a day. Dismissing a tip retires it for good; a tip
+also retires once its feature is in use or its action is taken. Turn tips off
+with the plugin's "Show tips" switch or
+`bb plugin config tips set enabled false`. The CLI equivalents are:
+
+```
+bb tips [--all] [--json]
+bb tips dismiss <id> [--json]
+bb tips reset [--json]
+```
+
 The builtin Provider retry plugin is enabled on fresh installations. It retries
 Codex and Claude Code turns after structured provider overloads and subscription
 window limits. A pending retry is a queued row on the thread, so a server

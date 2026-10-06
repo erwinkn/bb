@@ -185,6 +185,11 @@
     "icon": "Palette"
   },
   {
+    "id": "tips",
+    "name": "Tips",
+    "icon": "Explore"
+  },
+  {
     "id": "thread-list",
     "name": "Thread list",
     "icon": "ListView"

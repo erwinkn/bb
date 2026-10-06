@@ -170,6 +170,11 @@ export const BUILTIN_PLUGINS = [
     defaultEnabled: true,
   },
   {
+    name: "tips",
+    pluginId: "tips",
+    defaultEnabled: true,
+  },
+  {
     name: "navigation",
     pluginId: "navigation",
     defaultEnabled: true,
