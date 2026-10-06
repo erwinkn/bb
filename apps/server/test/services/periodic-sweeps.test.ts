@@ -557,7 +557,7 @@ describe("runPeriodicSweeps", () => {
 
   it("retries pruning on the next tick after a busy skip and continues without an hourly delay", async () => {
     await withTestHarness(async (harness) => {
-      const { thread } = seedThreadFixture(harness);
+      const { environment, thread } = seedThreadFixture(harness);
       const deps = {
         ...harness.deps,
         pluginSchedules: harness.pluginService,
@@ -580,9 +580,9 @@ describe("runPeriodicSweeps", () => {
           })
           .run();
       harness.db
-        .update(threads)
-        .set({ status: "active" })
-        .where(eq(threads.id, thread.id))
+        .update(environments)
+        .set({ status: "provisioning" })
+        .where(eq(environments.id, environment.id))
         .run();
       const pruningJobs = [createThreadEventPruningJob(UNTIMED_SWEEP_LIMITS)];
       const now = Date.now();
@@ -593,9 +593,9 @@ describe("runPeriodicSweeps", () => {
           [],
         );
         harness.db
-          .update(threads)
-          .set({ status: "idle" })
-          .where(eq(threads.id, thread.id))
+          .update(environments)
+          .set({ status: environment.status })
+          .where(eq(environments.id, environment.id))
           .run();
         clock.mockReturnValue(now + 10_000);
         await runPeriodicSweepJobs(deps, pruningJobs, Date.now());

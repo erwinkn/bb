@@ -14,6 +14,10 @@ import {
 } from "../schema.js";
 import { bumpThreadEventRewriteGeneration } from "./event-rewrite-generation.js";
 import {
+  ACTIVE_PENDING_INTERACTION_STATUSES,
+  ACTIVE_THREAD_STATUSES,
+} from "./maintenance.js";
+import {
   getHighWaterMarks,
   pruneContextWindowUsageEventsInTransaction,
   pruneTokenUsageEventsInTransaction,
@@ -72,7 +76,7 @@ function advanceThreadPruningTransaction(
   const result = db.transaction(
     (tx) => {
       const backgroundEligibility = and(
-        notInArray(threads.status, ["active", "starting"]),
+        notInArray(threads.status, [...ACTIVE_THREAD_STATUSES]),
         notExists(
           tx
             .select({ id: pendingInteractions.id })
@@ -80,7 +84,9 @@ function advanceThreadPruningTransaction(
             .where(
               and(
                 eq(pendingInteractions.threadId, threads.id),
-                inArray(pendingInteractions.status, ["pending", "resolving"]),
+                inArray(pendingInteractions.status, [
+                  ...ACTIVE_PENDING_INTERACTION_STATUSES,
+                ]),
               ),
             ),
         ),
