@@ -72,11 +72,10 @@ describe("message action usage", () => {
     expect(rankedKeys(actions, twice)).toEqual(["fork", "copy"]);
   });
 
-  it("fills at most three slots and lets heavy use outrank unused defaults", () => {
+  it("adds up to two promoted actions beside the defaults", () => {
     const usage: MessageActionUsage = {
       "add-to-chat": { score: 5, usedAt: NOW },
       "copy-link": { score: 4, usedAt: NOW },
-      copy: { score: 3, usedAt: NOW },
     };
 
     expect(
@@ -84,26 +83,33 @@ describe("message action usage", () => {
         [
           action("copy", false),
           action("edit", false),
+          action("plugin:a", false),
           action("copy-link", true),
           action("add-to-chat", true),
         ],
         usage,
       ),
-    ).toEqual(["add-to-chat", "copy-link", "copy"]);
+    ).toEqual(["add-to-chat", "copy-link", "copy", "edit", "plugin:a"]);
   });
 
-  it("never shrinks the default row when more than three defaults exist", () => {
+  it("moves the least-used action into the menu once a third action is promoted", () => {
+    const usage: MessageActionUsage = {
+      "add-to-chat": { score: 5, usedAt: NOW },
+      fork: { score: 4, usedAt: NOW },
+      copy: { score: 3.5, usedAt: NOW },
+      "copy-link": { score: 3, usedAt: NOW },
+    };
+
     expect(
       rankedKeys(
         [
           action("copy", false),
-          action("edit", false),
-          action("plugin:a", false),
-          action("plugin:b", false),
+          action("copy-link", true),
+          action("add-to-chat", true),
           action("fork", true),
         ],
-        { fork: { score: 9, usedAt: NOW } },
+        usage,
       ),
-    ).toEqual(["fork", "copy", "edit", "plugin:a"]);
+    ).toEqual(["add-to-chat", "fork", "copy"]);
   });
 });

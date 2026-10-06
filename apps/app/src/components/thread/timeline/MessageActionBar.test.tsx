@@ -539,8 +539,25 @@ describe("MessageActionBar usage ordering", () => {
     const now = Date.now();
     getDefaultStore().set(messageActionUsageAtom, {
       "add-to-chat": { score: 5, usedAt: now },
-      "copy-link": { score: 4, usedAt: now },
-      copy: { score: 3, usedAt: now },
+      fork: { score: 4, usedAt: now },
+      copy: { score: 3.5, usedAt: now },
+      "copy-link": { score: 3, usedAt: now },
+    });
+    const { container } = renderAssistantBar();
+
+    expect(inlineActionLabels(container)).toEqual([
+      "Copy message",
+      "Add to chat",
+      "Fork into new thread",
+    ]);
+    expect(menuItemLabels(openDesktopMenu())).toEqual(["Copy link"]);
+  });
+
+  it("keeps every default inline beside promoted actions", () => {
+    const now = Date.now();
+    getDefaultStore().set(messageActionUsageAtom, {
+      "add-to-chat": { score: 2, usedAt: now },
+      "copy-link": { score: 2, usedAt: now },
     });
     const resizeObserver = installControlledResizeObserver();
     const { container } = render(
@@ -552,16 +569,27 @@ describe("MessageActionBar usage ordering", () => {
         onEdit={vi.fn()}
         onCopyLink={vi.fn()}
         onAddToChat={vi.fn()}
+        pluginActions={[
+          {
+            key: "demo/reply/1",
+            usageKey: "demo/reply",
+            pluginId: null,
+            icon: "Zap",
+            label: "Reply in side chat",
+            onSelect: vi.fn(),
+          },
+        ]}
       />,
     );
     resizeObserver.reportWidth(200);
 
     expect(inlineActionLabels(container)).toEqual([
       "Copy message",
+      "Edit message",
+      "Reply in side chat",
       "Copy link",
       "Add to chat",
     ]);
-    expect(menuItemLabels(openDesktopMenu())).toEqual(["Edit message"]);
   });
 
   it("overflows the lowest-scoring action first when the row is narrow", () => {

@@ -5,7 +5,7 @@ import { createJsonLocalStorage } from "@/lib/browser-storage";
 
 export const MESSAGE_ACTION_USAGE_STORAGE_KEY = "bb.messageActionUsage.v1";
 export const MESSAGE_ACTION_PROMOTION_SCORE = 1.5;
-export const MIN_MESSAGE_ACTION_INLINE_SLOTS = 3;
+export const PROMOTED_MESSAGE_ACTION_SLOTS = 2;
 
 const USAGE_HALF_LIFE_MS = 14 * 24 * 60 * 60 * 1000;
 const MAX_TRACKED_ACTIONS = 64;
@@ -78,10 +78,7 @@ export function rankInlineMessageActions<T extends RankableMessageAction>({
   const defaultInlineCount = actions.filter(
     (action) => !action.promotable,
   ).length;
-  const slotCount = Math.max(
-    MIN_MESSAGE_ACTION_INLINE_SLOTS,
-    defaultInlineCount,
-  );
+  const slotCount = defaultInlineCount + PROMOTED_MESSAGE_ACTION_SLOTS;
   return actions
     .map((action, index) => ({
       action,
