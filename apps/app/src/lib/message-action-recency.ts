@@ -129,5 +129,4 @@ export function orderByRecency<T>(
 export function resetMessageActionRecencyForTest(): void {
   initialized = false;
   snapshot = EMPTY_RECENCY;
-  for (const listener of listeners) listener();
 }

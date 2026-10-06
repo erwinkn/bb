@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { afterEach, describe, expect, it } from "vitest";
-import { renderHook } from "@testing-library/react";
+import { cleanup, renderHook } from "@testing-library/react";
 import {
   MESSAGE_ACTION_RECENCY_STORAGE_KEY,
   orderByRecency,
@@ -11,6 +11,7 @@ import {
 } from "./message-action-recency";
 
 afterEach(() => {
+  cleanup();
   window.localStorage.clear();
   resetMessageActionRecencyForTest();
 });
