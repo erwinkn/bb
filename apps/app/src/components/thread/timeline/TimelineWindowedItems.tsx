@@ -2,6 +2,7 @@ import {
   createContext,
   useCallback,
   useContext,
+  useEffect,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -71,6 +72,7 @@ export interface TimelineWindowedItemsProps {
 }
 
 const TIMELINE_WINDOW_OVERSCAN_ITEMS = 8;
+const TIMELINE_WINDOW_FIRST_PAINT_OVERSCAN_ITEMS = 1;
 const TIMELINE_WINDOW_MAX_INTERACTION_PINS = 24;
 
 const EMPTY_KEY_SET: ReadonlySet<string> = new Set();
@@ -124,6 +126,11 @@ export function TimelineWindowedItems({
   }));
   const [scrollMargin, setScrollMargin] = useState(0);
   const [interactionPins, setInteractionPins] = useState<readonly string[]>([]);
+  const [overscan, setOverscan] = useState(() =>
+    configured
+      ? TIMELINE_WINDOW_FIRST_PAINT_OVERSCAN_ITEMS
+      : TIMELINE_WINDOW_OVERSCAN_ITEMS,
+  );
   const containerElementRef = useRef<HTMLDivElement>(null);
   const windowingEnabled = configured && scrollRootStatus !== "unusable";
   const resolvedGetScrollElement = getScrollElement ?? GET_NO_SCROLL_ELEMENT;
@@ -224,7 +231,7 @@ export function TimelineWindowedItems({
     initialOffset,
     initialRect,
     measureElement,
-    overscan: TIMELINE_WINDOW_OVERSCAN_ITEMS,
+    overscan,
     rangeExtractor,
     scrollMargin,
     scrollToFn,
@@ -303,6 +310,22 @@ export function TimelineWindowedItems({
   }, [configured, resolvedGetScrollElement, updateScrollGeometry]);
 
   useLayoutEffect(updateScrollGeometry);
+
+  useEffect(() => {
+    if (overscan === TIMELINE_WINDOW_OVERSCAN_ITEMS) return;
+    const widen = () => setOverscan(TIMELINE_WINDOW_OVERSCAN_ITEMS);
+    const scrollElement = resolvedGetScrollElement();
+    scrollElement?.addEventListener("scroll", widen, { passive: true });
+    let timeout: number | undefined;
+    const frame = requestAnimationFrame(() => {
+      timeout = window.setTimeout(widen, 0);
+    });
+    return () => {
+      scrollElement?.removeEventListener("scroll", widen);
+      cancelAnimationFrame(frame);
+      if (timeout !== undefined) window.clearTimeout(timeout);
+    };
+  }, [overscan, resolvedGetScrollElement]);
 
   const retainInteractedItem = useCallback(
     (event: SyntheticEvent<HTMLDivElement>) => {
