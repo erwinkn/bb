@@ -150,7 +150,7 @@ const ART: Record<string, Art> = {
           />
         </g>
       ))}
-      <Dot cx={31} cy={15} r={2} style={{ fill: accent }} />
+      <Dot cx={31} cy={15} r={2} fill={accent} />
       <Rule x={21} y={39.5} width={6} />
     </>
   ),
@@ -333,7 +333,7 @@ const ART: Record<string, Art> = {
         rx={5.5}
         strokeDasharray="3 2.5"
       />
-      <Dot cx={18} cy={35.5} r={2} style={{ fill: accent }} />
+      <Dot cx={18} cy={35.5} r={2} fill={accent} />
       <Rule x={23} y={35.5} width={14} soft />
       <path {...LINE} strokeOpacity={SOFT} d="M8 25v8a2.5 2.5 0 0 0 2.5 2.5" />
     </>
@@ -383,7 +383,7 @@ const ART: Record<string, Art> = {
         fill="currentColor"
         fillOpacity={WASH * 1.6}
       />
-      <Dot cx={9} cy={24.5} r={1.5} style={{ fill: accent }} />
+      <Dot cx={9} cy={24.5} r={1.5} fill={accent} />
       <Rule x={13} y={24.5} width={18} />
       <Dot cx={9} cy={33} r={1.5} />
       <Rule x={13} y={33} width={14} soft />
