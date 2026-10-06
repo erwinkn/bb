@@ -71,7 +71,7 @@ export const BB_VS_CURSOR: Comparison = {
     "bb is a free, open-source Cursor alternative for running coding agents. Claude Code, Codex, and Cursor’s agent work together on your machines, on the plans you already pay for.",
   competitor: { name: "Cursor", logo: CURSOR_LOGO },
   headline: "The Cursor alternative for running all your coding agents",
-  sub: "Claude Code, Codex, and Cursor’s own agent work together on your machines, on the plans you already pay for. Free and open source.",
+  sub: "Claude Code, Codex, and Cursor’s own agent work together on the plans you already pay for. Free and open source, and Cursor stays your editor.",
   heroVisual: <AgentSplit />,
   tailored: PLANS_SECTION,
   sections: [AWAY_SECTION, pluginsSection(PLUGINS_COPY)],
@@ -87,12 +87,8 @@ export const BB_VS_CURSOR: Comparison = {
         },
         {
           feature: "Claude and GPT models",
-          bb: cell("yes", "On your Claude and ChatGPT plans"),
-          competitor: cell(
-            "partial",
-            "From Cursor’s usage, then on-demand",
-            true,
-          ),
+          bb: cell("yes", "Billed to your Claude and ChatGPT plans"),
+          competitor: cell("yes", "Billed to your Cursor usage", true),
         },
         {
           feature: "Agent-to-agent handoff",
@@ -111,7 +107,7 @@ export const BB_VS_CURSOR: Comparison = {
       rows: [
         {
           feature: "Pricing",
-          bb: price("$0", "Bring your agent plans"),
+          bb: price("$0", "You pay agent providers directly"),
           competitor: price("$20 / mo", "Teams at $40 per user / month"),
         },
         {
@@ -125,8 +121,8 @@ export const BB_VS_CURSOR: Comparison = {
       title: "Away from your desk",
       rows: [
         {
-          feature: "Run agents on your own machines",
-          bb: cell("yes", "Any computer you own, free"),
+          feature: "Run agents on other machines you own",
+          bb: cell("yes", "Any computer, free"),
           competitor: cell("yes", "Self-hosted cloud agents", true),
         },
         {
@@ -208,7 +204,7 @@ export const BB_VS_CURSOR: Comparison = {
               No. Keep editing in Cursor, and open any thread’s worktree in it
               with one click. You can also pick Cursor as the agent for any bb
               thread: bb runs Cursor’s agent CLI with your own sign-in and plan,
-              next to Claude Code and Codex.
+              so your rules and MCP servers come along.
             </p>
           ),
         },
