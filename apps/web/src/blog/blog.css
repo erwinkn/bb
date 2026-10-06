@@ -1,7 +1,8 @@
 /* bb blog — loads alongside landing.css and reuses its tokens. One column:
    date, title, then the body. */
 
-.nav-links .nav-current {
+.nav-links .nav-current,
+.nav-links a.nav-current {
   color: var(--ink);
 }
 

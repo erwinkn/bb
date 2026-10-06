@@ -50,7 +50,8 @@
 }
 
 /* Current-page link in the shared nav. */
-.nav-links .nav-current {
+.nav-links .nav-current,
+.nav-links a.nav-current {
   color: var(--ink);
 }
 
