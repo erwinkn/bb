@@ -39,7 +39,6 @@ function signals(overrides: Partial<TipSignals> = {}): TipSignals {
     daysSinceFirstSeen: 0,
     threadCount: 0,
     availableProviderCount: 1,
-    providersUsed: [],
     installedPlugins: {},
     hasFinishedThread: false,
     finishedThreadCount: 0,
@@ -68,7 +67,6 @@ function live(overrides: Partial<LiveSignals> = {}): LiveSignals {
     projectHasChildThread: false,
     projectHasAutomationThread: false,
     waitingThreadCount: 0,
-    providersUsed: [],
     availableProviderCount: 1,
     installedPlugins: {},
     ...overrides,
@@ -358,7 +356,6 @@ describe("contextual ranking", () => {
       hasFinishedThread: true,
       finishedThreadCount: 5,
       threadCount: 20,
-      providersUsed: ["claude-code"],
       installedPlugins: { "account-pool": false },
       rateLimited: true,
     };
@@ -453,19 +450,13 @@ describe("catalog predicates", () => {
     ).toBe(false);
   });
 
-  it("offers Account Pooler to rate-limited or heavy Claude Code and Codex users until it is enabled", () => {
+  it("offers Account Pooler to rate-limited or heavy users until it is enabled", () => {
     const pool = catalogTip("account-pool");
-    const base = {
-      installedPlugins: { "account-pool": false },
-      providersUsed: ["claude-code"],
-    };
+    const base = { installedPlugins: { "account-pool": false } };
     expect(pool.held).toBe(false);
     expect(pool.when(signals(base))).toBe(false);
     expect(pool.when(signals({ ...base, rateLimited: true }))).toBe(true);
     expect(pool.when(signals({ ...base, threadCount: 50 }))).toBe(true);
-    expect(
-      pool.when(signals({ ...base, providersUsed: ["pi"], rateLimited: true })),
-    ).toBe(false);
     expect(
       pool.when(signals({ ...base, installedPlugins: {}, rateLimited: true })),
     ).toBe(false);

@@ -6,7 +6,7 @@ import {
   type PluginThreadEventPayloads,
   type PluginTurnFailedEvent,
 } from "@get-bb/plugin-sdk";
-import { POOLED_PROVIDER_IDS, renderTip } from "./catalog.js";
+import { renderTip } from "./catalog.js";
 import {
   TIPS_CHANGED_CHANNEL,
   tipsRpcContract,
@@ -306,7 +306,7 @@ export default async function tipsPlugin(bb: BbPluginApi): Promise<void> {
     },
     async reset() {
       await reset();
-      return { ok: true };
+      return { ok: true as const };
     },
   });
 
@@ -440,15 +440,6 @@ export default async function tipsPlugin(bb: BbPluginApi): Promise<void> {
   });
 
   bb.events.on("turn.failed", async (event) => {
-    if (!isRateLimitFailure(event)) return;
-    const providerId =
-      event.rateLimits?.providerId ??
-      (await bb.sdk.threads
-        .get({ threadId: event.threadId })
-        .then((thread) => thread.providerId)
-        .catch(() => null));
-    if (providerId !== null && POOLED_PROVIDER_IDS.includes(providerId)) {
-      await markObserved("rateLimited");
-    }
+    if (isRateLimitFailure(event)) await markObserved("rateLimited");
   });
 }

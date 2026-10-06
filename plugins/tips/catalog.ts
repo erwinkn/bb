@@ -4,7 +4,6 @@ export const ACCOUNT_POOL_PLUGIN_ID = "account-pool";
 export const AUTOMATIONS_PLUGIN_ID = "automations";
 export const BROWSER_AUTOMATION_PLUGIN_ID = "browser-automation";
 export const PROVIDER_USAGE_PLUGIN_ID = "bb--provider-usage";
-export const POOLED_PROVIDER_IDS: readonly string[] = ["claude-code", "codex"];
 
 export interface TipSignals {
   client: TipClient | null;
@@ -15,7 +14,6 @@ export interface TipSignals {
   daysSinceFirstSeen: number;
   threadCount: number;
   availableProviderCount: number;
-  providersUsed: readonly string[];
   installedPlugins: Readonly<Record<string, boolean>>;
   hasFinishedThread: boolean;
   finishedThreadCount: number;
@@ -148,7 +146,6 @@ export const TIP_CATALOG: readonly TipDefinition[] = [
     priority: 120,
     when: (signals) =>
       isInstalled(signals, ACCOUNT_POOL_PLUGIN_ID) &&
-      signals.providersUsed.some((id) => POOLED_PROVIDER_IDS.includes(id)) &&
       (signals.rateLimited || signals.threadCount >= POWER_USER_THREAD_COUNT),
     used: (signals) => isEnabled(signals, ACCOUNT_POOL_PLUGIN_ID),
     boost: (signals) => (signals.recentlyRateLimited ? RATE_LIMIT_BOOST : 0),

@@ -72,7 +72,6 @@ export interface LiveSignals {
   projectHasChildThread: boolean;
   projectHasAutomationThread: boolean;
   waitingThreadCount: number;
-  providersUsed: readonly string[];
   availableProviderCount: number;
   installedPlugins: Readonly<Record<string, boolean>>;
 }
@@ -168,7 +167,6 @@ export function deriveSignals(
     ),
     threadCount: live.threadCount,
     availableProviderCount: live.availableProviderCount,
-    providersUsed: live.providersUsed,
     installedPlugins: live.installedPlugins,
     hasFinishedThread:
       state.observed.finishedThread || live.finishedThreadCount > 0,

@@ -26,7 +26,6 @@ interface Fixture {
   version?: string;
   threadCount?: number;
   finishedThreadCount?: number;
-  providersUsed?: string[];
   plugins?: Record<string, boolean>;
   settings?: Record<string, boolean>;
 }
@@ -41,15 +40,6 @@ async function setup(fixture: Fixture = {}) {
       },
       threads: {
         count: async (args) => {
-          if (args?.groupBy === "provider") {
-            return {
-              total: fixture.threadCount ?? 0,
-              groups: (fixture.providersUsed ?? []).map((key) => ({
-                key,
-                count: 1,
-              })),
-            };
-          }
           return {
             total:
               args?.status === "idle"
@@ -58,7 +48,6 @@ async function setup(fixture: Fixture = {}) {
           };
         },
         list: async () => [],
-        get: async () => makeThreadResponse({ providerId: "claude-code" }),
       },
       providers: { catalog: async () => [] },
       plugins: {
@@ -153,10 +142,9 @@ describe("current tips", () => {
     }
   });
 
-  it("puts Account Pooler first after a Codex rate limit", async () => {
+  it("puts Account Pooler first after a rate limit", async () => {
     const host = await setup({
       ...NEW_USER,
-      providersUsed: ["codex"],
       plugins: { "account-pool": false },
     });
     await host.harness.behavior.emitThreadEvent(
@@ -172,24 +160,14 @@ describe("current tips", () => {
     expect((await host.current())[0]).toBe("account-pool");
   });
 
-  it("ignores rate limits from providers the pool cannot serve", async () => {
+  it("ignores turn failures that are not rate limits", async () => {
     const host = await setup({
       ...NEW_USER,
-      providersUsed: ["codex"],
       plugins: { "account-pool": false },
     });
-    host.harness.sdk.stub("threads.get", async () =>
-      makeThreadResponse({ providerId: "pi" }),
-    );
     await host.harness.behavior.emitThreadEvent(
       "turn.failed",
-      makeTurnFailedEvent({
-        errorInfo: {
-          category: "rate-limit",
-          providerCode: null,
-          httpStatusCode: 429,
-        },
-      }),
+      makeTurnFailedEvent(),
     );
     expect(await host.current()).toEqual(NEW_USER_SET);
   });

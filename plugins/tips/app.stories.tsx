@@ -16,7 +16,6 @@ const STORY_SIGNALS: TipSignals = {
   daysSinceFirstSeen: 30,
   threadCount: 80,
   availableProviderCount: 2,
-  providersUsed: ["claude-code"],
   installedPlugins: {},
   hasFinishedThread: true,
   finishedThreadCount: 40,

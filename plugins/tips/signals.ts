@@ -84,7 +84,6 @@ export async function collectLiveSignals(
     appVersion,
     threadCount,
     finishedThreadCount,
-    providersUsed,
     availableProviderCount,
     installedPlugins,
     hasChildThread,
@@ -106,19 +105,6 @@ export async function collectLiveSignals(
       async (signal) =>
         (await bb.sdk.threads.count({ status: "idle", signal })).total,
       0,
-    ),
-    settle(
-      bb,
-      "providers in use",
-      async (signal) =>
-        (
-          (await bb.sdk.threads.count({ groupBy: "provider", signal }))
-            .groups ?? []
-        )
-          .filter((group) => group.key !== null && group.count > 0)
-          .map((group) => group.key)
-          .filter((key): key is string => key !== null),
-      [],
     ),
     settle(
       bb,
@@ -182,7 +168,6 @@ export async function collectLiveSignals(
     projectHasChildThread,
     projectHasAutomationThread,
     waitingThreadCount,
-    providersUsed,
     availableProviderCount,
     installedPlugins,
   };
