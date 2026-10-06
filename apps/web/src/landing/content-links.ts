@@ -6,14 +6,11 @@ export interface ContentLink {
 export const GUIDE_LINKS: ContentLink[] = [];
 
 export const COMPARE_LINKS: ContentLink[] = [
+  { label: "bb vs Conductor", href: "/compare/conductor-alternatives" },
+  { label: "bb vs Cursor", href: "/compare/cursor-alternative" },
   { label: "bb vs Superset", href: "/compare/superset-alternative" },
-  {
-    label: "Vibe Kanban alternative",
-    href: "/compare/vibe-kanban-alternative",
-  },
-  { label: "Conductor alternatives", href: "/compare/conductor-alternatives" },
-  { label: "T3 Code alternatives", href: "/compare/t3-code-alternatives" },
-  { label: "Cursor alternative", href: "/compare/cursor-alternative" },
+  { label: "bb vs T3 Code", href: "/compare/t3-code-alternatives" },
+  { label: "bb vs Vibe Kanban", href: "/compare/vibe-kanban-alternative" },
 ];
 
 export const CONTENT_PATHS: string[] = [...GUIDE_LINKS, ...COMPARE_LINKS].map(
