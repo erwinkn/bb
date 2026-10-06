@@ -190,7 +190,9 @@ export type NavigateCall =
   | {
       method: "experimental_openFileExternally";
       options: ExperimentalFileOpenOptions;
-    };
+    }
+  | { method: "experimental_openAppRoute"; path: string }
+  | { method: "experimental_runAppCommand"; commandId: string };
 
 export interface ExperimentalFixedTabOpenCall {
   surface: ExperimentalOpenFixedTabOptions<JsonValue>["surface"];
@@ -1571,6 +1573,10 @@ export interface RenderSlotOptions<
   openFilePreview?: (options: ExperimentalFileOpenOptions) => boolean;
   /** Host acceptance for preferred-external file intents. */
   openFileExternally?: (options: ExperimentalFileOpenOptions) => boolean;
+  /** Host acceptance for `experimental_openAppRoute`; omitted → false. */
+  openAppRoute?: (path: string) => boolean;
+  /** Host acceptance for `experimental_runAppCommand`; omitted → false. */
+  runAppCommand?: (commandId: string) => boolean;
   /** Host acceptance for an owner-scoped fixed-tab selection. */
   experimental_openFixedTab?: (call: ExperimentalFixedTabOpenCall) => boolean;
   /** Initial session target visible to `experimental_useFixedTabTarget`. */
@@ -1951,6 +1957,14 @@ export function renderSlot<
         options: fileOptions,
       });
       return options.openFileExternally?.(fileOptions) ?? false;
+    },
+    experimental_openAppRoute(path) {
+      navigateCalls.push({ method: "experimental_openAppRoute", path });
+      return options.openAppRoute?.(path) ?? false;
+    },
+    experimental_runAppCommand(commandId) {
+      navigateCalls.push({ method: "experimental_runAppCommand", commandId });
+      return options.runAppCommand?.(commandId) ?? false;
     },
   };
 

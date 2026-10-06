@@ -151,6 +151,33 @@ describe("PluginHomepageSections", () => {
     expect(screen.getByText("plugin broken crashed")).toBeDefined();
     expect(screen.getByText("fine section body")).toBeDefined();
   });
+
+  it("renders a heading only for sections that declare a title", () => {
+    function Body() {
+      return <div>untitled section body</div>;
+    }
+    setPluginSlotRegistrations(
+      "titled",
+      registrationSet({
+        homepageSections: [{ id: "a", title: "Titled", component: Body }],
+      }),
+    );
+    setPluginSlotRegistrations(
+      "untitled",
+      registrationSet({
+        homepageSections: [{ id: "b", component: Body }],
+      }),
+    );
+    render(
+      <MemoryRouter initialEntries={["/"]}>
+        <PluginHomepageSections />
+      </MemoryRouter>,
+    );
+    expect(
+      screen.getAllByRole("heading").map((heading) => heading.textContent),
+    ).toEqual(["Titled"]);
+    expect(screen.getAllByText("untitled section body")).toHaveLength(2);
+  });
 });
 
 function ThreadDraftViewer({ threadId }: { threadId: string }) {

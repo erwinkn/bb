@@ -425,6 +425,7 @@ export const SURFACE_GROUPS: SurfaceGroup[] = [
           "PluginCommandRegistration",
           "PluginCommandContext",
           "PluginCommandShortcut",
+          "BbNavigate.experimental_runAppCommand",
         ],
         firstParty: ["File Editor"],
       },
@@ -1388,6 +1389,7 @@ export const SURFACE_GROUPS: SurfaceGroup[] = [
           "BbNavigate.openUrl",
           "BbNavigate.experimental_openFilePreview",
           "BbNavigate.experimental_openFileExternally",
+          "BbNavigate.experimental_openAppRoute",
         ],
         firstParty: [
           "Account Pooler [Experimental]",

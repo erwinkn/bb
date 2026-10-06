@@ -691,7 +691,8 @@ frontend bundles re-import and their UI slots remount without a page refresh —
 and replace host worker generations on their next call.
 
 Frontend entries (app.tsx) default-export `definePluginApp` from
-`@get-bb/plugin-sdk/app` and register UI slots: homepageSection (root compose),
+`@get-bb/plugin-sdk/app` and register UI slots: homepageSection (root compose; optional host-rendered
+title, omit it for a section that may render nothing),
 settingsSection (per-plugin settings page below the host-rendered settings
 form; no props in V1, optional host-rendered title),
 navPanel (own sidebar entry + /plugins/<id>/<path>/* route; the remainder
@@ -727,7 +728,9 @@ useBbNavigate (including openUrl(url), which applies the current
 client's in-app/external-browser preference, plus
 experimental_openFilePreview({ target, location }) and
 experimental_openFileExternally({ target, location }) for explicit live
-workspace/host/thread-storage files), and useComposer (one stable handle for
+workspace/host/thread-storage files, experimental_openAppRoute(path) for an
+in-app route such as /settings/mobile, and experimental_runAppCommand(id) for
+a built-in app command such as palette.open or thread.search), and useComposer (one stable handle for
 the bound composer: read its text, mentions, reactive picker selection, scope, layout, run and submit
 state, and why submitting is blocked; replace/update/clear text; insert text
 and mentions at the cursor or end; apply a class-based text effect, lock input,

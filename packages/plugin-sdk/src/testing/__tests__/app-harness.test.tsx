@@ -333,6 +333,29 @@ function FileNavigationProbe() {
   );
 }
 
+function AppRouteAndCommandProbe() {
+  const navigate = useBbNavigate();
+  const [results, setResults] = useState<string>("");
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={() =>
+          setResults(
+            String([
+              navigate.experimental_openAppRoute("/settings/mobile"),
+              navigate.experimental_runAppCommand("palette.open"),
+            ]),
+          )
+        }
+      >
+        Open route and command
+      </button>
+      <output>{results}</output>
+    </div>
+  );
+}
+
 function MalformedFileLinkProbe() {
   return (
     <FileLink
@@ -1712,6 +1735,25 @@ describe("renderSlot", () => {
     expect(slot.inspection.navigateCalls).toEqual([
       { method: "experimental_openFilePreview", options: fileIntent },
       { method: "experimental_openFileExternally", options: fileIntent },
+    ]);
+  });
+
+  it("records app-route and app-command intents with host acceptance", () => {
+    const slot = renderSlot(
+      { component: AppRouteAndCommandProbe },
+      {},
+      {
+        openAppRoute: (path) => path === "/settings/mobile",
+        runAppCommand: () => false,
+      },
+    );
+    fireEvent.click(
+      slot.getByRole("button", { name: "Open route and command" }),
+    );
+    expect(slot.getByRole("status").textContent).toBe("true,false");
+    expect(slot.inspection.navigateCalls).toEqual([
+      { method: "experimental_openAppRoute", path: "/settings/mobile" },
+      { method: "experimental_runAppCommand", commandId: "palette.open" },
     ]);
   });
 

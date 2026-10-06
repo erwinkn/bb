@@ -3745,3 +3745,24 @@ steer, which is recorded by its request and shown at its acceptance.
 Stabilize once message links have shipped and the seq has stayed stable across
 edit-and-rerun, forks and context clears, and decide whether `sourceSeqEnd`
 should remain alongside it.
+
+## In-app routes and app commands (`BbNavigate.experimental_openAppRoute`, `BbNavigate.experimental_runAppCommand`)
+
+`useBbNavigate().experimental_openAppRoute(path)` navigates the current window
+to an in-app route such as `/settings/mobile`, `/settings/plugins/<pluginId>`,
+or `/settings/updates#whats-new`, keeping the query and hash. It returns false
+without navigating unless the path starts with a single `/`, resolves to the
+app's own origin, and contains no backslash or control character; `/api` and
+`/api/*` are refused. `useBbNavigate().experimental_runAppCommand(commandId)`
+dispatches one built-in app command (an `AppCommandId` such as `palette.open`,
+`thread.search`, or `settings.open`) through the same handler chain as its
+keyboard shortcut, with no event target. It returns false for unknown ids,
+plugin command ids, and commands that no mounted handler accepted. The SDK
+frontend harness records both as `navigateCalls` and takes `openAppRoute` /
+`runAppCommand` acceptance options. First consumer: the bundled Tips plugin.
+
+Before stabilization, decide whether routes should be typed destinations
+(settings section, plugin configuration page) instead of raw paths so bb can
+rename routes without breaking plugins, whether app command ids become a public
+versioned vocabulary or an allowlist, whether commands should accept a target
+or surface, and how both behave on mobile and in split panes.

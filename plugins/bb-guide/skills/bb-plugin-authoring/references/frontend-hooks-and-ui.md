@@ -43,7 +43,8 @@ Hooks:
 - `useBbNavigate()` → `{ toThread(id), toProject(id), toPluginPanel(path,
 { subPath?, replace? }?), toCompose({ initialPrompt?, focusPrompt? }?),
 openThreadPanel({ actionId, title?, params? }), openUrl(url),
-experimental_openFilePreview(options), experimental_openFileExternally(options) }`.
+experimental_openFilePreview(options), experimental_openFileExternally(options),
+experimental_openAppRoute(path), experimental_runAppCommand(commandId) }`.
   `toCompose` opens the root compose screen; pass `initialPrompt` to seed the
   composer draft and `focusPrompt: true` to focus it. The panel
   opener opens one of the current plugin's registered `threadPanelAction` tabs
@@ -52,6 +53,11 @@ experimental_openFilePreview(options), experimental_openFileExternally(options) 
   `openUrl` owns HTTP(S) only and returns false for schemes BB
   leaves to normal anchor behavior. The two file methods accept an
   `ExperimentalFileOpenOptions` live-file target.
+  `experimental_openAppRoute` opens a same-origin in-app route such as
+  `/settings/mobile` or `/settings/plugins/<pluginId>#section` and returns
+  false for anything else. `experimental_runAppCommand` runs a built-in app
+  command such as `palette.open` or `thread.search` and returns false for
+  unknown ids or when no handler on screen ran it.
 - `useComposer()` → one stable handle for the composer the calling surface
   belongs to: inside a composer slot, that composer; in a thread's panels,
   that thread's composer; elsewhere, the current route's draft. The same

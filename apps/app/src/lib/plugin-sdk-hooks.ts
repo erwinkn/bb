@@ -30,7 +30,9 @@ import type {
   ExperimentalPluginFixedTabReference,
   JsonValue,
 } from "@get-bb/plugin-sdk";
-import { jsonValueSchema } from "@bb/domain";
+import { appCommandIdSchema, jsonValueSchema } from "@bb/domain";
+import { useAppCommandRunner } from "@/components/commands/AppCommandProvider";
+import { normalizePluginAppRoute } from "@/lib/plugin-app-route";
 import {
   PluginSlotOwnershipContext,
   usePluginId,
@@ -336,6 +338,7 @@ export function useBbNavigate(): BbNavigate {
   const openThreadPanelHandler = usePluginThreadPanelOpenHandler();
   const navigate = useNavigate();
   const appNavigation = useAppNavigationHost();
+  const appCommands = useAppCommandRunner();
   const toThread = useCallback(
     (threadId: string) => {
       void sdk.threads
@@ -412,6 +415,26 @@ export function useBbNavigate(): BbNavigate {
     },
     [appNavigation],
   );
+  const experimental_openAppRoute = useCallback<
+    BbNavigate["experimental_openAppRoute"]
+  >(
+    (path) => {
+      const route = normalizePluginAppRoute(path, window.location.origin);
+      if (route === null) return false;
+      void navigate(route);
+      return true;
+    },
+    [navigate],
+  );
+  const experimental_runAppCommand = useCallback<
+    BbNavigate["experimental_runAppCommand"]
+  >(
+    (commandId) => {
+      const command = appCommandIdSchema.safeParse(commandId);
+      return command.success && appCommands.dispatch(command.data, null);
+    },
+    [appCommands],
+  );
   return useMemo<BbNavigate>(
     () => ({
       toThread,
@@ -421,6 +444,8 @@ export function useBbNavigate(): BbNavigate {
       openThreadPanel,
       experimental_openFileExternally,
       experimental_openFilePreview,
+      experimental_openAppRoute,
+      experimental_runAppCommand,
       openUrl,
     }),
     [
@@ -431,6 +456,8 @@ export function useBbNavigate(): BbNavigate {
       openThreadPanel,
       experimental_openFileExternally,
       experimental_openFilePreview,
+      experimental_openAppRoute,
+      experimental_runAppCommand,
       openUrl,
     ],
   );

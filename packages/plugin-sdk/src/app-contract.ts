@@ -695,7 +695,11 @@ export interface PluginMessageDirectiveProps {
 export interface PluginHomepageSectionRegistration {
   /** Unique within the plugin; letters, digits, `-`, `_`. */
   id: string;
-  title: string;
+  /**
+   * Optional host-rendered section heading. Omit it when the component
+   * renders its own heading or may render nothing, so no empty heading shows.
+   */
+  title?: string;
   component: ComponentType<PluginHomepageSectionProps>;
 }
 
@@ -3393,6 +3397,24 @@ export interface BbNavigate {
   experimental_openFileExternally(
     options: ExperimentalFileOpenOptions,
   ): boolean;
+  /**
+   * Navigate this window to an in-app bb route such as `/settings/mobile`,
+   * `/settings/plugins/<pluginId>`, or `/settings/updates#whats-new`. The
+   * path must start with a single `/` and stay on the app's origin; the
+   * query and hash are kept. Returns false, without navigating, for anything
+   * else (absolute URLs, protocol-relative `//host` paths, backslashes, or
+   * `/api/` routes). Experimental: see docs/api_to_audit.md.
+   */
+  experimental_openAppRoute(path: string): boolean;
+  /**
+   * Run one of bb's own app commands by id, exactly as its keyboard shortcut
+   * or palette row would, e.g. `palette.open` (quick palette),
+   * `thread.search` (thread search) or `settings.open`. Returns false for an
+   * id that is not a built-in app command, or when nothing on the current
+   * screen handled it. Plugin command ids are rejected. Experimental: see
+   * docs/api_to_audit.md.
+   */
+  experimental_runAppCommand(commandId: string): boolean;
 }
 
 // ---------------------------------------------------------------------------

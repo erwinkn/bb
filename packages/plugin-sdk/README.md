@@ -48,6 +48,14 @@ the current host accepted the intent. Targets never infer an ambient workspace.
 The frontend harness records both methods and accepts `openFilePreview` and
 `openFileExternally` behavior options.
 
+`experimental_openAppRoute(path)` opens an in-app bb route such as
+`/settings/mobile` or `/settings/plugins/<pluginId>` (query and hash kept) and
+returns false for anything that is not a same-origin app path.
+`experimental_runAppCommand(commandId)` runs a built-in app command such as
+`palette.open` or `thread.search` as its shortcut would, returning false for
+unknown ids or when nothing handled it. The frontend harness records both and
+accepts `openAppRoute` and `runAppCommand` behavior options.
+
 A nav panel's `fixedTabs` entries must include the containing nav
 panel's `id` as `panelId`; each entry is also a stable reference to that
 plugin's own tab. Give a targeted tab an `experimental_target.validate` type guard, call
