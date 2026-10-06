@@ -777,9 +777,11 @@ while retaining only the text. The message copy button therefore uses the
 Android shell's `copyTextAndImage` bridge method when available. It streams an
 image from the current server into the app cache, using the WebView session
 cookie, and publishes a URI through the existing WebView FileProvider. The
-provider offers message text as an alternate `text/plain` stream. Gboard sees
-an image, while Android text fields can retrieve the message text from the
-same clipboard item. Image-only messages omit the text stream.
+clipboard item contains both the image URI and the message text, and advertises
+both the image MIME type and `text/plain`. The provider also offers message
+text as an alternate `text/plain` stream. Image-capable paste targets can read
+the image, while text fields and keyboards can read the text directly from the
+same item. Image-only messages omit the text and the text MIME type.
 
 Downloads are limited to 35 MB, reject redirects, and expire after 25 seconds
 with 10-second network timeouts. Old clipboard cache files are removed on the
@@ -787,7 +789,9 @@ next copy after 24 hours. Image copy failures fall back to text and explicitly
 report partial success. Both the APK and the served BB web app need this
 change; older peers retain their existing behavior.
 
-Verify by copying a user message containing text and an image, pasting through
-Gboard into a composer, and pasting into a native text field. Also check an
+Verify by copying a user message containing text and an image, checking that
+the clipboard advertises both formats and its first item contains the full
+message text and image URI, pasting through Gboard into a composer, and pasting
+into a native text field. Also check an
 image-only message, ordinary text copy, and an unavailable image. Remove test
 drafts without sending them.

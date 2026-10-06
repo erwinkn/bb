@@ -102,7 +102,7 @@ new file mode 100644
 index 0000000..973f675
 --- /dev/null
 +++ b/android/src/main/java/com/reactnativecommunity/webview/RNCWebViewClipboard.java
-@@ -0,0 +1,192 @@
+@@ -0,0 +1,196 @@
 +package com.reactnativecommunity.webview;
 +
 +import android.content.ClipData;
@@ -246,7 +246,11 @@ index 0000000..973f675
 +            webView.post(() -> {
 +                try {
 +                    checkActive(deadline);
-+                    ClipData clip = new ClipData("BB message", new String[]{mimeType}, new ClipData.Item(uri));
++                    String[] mimeTypes = text.isEmpty()
++                            ? new String[]{mimeType}
++                            : new String[]{mimeType, "text/plain"};
++                    ClipData.Item item = new ClipData.Item(text.isEmpty() ? null : text, null, uri);
++                    ClipData clip = new ClipData("BB message", mimeTypes, item);
 +                    ClipboardManager clipboard = (ClipboardManager) webView.getContext().getSystemService(Context.CLIPBOARD_SERVICE);
 +                    clipboard.setPrimaryClip(clip);
 +                    respond(id, true, "");
