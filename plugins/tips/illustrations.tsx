@@ -118,9 +118,9 @@ export const ILLUSTRATIONS: Record<string, Illustration> = {
   subthreads: (accent) => (
     <>
       <Node cx={8} cy={24} />
-      <Branch from={[12.5, 24]} to={[24, 12]} />
-      <Branch from={[12.5, 24]} to={[24, 24]} />
-      <Branch from={[12.5, 24]} to={[24, 36]} />
+      <Branch start={[12.5, 24]} end={[24, 12]} />
+      <Branch start={[12.5, 24]} end={[24, 24]} />
+      <Branch start={[12.5, 24]} end={[24, 36]} />
       <ProgressBar
         x={24}
         y={12}

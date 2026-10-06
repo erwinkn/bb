@@ -196,12 +196,21 @@ describe("current tips", () => {
   });
 
   it("offers subthreads only in projects that have none yet", async () => {
-    const host = await setup(NEW_USER);
-    await host.harness.behavior.emitThreadEvent("thread.created", {
+    const subthreadCreated = {
       thread: makeThreadResponse({ parentThreadId: "thread-parent" }),
-    });
+    };
+    const fresh = await setup(NEW_USER);
+    await fresh.harness.behavior.emitThreadEvent(
+      "thread.created",
+      subthreadCreated,
+    );
+    expect(await fresh.current("proj_new")).toContain("subthreads");
+    const host = await setup(NEW_USER);
+    await host.harness.behavior.emitThreadEvent(
+      "thread.created",
+      subthreadCreated,
+    );
     expect(await host.current()).not.toContain("subthreads");
-    expect(await host.current("proj_new")).toContain("subthreads");
     const list = await host.listAll();
     expect(list.tips.find((entry) => entry.id === "subthreads")?.status).toBe(
       "not-applicable",
@@ -300,14 +309,14 @@ describe("hiding and turning off", () => {
 });
 
 describe("dismissing and acting", () => {
-  it("dismisses a tip for good and fills its tile with another", async () => {
+  it("dismisses a tip for good and adds another at the top", async () => {
     const host = await setup(NEW_USER);
     expect(await host.current()).toEqual(NEW_USER_SET);
     await host.harness.behavior.callRpc("dismiss", { id: "subthreads" });
     const refilled = await host.current();
     expect(refilled).toHaveLength(3);
     expect(refilled).not.toContain("subthreads");
-    expect(refilled.slice(0, 2)).toEqual(["set-up-for-me", "phone"]);
+    expect(refilled.slice(1)).toEqual(["set-up-for-me", "phone"]);
     expect(host.harness.realtimeSignals).toContainEqual({
       channel: "tips-changed",
       payload: {},

@@ -97,8 +97,8 @@ const PRIMITIVES: readonly (readonly [string, ReactNode])[] = [
     "Node + Branch",
     <g key="branch">
       <Node cx={10} cy={24} />
-      <Branch from={[14.5, 24]} to={[38, 12]} />
-      <Branch from={[14.5, 24]} to={[38, 36]} />
+      <Branch start={[14.5, 24]} end={[38, 12]} />
+      <Branch start={[14.5, 24]} end={[38, 36]} />
     </g>,
   ],
   [

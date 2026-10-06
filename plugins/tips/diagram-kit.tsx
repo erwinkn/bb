@@ -290,15 +290,15 @@ export function Node({
 }
 
 export function Branch({
-  from,
-  to,
+  start,
+  end,
   ...animated
 }: Animated & {
-  from: readonly [number, number];
-  to: readonly [number, number];
+  start: readonly [number, number];
+  end: readonly [number, number];
 }) {
-  const [x1, y1] = from;
-  const [x2, y2] = to;
+  const [x1, y1] = start;
+  const [x2, y2] = end;
   const mid = (x1 + x2) / 2;
   const d =
     y1 === y2
