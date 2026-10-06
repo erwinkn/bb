@@ -287,19 +287,19 @@ export default async function tipsPlugin(bb: BbPluginApi): Promise<void> {
     },
     async hide({ hidden }) {
       await setHidden(hidden);
-      return { ok: true };
+      return { ok: true as const };
     },
     async setEnabled({ enabled }) {
       await settings.experimental_set({ enabled });
-      return { ok: true };
+      return { ok: true as const };
     },
     async dismiss({ id }) {
       await recordTip(id, dismissTip);
-      return { ok: true };
+      return { ok: true as const };
     },
     async act({ id }) {
       await recordTip(id, actOnTip);
-      return { ok: true };
+      return { ok: true as const };
     },
     async list({ client, all }) {
       return listView(client, all);
