@@ -35,6 +35,7 @@ interface GalleryModule {
 
 interface ArtModule {
   TipArt: ComponentType<{ tipId: string; tone: string }>;
+  TipArtStyles: ComponentType;
 }
 
 interface CatalogModule {
@@ -192,11 +193,17 @@ export function Illustrations() {
     <StoryCard labelWidth="160px">
       <StoryRow
         label="every tip"
-        hint="The static illustration each catalog tip shows at the start of its row, in catalog order."
+        hint="Each catalog tip's illustration, in catalog order. Hover or focus one to play the animation its row plays on hover."
       >
         <div className="grid w-[760px] grid-cols-5 gap-x-4 gap-y-6 rounded-xl border border-border bg-background p-6">
+          <art.TipArtStyles />
           {ALL_TIPS.map((tip) => (
-            <div key={tip.id} className="flex flex-col gap-1">
+            <div
+              key={tip.id}
+              tabIndex={0}
+              data-tip-art-trigger=""
+              className="flex flex-col gap-1 rounded-lg p-1 outline-none hover:bg-surface-raised focus-visible:ring-2 focus-visible:ring-ring"
+            >
               <art.TipArt tipId={tip.id} tone={tip.tone} />
               <span className="text-xs font-medium text-foreground">
                 {tip.title}

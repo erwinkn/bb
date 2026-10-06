@@ -8,7 +8,7 @@ import {
 } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import type { TipView } from "./contract.js";
-import { TipArt } from "./tip-art.js";
+import { TipArt, TipArtStyles } from "./tip-art.js";
 
 export interface TipsGalleryProps {
   tips: readonly TipView[];
@@ -62,39 +62,43 @@ export function TipsFeed({
   onActivate,
 }: Pick<TipsGalleryProps, "tips" | "filledId" | "onPreview" | "onActivate">) {
   return (
-    <ul className="overflow-hidden rounded-xl border border-border-hairline bg-background shadow-xs">
-      {tips.map((tip) => (
-        <li
-          key={tip.id}
-          className="border-b border-border-hairline last:border-b-0"
-        >
-          <button
-            type="button"
-            data-tip-id={tip.id}
-            className={cn(
-              "flex w-full items-center gap-4 px-4 py-3 text-left outline-none motion-safe:transition-colors hover:bg-surface-raised focus-visible:bg-surface-raised focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
-              filledId === tip.id && "bg-surface-selected",
-            )}
-            onMouseEnter={() => onPreview(tip.id)}
-            onMouseLeave={() => onPreview(null)}
-            onFocus={() => onPreview(tip.id)}
-            onBlur={() => onPreview(null)}
-            onClick={() => onActivate(tip)}
+    <>
+      <TipArtStyles />
+      <ul className="overflow-hidden rounded-xl border border-border-hairline bg-background shadow-xs">
+        {tips.map((tip) => (
+          <li
+            key={tip.id}
+            className="border-b border-border-hairline last:border-b-0"
           >
-            <TipArt tipId={tip.id} tone={tip.tone} />
-            <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-              <span className="text-sm font-medium text-foreground">
-                {tip.title}
+            <button
+              type="button"
+              data-tip-id={tip.id}
+              data-tip-art-trigger=""
+              className={cn(
+                "flex w-full items-center gap-4 px-4 py-3 text-left outline-none motion-safe:transition-colors hover:bg-surface-raised focus-visible:bg-surface-raised focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
+                filledId === tip.id && "bg-surface-selected",
+              )}
+              onMouseEnter={() => onPreview(tip.id)}
+              onMouseLeave={() => onPreview(null)}
+              onFocus={() => onPreview(tip.id)}
+              onBlur={() => onPreview(null)}
+              onClick={() => onActivate(tip)}
+            >
+              <TipArt tipId={tip.id} tone={tip.tone} />
+              <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+                <span className="text-sm font-medium text-foreground">
+                  {tip.title}
+                </span>
+                <span className="line-clamp-2 text-xs text-muted-foreground">
+                  {tip.body}
+                </span>
+                <span className="sr-only">{actionDescription(tip)}</span>
               </span>
-              <span className="line-clamp-2 text-xs text-muted-foreground">
-                {tip.body}
-              </span>
-              <span className="sr-only">{actionDescription(tip)}</span>
-            </span>
-          </button>
-        </li>
-      ))}
-    </ul>
+            </button>
+          </li>
+        ))}
+      </ul>
+    </>
   );
 }
 
