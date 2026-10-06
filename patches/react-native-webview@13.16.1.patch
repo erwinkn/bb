@@ -102,7 +102,7 @@ new file mode 100644
 index 0000000..973f675
 --- /dev/null
 +++ b/android/src/main/java/com/reactnativecommunity/webview/RNCWebViewClipboard.java
-@@ -0,0 +1,221 @@
+@@ -0,0 +1,215 @@
 +package com.reactnativecommunity.webview;
 +
 +import android.content.ClipData;
@@ -150,14 +150,14 @@ index 0000000..973f675
 +            if (!"request".equals(message.optString("type"))) return false;
 +            JSONObject request = message.getJSONObject("request");
 +            String kind = request.optString("kind");
-+            if (!"clipboard".equals(kind) && !"clipboard-paste".equals(kind)) return false;
++            if (!"clipboard".equals(kind) && !"clipboard-html".equals(kind)) return false;
 +            String id = message.getString("id");
 +            JSONObject payload = request.getJSONObject("payload");
 +            String text = payload.getString("text");
-+            if ("clipboard-paste".equals(kind)) {
-+                String imageName = payload.getString("imageName");
-+                if (id.isEmpty() || id.length() > 64 || text.length() > 100000 || imageName.length() > 512) return false;
-+                webView.post(() -> readPaste(id, text, imageName, sourceUrl));
++            if ("clipboard-html".equals(kind)) {
++                String html = payload.getString("html");
++                if (id.isEmpty() || id.length() > 64 || text.length() > 100000 || html.length() > 1000000) return false;
++                webView.post(() -> copyRichText(id, text, html, sourceUrl));
 +                return true;
 +            }
 +            String imageUrl = payload.getString("imageUrl");
@@ -169,12 +169,13 @@ index 0000000..973f675
 +        }
 +    }
 +
-+    private void readPaste(String id, String text, String imageName, String sourceUrl) {
++    private void copyRichText(String id, String text, String html, String sourceUrl) {
 +        if (destroyed) return;
 +        try {
-+            if (!sameOrigin(new URI(webView.getUrl()), new URI(sourceUrl))) throw new IOException("Paste must be on the current server");
-+            JSONObject result = webView.imagePaste.readClipboard(text, imageName);
-+            respondResult(id, result.toString());
++            if (!sameOrigin(new URI(webView.getUrl()), new URI(sourceUrl))) throw new IOException("Copy must be on the current server");
++            ClipboardManager clipboard = (ClipboardManager) webView.getContext().getSystemService(Context.CLIPBOARD_SERVICE);
++            clipboard.setPrimaryClip(ClipData.newHtmlText("BB message", text, html));
++            respond(id, true, "");
 +        } catch (Exception error) {
 +            respond(id, false, error.getMessage());
 +        }
@@ -271,7 +272,7 @@ index 0000000..973f675
 +                    ClipData clip = new ClipData("BB message", mimeTypes, item);
 +                    ClipboardManager clipboard = (ClipboardManager) webView.getContext().getSystemService(Context.CLIPBOARD_SERVICE);
 +                    clipboard.setPrimaryClip(clip);
-+                    respondResult(id, "{copied:true,imageName:" + JSONObject.quote(completed.getName()) + "}");
++                    respond(id, true, "");
 +                } catch (Exception error) {
 +                    completed.delete();
 +                    new File(completed.getPath() + ".txt").delete();
@@ -299,13 +300,6 @@ index 0000000..973f675
 +
 +    private void checkActive(long deadline) throws IOException {
 +        if (destroyed || SystemClock.elapsedRealtime() >= deadline) throw new IOException("Image copy expired");
-+    }
-+
-+    private void respondResult(String id, String result) {
-+        webView.post(() -> {
-+            if (!destroyed) webView.evaluateJavascript("(function(){var n=window.bb&&window.bb.native;if(n&&n.__receive)n.__receive({type:'response',id:"
-+                    + JSONObject.quote(id) + ",response:{ok:true,result:" + result + "}});})()", null);
-+        });
 +    }
 +
 +    private void respond(String id, boolean copied, String error) {
@@ -385,12 +379,9 @@ new file mode 100644
 index 0000000..19400bf
 --- /dev/null
 +++ b/android/src/main/java/com/reactnativecommunity/webview/RNCWebViewImagePaste.java
-@@ -0,0 +1,279 @@
+@@ -0,0 +1,248 @@
 +package com.reactnativecommunity.webview;
 +
-+import android.content.ClipData;
-+import android.content.ClipboardManager;
-+import android.content.Context;
 +import android.content.ContentResolver;
 +import android.content.res.AssetFileDescriptor;
 +import android.database.Cursor;
@@ -461,52 +452,24 @@ index 0000000..19400bf
 +        });
 +    }
 +
-+    JSONObject readClipboard(String text, String imageName) throws Exception {
-+        JSONObject none = new JSONObject().put("kind", "none");
-+        ClipboardManager clipboard = (ClipboardManager) webView.getContext().getSystemService(Context.CLIPBOARD_SERVICE);
-+        ClipData clip = clipboard.getPrimaryClip();
-+        if (clip == null || clip.getItemCount() != 1 || !clip.getDescription().hasMimeType("image/*")) return none;
-+        ClipData.Item item = clip.getItemAt(0);
-+        Uri uri = item.getUri();
-+        if (uri == null || !"content".equals(uri.getScheme())
-+                || !(webView.getContext().getPackageName() + ".fileprovider").equals(uri.getAuthority())
-+                || uri.getPath() == null || !uri.getPath().startsWith("/bb_clipboard/")
-+                || item.getText() == null || item.getText().length() == 0) return none;
-+        String copiedText = item.getText().toString();
-+        if (!imageName.isEmpty()) {
-+            return imageName.equals(uri.getLastPathSegment())
-+                    ? new JSONObject().put("kind", "text").put("text", copiedText) : none;
-+        }
-+        if (!copiedText.equals(text)) return none;
-+        Transfer transfer = prepare(new InputContentInfoCompat(uri, clip.getDescription(), null), false);
-+        return transfer == null ? none : new JSONObject().put("kind", "image")
-+                .put("id", transfer.id).put("url", transfer.url);
-+    }
-+
-+    private Transfer prepare(InputContentInfoCompat content, boolean granted) {
++    private void receive(InputContentInfoCompat content, boolean granted) {
 +        if (destroyed) {
 +            if (granted) content.releasePermission();
-+            return null;
++            return;
 +        }
 +        Uri page = Uri.parse(webView.getUrl() == null ? "" : webView.getUrl());
 +        if ((!"https".equals(page.getScheme()) && !"http".equals(page.getScheme()))
 +                || transfers.size() >= 4) {
 +            if (granted) content.releasePermission();
-+            return null;
++            return;
 +        }
 +        String id = UUID.randomUUID().toString();
 +        String url = page.buildUpon().path(PATH + id).clearQuery().fragment(null).build().toString();
 +        Transfer transfer = new Transfer(id, url, content, granted);
 +        transfers.put(url, transfer);
 +        webView.postDelayed(transfer.expire, 30000);
-+        return transfer;
-+    }
-+
-+    private void receive(InputContentInfoCompat content, boolean granted) {
-+        Transfer transfer = prepare(content, granted);
-+        if (transfer == null) return;
 +        String begin = "(function(){var n=window.bb&&window.bb.native;return !!(n&&n.__beginImagePaste&&n.__beginImagePaste("
-+                + JSONObject.quote(transfer.id) + "," + JSONObject.quote(transfer.url) + "));})()";
++                + JSONObject.quote(id) + "," + JSONObject.quote(url) + "));})()";
 +        webView.evaluateJavascript(begin, accepted -> {
 +            if (!"true".equals(accepted)) transfer.complete(null);
 +        });
