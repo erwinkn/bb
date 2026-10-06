@@ -277,6 +277,44 @@ function dioramaLayout(variant: DioramaVariant) {
   };
 }
 
+function FloatingLayout(state: TipsPageState) {
+  return (
+    <section aria-label="Tips" className="mt-28 flex flex-col gap-1.5">
+      <DioramaStyles />
+      <ul className="grid grid-cols-3 gap-3">
+        {state.tips.map((tip) => (
+          <li key={tip.id}>
+            <button
+              type="button"
+              data-tip-id={tip.id}
+              className={cn(
+                "group flex h-full w-full flex-col rounded-xl pb-3 text-left outline-none motion-safe:transition-colors hover:bg-surface-raised focus-visible:bg-surface-raised focus-visible:ring-2 focus-visible:ring-ring",
+                state.filledId === tip.id && "bg-surface-selected",
+              )}
+              onMouseEnter={() => state.setPreviewId(tip.id)}
+              onMouseLeave={() => state.setPreviewId(null)}
+              onFocus={() => state.setPreviewId(tip.id)}
+              onBlur={() => state.setPreviewId(null)}
+              onClick={() => state.activate(tip)}
+            >
+              <TipDiorama tipId={tip.id} variant="float" />
+              <span className="flex flex-col gap-1 px-3 pt-2">
+                <span className="text-sm font-medium text-foreground">
+                  {tip.title}
+                </span>
+                <span className="line-clamp-3 text-xs text-muted-foreground">
+                  {tip.body}
+                </span>
+              </span>
+            </button>
+          </li>
+        ))}
+      </ul>
+      <StoryTipsFooter state={state} />
+    </section>
+  );
+}
+
 const PaperLayout = dioramaLayout("paper");
 const GlossyLayout = dioramaLayout("glossy");
 
@@ -329,3 +367,14 @@ export function GlossyDiorama() {
   );
 }
 GlossyDiorama.storyName = "B Glossy objects";
+
+export function FloatingDioramas() {
+  return (
+    <LayoutStory
+      layout={FloatingLayout}
+      catalogTips={DIORAMA_TIPS}
+      hint="Exploration C: no card chrome. Each tip is a small neutral object standing on the page with a soft contact shadow, title and body beneath; the whole column is the button. Objects are still at rest and play a short settle with light parallax only while that tip is hovered or focused; static under reduced motion."
+    />
+  );
+}
+FloatingDioramas.storyName = "C · Floating dioramas";

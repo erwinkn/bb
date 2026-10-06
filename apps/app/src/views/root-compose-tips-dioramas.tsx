@@ -7,7 +7,7 @@ import {
 } from "react";
 import { cn } from "@bb/shared-ui/lib/utils";
 
-export type DioramaVariant = "paper" | "glossy";
+export type DioramaVariant = "paper" | "glossy" | "float";
 
 const DIORAMA_CSS = `
 .tips-dio {
@@ -24,6 +24,7 @@ const DIORAMA_CSS = `
   --dio-object-deep: color-mix(in oklch, var(--ink) 17%, var(--canvas));
   --dio-body: color-mix(in oklch, var(--ink) 80%, var(--canvas));
   --dio-line: color-mix(in oklch, var(--ink) 22%, var(--canvas));
+  --dio-contact: color-mix(in oklab, var(--ink) 22%, transparent);
 }
 .dark .tips-dio {
   --dio-shadow: color-mix(in oklab, var(--canvas) 88%, transparent);
@@ -39,6 +40,7 @@ const DIORAMA_CSS = `
   --dio-object-deep: color-mix(in oklch, var(--ink) 16%, var(--canvas));
   --dio-body: color-mix(in oklch, var(--ink) 10%, var(--canvas));
   --dio-line: color-mix(in oklch, var(--ink) 52%, var(--canvas));
+  --dio-contact: var(--shadow-color);
 }
 .tips-dio [data-depth="1.5"] { --depth: 1.5; }
 .tips-dio [data-depth="2"] { --depth: 2; }
@@ -55,19 +57,29 @@ const DIORAMA_CSS = `
     transform: translate(calc(var(--dx, 0) * var(--depth) * 1px), calc(var(--dy, 0) * var(--depth) * 1px));
     transition: transform 500ms cubic-bezier(0.2, 0.8, 0.2, 1);
   }
-  .tips-dio [data-anim="breathe"] { animation: dio-breathe 5s ease-in-out infinite; }
-  .tips-dio [data-anim="bob"] { animation: dio-bob 6s ease-in-out infinite; }
-  .tips-dio [data-anim="sway"] { animation: dio-sway 7s ease-in-out infinite; transform-origin: 50% 100%; }
-  .tips-dio [data-anim="notify"] { animation: dio-notify 8s ease-in-out infinite; }
-  .tips-dio [data-anim="letter"] { animation: dio-letter 9s ease-in-out infinite; }
-  .tips-dio [data-anim="pane"] { animation: dio-pane 6s ease-in-out infinite; }
-  .tips-dio [data-anim="knob"] { animation: dio-knob 11s ease-in-out infinite; }
-  .tips-dio [data-anim="cursor"] { animation: dio-cursor 7s ease-in-out infinite; }
-  .tips-dio [data-anim="ripple"] { animation: dio-ripple 7s ease-out infinite; }
+  .tips-dio[data-mode="ambient"] [data-anim="breathe"] { animation: dio-breathe 5s ease-in-out infinite; }
+  .tips-dio[data-mode="ambient"] [data-anim="bob"] { animation: dio-bob 6s ease-in-out infinite; }
+  .tips-dio[data-mode="ambient"] [data-anim="sway"] { animation: dio-sway 7s ease-in-out infinite; transform-origin: 50% 100%; }
+  .tips-dio[data-mode="ambient"] [data-anim="notify"] { animation: dio-notify 8s ease-in-out infinite; }
+  .tips-dio[data-mode="ambient"] [data-anim="letter"] { animation: dio-letter 9s ease-in-out infinite; }
+  .tips-dio[data-mode="ambient"] [data-anim="pane"] { animation: dio-pane 6s ease-in-out infinite; }
+  .tips-dio[data-mode="ambient"] [data-anim="knob"] { animation: dio-knob 11s ease-in-out infinite; }
+  .tips-dio[data-mode="ambient"] [data-anim="cursor"] { animation: dio-cursor 7s ease-in-out infinite; }
+  .tips-dio[data-mode="ambient"] [data-anim="ripple"] { animation: dio-ripple 7s ease-out infinite; }
   .tips-dio [data-fan] { transition: transform 600ms cubic-bezier(0.2, 0.8, 0.2, 1); }
   .group:hover .tips-dio [data-fan], .group:focus-visible .tips-dio [data-fan] {
     transform: rotate(var(--fan-open)) translateY(-3px);
   }
+}
+@media (prefers-reduced-motion: no-preference) {
+  .group:hover .tips-dio[data-mode="hover"] [data-anim],
+  .group:focus-visible .tips-dio[data-mode="hover"] [data-anim] {
+    animation: dio-settle 1.2s cubic-bezier(0.2, 0.8, 0.2, 1) 1 both;
+  }
+}
+@keyframes dio-settle {
+  from { transform: translateY(5px) scale(0.97); opacity: 0.55; }
+  to { transform: none; opacity: 1; }
 }
 @keyframes dio-breathe { 0%, 100% { opacity: 0.6; } 50% { opacity: 1; } }
 @keyframes dio-bob { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-2px); } }
@@ -114,9 +126,22 @@ const SHEET: Record<DioramaVariant, CSSProperties> = {
     boxShadow:
       "inset 0 1px 0 var(--dio-hl), inset 0 -2px 3px var(--dio-shadow-soft), 0 8px 12px -6px var(--dio-shadow), 0 1px 2px var(--dio-shadow-soft)",
   },
+  float: {
+    background:
+      "linear-gradient(180deg, color-mix(in oklab, var(--dio-hl) 55%, transparent) 0%, transparent 40%), linear-gradient(180deg, var(--dio-object), var(--dio-object-deep))",
+    borderRadius: 7,
+    boxShadow:
+      "inset 0 1px 0 color-mix(in oklab, var(--dio-hl) 60%, transparent), inset 0 -1px 2px var(--dio-shadow-soft), 0 1px 1.5px var(--dio-shadow-soft)",
+  },
 };
 
+const NEUTRAL_ACCENT =
+  "linear-gradient(180deg, color-mix(in oklch, var(--ink) 28%, var(--canvas)), color-mix(in oklch, var(--ink) 46%, var(--canvas)))";
+
 function accent(variant: DioramaVariant, token: string): string {
+  if (variant === "float" && token !== "--timeline-accent") {
+    return NEUTRAL_ACCENT;
+  }
   return variant === "paper"
     ? `color-mix(in oklab, var(${token}) 62%, var(--dio-paper))`
     : `linear-gradient(180deg, color-mix(in oklab, var(${token}) 55%, var(--canvas)), var(${token}))`;
@@ -184,21 +209,42 @@ function Stage({
   const background =
     variant === "paper"
       ? "repeating-linear-gradient(115deg, transparent 0 3px, color-mix(in oklab, var(--ink) 2.5%, transparent) 3px 4px), linear-gradient(180deg, var(--dio-kraft), var(--dio-kraft-deep))"
-      : "radial-gradient(120% 95% at 50% -15%, var(--dio-stage-top), var(--dio-stage-floor))";
+      : variant === "glossy"
+        ? "radial-gradient(120% 95% at 50% -15%, var(--dio-stage-top), var(--dio-stage-floor))"
+        : undefined;
   return (
     <div
       ref={ref}
       aria-hidden
-      className="tips-dio relative h-28 w-full overflow-hidden border-b border-border-hairline"
+      data-mode={variant === "float" ? "hover" : "ambient"}
+      className={cn(
+        "tips-dio relative h-28 w-full",
+        variant !== "float" &&
+          "overflow-hidden border-b border-border-hairline",
+      )}
       style={{ background }}
       onPointerMove={move}
       onPointerLeave={leave}
     >
-      {variant === "paper" ? <PaperBackdrop /> : <GlossyBackdrop />}
+      {variant === "paper" ? <PaperBackdrop /> : null}
+      {variant === "glossy" ? <GlossyBackdrop /> : null}
+      {variant === "float" ? <ContactShadow /> : null}
       <div className="absolute left-1/2 top-0 h-28 w-[220px] -translate-x-1/2">
         {children}
       </div>
     </div>
+  );
+}
+
+function ContactShadow() {
+  return (
+    <span
+      className="absolute bottom-[4px] left-1/2 h-[14px] w-[170px] -translate-x-1/2 rounded-[50%]"
+      style={{
+        background:
+          "radial-gradient(closest-side, var(--dio-contact), transparent)",
+      }}
+    />
   );
 }
 
@@ -321,7 +367,7 @@ function Toggle({ variant, on }: { variant: DioramaVariant; on: boolean }) {
       style={{
         background: on ? accent(variant, "--success") : "var(--dio-line)",
         boxShadow:
-          variant === "glossy"
+          variant !== "paper"
             ? "inset 0 1px 2px var(--dio-shadow)"
             : "inset 0.5px 1px 0 var(--dio-shadow-soft)",
       }}
@@ -331,7 +377,7 @@ function Toggle({ variant, on }: { variant: DioramaVariant; on: boolean }) {
         style={{
           left: on ? 10 : 2,
           background:
-            variant === "glossy"
+            variant !== "paper"
               ? "radial-gradient(circle at 35% 30%, var(--dio-hl), var(--dio-object) 60%, var(--dio-object-deep))"
               : "var(--dio-paper)",
           boxShadow: "0 1px 1.5px var(--dio-shadow)",
@@ -364,11 +410,11 @@ function ControlPanel({ variant }: { variant: DioramaVariant }) {
             className="relative block size-[34px] rounded-full"
             style={{
               background:
-                variant === "glossy"
+                variant !== "paper"
                   ? "radial-gradient(circle at 35% 30%, var(--dio-hl), var(--dio-object) 55%, var(--dio-object-deep))"
                   : "var(--dio-paper)",
               boxShadow:
-                variant === "glossy"
+                variant !== "paper"
                   ? "0 4px 6px -2px var(--dio-shadow), inset 0 -2px 3px var(--dio-shadow-soft)"
                   : "0 0 0 0.5px var(--dio-paper-edge), 1px 2px 0 var(--dio-shadow-soft)",
             }}
@@ -390,7 +436,7 @@ function ControlPanel({ variant }: { variant: DioramaVariant }) {
 }
 
 function PhoneOnStand({ variant }: { variant: DioramaVariant }) {
-  const glossy = variant === "glossy";
+  const glossy = variant !== "paper";
   return (
     <>
       <div data-depth="3" className="absolute inset-0">
@@ -445,7 +491,7 @@ function PhoneOnStand({ variant }: { variant: DioramaVariant }) {
               <Dot variant={variant} token="--attention" size={4} />
               <Bar width={20} />
             </div>
-            {glossy ? (
+            {variant === "glossy" ? (
               <span
                 className="pointer-events-none absolute inset-0"
                 style={{
@@ -482,7 +528,7 @@ function Monitor({ variant }: { variant: DioramaVariant }) {
           style={{
             ...SHEET[variant],
             background:
-              variant === "glossy"
+              variant !== "paper"
                 ? "linear-gradient(180deg, var(--dio-hl) 0%, transparent 30%), var(--dio-body)"
                 : "var(--dio-paper)",
           }}
@@ -494,9 +540,9 @@ function Monitor({ variant }: { variant: DioramaVariant }) {
               className="flex flex-1 flex-col gap-1 p-1"
               style={{
                 animationDelay: `${index * 0.8}s`,
-                borderRadius: variant === "glossy" ? 3 : 1,
+                borderRadius: variant !== "paper" ? 3 : 1,
                 background:
-                  variant === "glossy"
+                  variant !== "paper"
                     ? "linear-gradient(180deg, var(--dio-object), var(--dio-object-deep))"
                     : "color-mix(in oklch, var(--ink) 4%, var(--dio-paper))",
                 boxShadow:
@@ -568,9 +614,11 @@ function MailSlot({ variant }: { variant: DioramaVariant }) {
           style={{
             ...SHEET[variant],
             background:
-              variant === "glossy"
-                ? "linear-gradient(180deg, var(--dio-hl), transparent 50%), linear-gradient(180deg, color-mix(in oklab, var(--warning) 30%, var(--dio-object)), color-mix(in oklab, var(--warning) 45%, var(--dio-object-deep)))"
-                : "color-mix(in oklab, var(--warning) 24%, var(--dio-paper))",
+              variant === "float"
+                ? SHEET.float.background
+                : variant === "glossy"
+                  ? "linear-gradient(180deg, var(--dio-hl), transparent 50%), linear-gradient(180deg, color-mix(in oklab, var(--warning) 30%, var(--dio-object)), color-mix(in oklab, var(--warning) 45%, var(--dio-object-deep)))"
+                  : "color-mix(in oklab, var(--warning) 24%, var(--dio-paper))",
           }}
         >
           <span
@@ -614,6 +662,7 @@ function BrowserWindow({ variant }: { variant: DioramaVariant }) {
           />
         </div>
         <span
+          hidden={variant === "float"}
           className="absolute right-[8px] top-[26px] rounded-sm px-1 text-2xs leading-3"
           style={{
             background: accent(variant, "--destructive"),
@@ -624,6 +673,7 @@ function BrowserWindow({ variant }: { variant: DioramaVariant }) {
         </span>
         <div className="absolute left-[18px] top-[56px]">
           <span
+            hidden={variant === "float"}
             data-anim="ripple"
             className="absolute left-[-6px] top-[-6px] block size-[14px] rounded-full"
             style={{
