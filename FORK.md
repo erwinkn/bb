@@ -13,6 +13,19 @@ This clone builds `bb-app` from source so the live BB can run patched code.
 Build output goes to `.fork-build/`, which is listed in `.git/info/exclude`
 (local only, never committed).
 
+## Working in the fork
+
+- `~/Code/bb` is the one main checkout. Work there, on branch `erwin`. Put
+  extra worktrees under `.fork-build/`, never under `/tmp`.
+- `erwin` tracks `origin/erwin` on `github.com/erwinkn/bb`.
+- Workers commit locally and never push. The coordinator pushes after a worker
+  reports. After a rebase, that push is
+  `git push --force-with-lease origin erwin`.
+- To move to a new upstream release, rebase `erwin` onto its tag (see
+  [Upgrade](#upgrade-the-fork-to-a-new-upstream-release)). Never merge
+  upstream into `erwin`; the branch stays "a tag plus our commits".
+- Never push to `upstream`, and never open PRs or issues there.
+
 ## Patches
 
 Each patch is one commit on `erwin`, so a rebase conflict names the patch it
