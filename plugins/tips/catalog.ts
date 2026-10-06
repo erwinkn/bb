@@ -30,6 +30,7 @@ export interface TipSignals {
 
 export interface TipDefinition {
   id: string;
+  icon: string;
   title: string;
   body: string;
   action: TipAction;
@@ -118,6 +119,7 @@ function tip(
 export const TIP_CATALOG: readonly TipDefinition[] = [
   tip({
     id: "whats-new",
+    icon: "News01",
     title: "What's new in v{version}",
     body: "See what changed in this update.",
     action: {
@@ -136,6 +138,7 @@ export const TIP_CATALOG: readonly TipDefinition[] = [
   }),
   tip({
     id: "account-pool",
+    icon: "Layers",
     title: "Keep working through usage limits",
     body: "When an account hits its limit, Account Pooler moves the thread to another one you own.",
     action: {
@@ -152,6 +155,7 @@ export const TIP_CATALOG: readonly TipDefinition[] = [
   }),
   tip({
     id: "subthreads",
+    icon: "GitBranch",
     title: "Run work in parallel",
     body: "Ask bb to try three approaches at once in subthreads, or to have one review this work.",
     action: {
@@ -166,6 +170,7 @@ export const TIP_CATALOG: readonly TipDefinition[] = [
   }),
   tip({
     id: "set-up-for-me",
+    icon: "SlidersHorizontal",
     title: "Ask bb to set things up",
     body: "bb can change its own settings, add machines, and configure providers when you ask.",
     action: {
@@ -179,6 +184,7 @@ export const TIP_CATALOG: readonly TipDefinition[] = [
   }),
   tip({
     id: "phone",
+    icon: "Smartphone",
     title: "Check on your agents from your phone",
     body: "The bb mobile app lets you follow threads and answer questions away from your desk.",
     action: { kind: "route", label: "Get the app", path: "/settings/mobile" },
@@ -193,6 +199,7 @@ export const TIP_CATALOG: readonly TipDefinition[] = [
   }),
   tip({
     id: "browser-automation",
+    icon: "Globe",
     title: "Let the agent test your app",
     body: "Your agent can turn on Browser Automation, click through your app, and report what breaks.",
     action: {
@@ -210,6 +217,7 @@ export const TIP_CATALOG: readonly TipDefinition[] = [
   }),
   tip({
     id: "build-plugin",
+    icon: "Puzzle",
     title: "Ask the agent to build you a tool",
     body: "Your agent can write bb plugins for you, from a dashboard page to a new panel or command.",
     action: {
@@ -223,6 +231,7 @@ export const TIP_CATALOG: readonly TipDefinition[] = [
   }),
   tip({
     id: "open-threads-that-need-me",
+    icon: "Columns2",
     title: "See every thread that needs you",
     body: "Ask bb to open each thread that is waiting on you side by side in split panes.",
     action: {
@@ -239,6 +248,7 @@ export const TIP_CATALOG: readonly TipDefinition[] = [
   }),
   tip({
     id: "morning-digest",
+    icon: "Mail",
     title: "Get a morning email digest",
     body: "An automation can read your inbox in bb's browser each morning and send you a short digest.",
     action: {
@@ -256,6 +266,7 @@ export const TIP_CATALOG: readonly TipDefinition[] = [
   }),
   tip({
     id: "decision-buttons",
+    icon: "CircleCheck",
     title: "Turn decisions into buttons",
     body: "Ask the agent for a plugin that shows the choices it needs from you as one-click buttons.",
     action: {
@@ -269,6 +280,7 @@ export const TIP_CATALOG: readonly TipDefinition[] = [
   }),
   tip({
     id: "automations",
+    icon: "TimeSchedule",
     title: "Run a prompt on a schedule",
     body: "Ask the agent to turn any prompt into an automation that runs every morning or every hour.",
     action: {
@@ -284,6 +296,7 @@ export const TIP_CATALOG: readonly TipDefinition[] = [
   }),
   tip({
     id: "queue-or-steer",
+    icon: "ListEnd",
     title: "Add to a running turn",
     body: "While the agent works, steer to change course now or queue a follow-up for when it finishes.",
     action: {
@@ -297,6 +310,7 @@ export const TIP_CATALOG: readonly TipDefinition[] = [
   }),
   tip({
     id: "thread-search",
+    icon: "Search",
     title: "Jump to any thread",
     body: "Press {searchKeys} to search your threads.",
     action: {
@@ -310,6 +324,7 @@ export const TIP_CATALOG: readonly TipDefinition[] = [
   }),
   tip({
     id: "command-palette",
+    icon: "Zap",
     title: "Do anything from the keyboard",
     body: "Press {paletteKeys} to search bb's commands and settings.",
     action: {
@@ -323,6 +338,7 @@ export const TIP_CATALOG: readonly TipDefinition[] = [
   }),
   tip({
     id: "provider-usage",
+    icon: "ChartColumn",
     title: "See your usage across providers",
     body: "Provider usage shows how much of each account's limits you have used and when they reset.",
     action: {
@@ -361,6 +377,7 @@ export function renderTip(
 ): TipView {
   return {
     id: definition.id,
+    icon: definition.icon,
     title: fillTemplate(definition.title, signals),
     body: fillTemplate(definition.body, signals),
     action: definition.action,

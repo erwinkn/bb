@@ -37,6 +37,7 @@ export type TipAction = z.infer<typeof tipActionSchema>;
 export const tipViewSchema = z
   .object({
     id: z.string().min(1),
+    icon: z.string().min(1),
     title: z.string().min(1),
     body: z.string().min(1),
     action: tipActionSchema,

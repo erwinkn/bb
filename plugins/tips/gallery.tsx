@@ -58,7 +58,7 @@ function TipsMenu({
   );
 }
 
-export function TipsFooter({
+function TipsFooter({
   notice,
   onMore,
   onHide,
@@ -88,12 +88,18 @@ export function TipsFooter({
   );
 }
 
-export const TIP_CARD_CLASS =
-  "flex h-full w-full flex-col gap-1 rounded-lg px-4 py-3.5 text-left outline-none hover:bg-state-hover focus-visible:bg-state-hover focus-visible:ring-2 focus-visible:ring-ring";
+const TIP_CARD_CLASS =
+  "flex h-full w-full flex-col gap-1 rounded-xl border border-border-hairline bg-surface-raised-solid px-4 pb-4 pt-3.5 text-left shadow-xs outline-none motion-safe:transition-shadow hover:shadow-sm focus-visible:shadow-sm focus-visible:ring-2 focus-visible:ring-ring";
 
-export function TipCardText({ tip }: { tip: TipView }) {
+function TipCardText({ tip }: { tip: TipView }) {
   return (
     <>
+      <span
+        aria-hidden
+        className="mb-2 flex size-8 items-center justify-center rounded-lg bg-muted text-foreground"
+      >
+        <Icon name={tip.icon} className="size-4" />
+      </span>
       <span className="text-sm font-medium text-foreground">{tip.title}</span>
       <span className="line-clamp-3 text-xs text-muted-foreground">
         {tip.body}
@@ -118,7 +124,6 @@ export function TipsGrid({
             data-tip-id={tip.id}
             className={cn(
               TIP_CARD_CLASS,
-              "border border-border-hairline",
               filledId === tip.id &&
                 "border-surface-selected-border bg-surface-selected",
             )}
@@ -136,7 +141,7 @@ export function TipsGrid({
   );
 }
 
-export const TIPS_SECTION_CLASS = "mt-6 flex flex-col gap-1.5";
+const TIPS_SECTION_CLASS = "mt-6 flex flex-col gap-1.5";
 
 export function TipsGallery({
   tips,

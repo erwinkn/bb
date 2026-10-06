@@ -1,5 +1,4 @@
 import { useState, type ComponentType, type ReactNode } from "react";
-import { cn } from "@bb/shared-ui/lib/utils";
 import { StoryCard, StoryRow } from "../../.ladle/story-card";
 import { StoryComposer } from "./mobile-home-story-fixtures";
 
@@ -12,6 +11,7 @@ type StoryTipAction =
 
 interface StoryTip {
   id: string;
+  icon: string;
   title: string;
   body: string;
   action: StoryTipAction;
@@ -33,10 +33,6 @@ interface GalleryModule {
       onActivate(tip: StoryTip): void;
     }
   >;
-  TipsFooter: ComponentType<ControlsProps>;
-  TipCardText: ComponentType<{ tip: StoryTip }>;
-  TIP_CARD_CLASS: string;
-  TIPS_SECTION_CLASS: string;
 }
 
 interface CatalogModule {
@@ -170,40 +166,6 @@ function ControlLayout(state: TipsPageState) {
   );
 }
 
-function BorderlessLayout(state: TipsPageState) {
-  return (
-    <section aria-label="Tips" className={gallery.TIPS_SECTION_CLASS}>
-      <ul className="grid grid-cols-3 divide-x divide-border-hairline">
-        {state.tips.map((tip) => (
-          <li key={tip.id} className="px-1.5">
-            <button
-              type="button"
-              data-tip-id={tip.id}
-              className={cn(
-                gallery.TIP_CARD_CLASS,
-                state.filledId === tip.id && "bg-surface-selected",
-              )}
-              onMouseEnter={() => state.setPreviewId(tip.id)}
-              onMouseLeave={() => state.setPreviewId(null)}
-              onFocus={() => state.setPreviewId(tip.id)}
-              onBlur={() => state.setPreviewId(null)}
-              onClick={() => state.activate(tip)}
-            >
-              <gallery.TipCardText tip={tip} />
-            </button>
-          </li>
-        ))}
-      </ul>
-      <gallery.TipsFooter
-        notice={state.notice}
-        onMore={state.more}
-        onHide={() => {}}
-        onTurnOff={() => {}}
-      />
-    </section>
-  );
-}
-
 function LayoutStory({
   layout,
   hint,
@@ -224,18 +186,8 @@ export function Control() {
   return (
     <LayoutStory
       layout={ControlLayout}
-      hint="Production layout: three bordered text-only cards under the composer, with the status line, More ideas, and the menu in a slim row below them. Hover a prompt card to preview its prompt as the placeholder; click to fill the composer."
+      hint="Production layout: three raised cards with an icon chip, title, and body under the composer, with the status line, More ideas, and the menu in a slim row below them. Hover a prompt card to preview its prompt as the placeholder; click to fill the composer."
     />
   );
 }
 Control.storyName = "Control (production)";
-
-export function TextOnlyBorderless() {
-  return (
-    <LayoutStory
-      layout={BorderlessLayout}
-      hint="Exploration: the same text-only cards with no border or background at rest, hairline dividers between columns, and a fill only on hover or focus."
-    />
-  );
-}
-TextOnlyBorderless.storyName = "Text-only borderless";
