@@ -141,7 +141,7 @@ export function TipsGrid({
   );
 }
 
-const TIPS_SECTION_CLASS = "mt-6 flex flex-col gap-1.5";
+const TIPS_SECTION_CLASS = "mt-28 flex flex-col gap-1.5";
 
 export function TipsGallery({
   tips,
@@ -179,7 +179,7 @@ export function TipsHiddenNotice({
   onUndo: () => void;
 }) {
   return (
-    <p role="status" className="mt-6 text-xs text-muted-foreground">
+    <p role="status" className="mt-28 text-xs text-muted-foreground">
       {message}{" "}
       <button
         type="button"
