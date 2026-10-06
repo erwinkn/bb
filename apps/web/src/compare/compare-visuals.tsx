@@ -1088,7 +1088,7 @@ export function PlansVisual() {
     <div
       className="cmp-plans"
       role="img"
-      aria-label="Claude Code, Codex, and Cursor running in bb on your own Claude, ChatGPT, and Cursor plans. When your work Claude account reaches its limit, the thread continues on your personal account."
+      aria-label="Claude Code, Codex, and Cursor running in bb on your own Claude, ChatGPT, and Cursor plans. When one Claude account reaches its limit, the thread continues on your next account."
     >
       <ul className="cmp-plans-list">
         {PLANS.map((plan) => (
@@ -1111,7 +1111,7 @@ export function PlansVisual() {
         </span>
         <span className="cmp-plans-acct cmp-plans-acct-work">
           <span className="cmp-plans-dot" />
-          <span className="cmp-plans-acct-name">Work account</span>
+          <span className="cmp-plans-acct-name">Account 1</span>
           <span className="cmp-plans-bar">
             <span className="cmp-plans-fill" />
           </span>
@@ -1119,7 +1119,7 @@ export function PlansVisual() {
         </span>
         <span className="cmp-plans-acct cmp-plans-acct-personal">
           <span className="cmp-plans-dot" />
-          <span className="cmp-plans-acct-name">Personal account</span>
+          <span className="cmp-plans-acct-name">Account 2</span>
           <span className="cmp-plans-bar">
             <span className="cmp-plans-fill" />
           </span>

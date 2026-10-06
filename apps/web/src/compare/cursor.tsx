@@ -45,8 +45,8 @@ const PLANS_SECTION = {
         team built it, and you pick the right one for each task.
       </p>
       <p>
-        When an account hits its limit, bb moves the thread to your next one and
-        it keeps going. bb itself is free.
+        When a Claude or Codex account hits its limit, bb moves the thread to
+        your next one and it keeps going. bb itself is free.
       </p>
     </>
   ),
