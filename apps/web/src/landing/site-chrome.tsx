@@ -5,7 +5,7 @@ import { HugeiconsIcon } from "@hugeicons/react";
 import { useEffect, useRef, type ReactNode } from "react";
 
 import { DASHBOARD_PATH } from "../lib/connect-return-to";
-import { COMPARE_LINKS, GUIDE_LINKS, type ContentLink } from "./content-links";
+import { COMPARE_LINKS, type ContentLink } from "./content-links";
 import {
   DesktopDownloadButton,
   DiscordLink,
@@ -70,7 +70,7 @@ function PluginsMenu({ current }: { current?: SiteNavPage }) {
           href="/plugin-guide"
           aria-current={current === "plugin-guide" ? "page" : undefined}
         >
-          Plugin Guide
+          Building plugins
         </a>
       </div>
     </details>
@@ -171,21 +171,18 @@ export function SiteFooter({ current }: { current?: string }) {
           <a href="/marketplace">Plugins</a>
         </li>
         <li>
-          <a href="/changelog">Changelog</a>
-        </li>
-        <li>
-          <a href={DASHBOARD_PATH}>Sign in</a>
-        </li>
-      </FooterColumn>
-      <FooterColumn title="Guides">
-        <FooterLinks links={GUIDE_LINKS} current={current} />
-        <li>
           <a
             href="/plugin-guide"
             aria-current={current === "/plugin-guide" ? "page" : undefined}
           >
-            Plugin Guide
+            Building plugins
           </a>
+        </li>
+        <li>
+          <a href="/changelog">Changelog</a>
+        </li>
+        <li>
+          <a href={DASHBOARD_PATH}>Sign in</a>
         </li>
       </FooterColumn>
       <FooterColumn title="Compare">

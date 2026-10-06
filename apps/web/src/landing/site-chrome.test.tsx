@@ -17,7 +17,7 @@ describe("site navigation", () => {
     expect(html).toContain(
       'href="/marketplace" aria-current="page">Marketplace',
     );
-    expect(html).toContain('href="/plugin-guide">Plugin Guide');
+    expect(html).toContain('href="/plugin-guide">Building plugins');
     expect(html).toContain('href="/blog">Blog');
     expect(html).toContain('href="/changelog">Changelog');
     expect(html.indexOf("Changelog")).toBeLessThan(html.indexOf("Sign in"));
@@ -30,11 +30,11 @@ describe("site navigation", () => {
     expect(html).not.toContain("<button");
   });
 
-  it("marks the Plugin Guide current inside the Plugins menu", () => {
+  it("marks Building plugins current inside the Plugins menu", () => {
     const html = renderToStaticMarkup(<SiteNav current="plugin-guide" />);
     expect(html).toContain('<summary class="nav-current">Plugins');
     expect(html).toContain(
-      'href="/plugin-guide" aria-current="page">Plugin Guide',
+      'href="/plugin-guide" aria-current="page">Building plugins',
     );
     expect(html).not.toContain('aria-current="page">Marketplace');
   });
@@ -45,14 +45,14 @@ describe("site navigation", () => {
     expect(html).toContain("<summary>Plugins");
     const footer = renderToStaticMarkup(<SiteFooter />);
     expect(footer).toContain('href="/changelog">Changelog');
-    expect(footer).toContain('href="/plugin-guide">Plugin Guide');
+    expect(footer).toContain('href="/plugin-guide">Building plugins');
   });
 
   it("groups footer links and marks the current page", () => {
     const footer = renderToStaticMarkup(
       <SiteFooter current="/compare/superset-alternative" />,
     );
-    for (const title of ["Product", "Guides", "Compare", "Community"]) {
+    for (const title of ["Product", "Compare", "Community"]) {
       expect(footer).toContain(`<h2 class="footer-title">${title}</h2>`);
     }
     expect(footer).toContain(
