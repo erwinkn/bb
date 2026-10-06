@@ -25,6 +25,47 @@ Build output goes to `.fork-build/`, which is listed in `.git/info/exclude`
   [Upgrade](#upgrade-the-fork-to-a-new-upstream-release)). Never merge
   upstream into `erwin`; the branch stays "a tag plus our commits".
 - Never push to `upstream`, and never open PRs or issues there.
+- Agents start from the `bb-fork` skill (`.bb/skills/bb-fork/SKILL.md`),
+  which BB loads for threads in this checkout. `.bb/AGENTS.md` points every
+  thread here at it. Agents patch, build and check. Only the coordinator
+  deploys or rolls back.
+
+## Scripts
+
+`scripts/fork/` wraps every procedure in this file. Each script prints its
+usage with `--help`, and every script that changes something accepts
+`--dry-run`.
+
+| Command                                               | Who         | What it does                                                                                                                                                                        |
+| ----------------------------------------------------- | ----------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `scripts/fork/status [--fetch]`                       | anyone      | Read-only: the running server and daemon builds, `current`, the previous build, the drop-in, `erwin` versus upstream and origin, the newest backup                                  |
+| `scripts/fork/build`                                  | anyone      | `pnpm install --frozen-lockfile`, `turbo build --filter=bb-app`, `npm pack` into `.fork-build/`                                                                                     |
+| `scripts/fork/check [--keep] [--stop]`                | anyone      | The isolated test on a sanitized copy of `~/.bb` (next sections), with a summary and the restart a deploy would need                                                                |
+| `scripts/fork/upgrade <tag> [--continue]`             | anyone      | Rebases `erwin` onto an upstream tag, keeps the old stack as `erwin-on-<version>`, builds, checks and summarizes protocol, SDK, migration and changelog changes. Stops on conflicts |
+| `scripts/fork/deploy [--full] [--tarball]`            | coordinator | Builds, installs into a new prefix, backs up the databases if the schema or version changes, repoints `current`, and restarts the server alone or the whole service                 |
+| `scripts/fork/rollback [--to] [--npm] [--restore-db]` | coordinator | Points `current` back at the previous build (or npm) and restarts. With `--restore-db`, a transient unit stops the service, restores the backup and starts it                       |
+
+`deploy` and `rollback` choose a server-only restart only when the running
+launcher has the follow-install patch, the drop-in starts `current`, and the
+version, daemon bundle, launcher and migrations are all unchanged. Otherwise
+they schedule a full restart 15 s out in a transient unit. That restart also
+kills the shell that ran the command when it runs inside BB. 75 s later a
+second transient unit writes `scripts/fork/status` to
+`~/.local/share/bb-fork/last-deploy-check.txt`.
+
+For tests, `FORK_SERVICE`, `FORK_BUILDS`, `FORK_BACKUPS`, `FORK_LIVE_DATA`,
+`FORK_LIVE_URL` and `FORK_NPM_PACKAGE` point the scripts at another unit.
+On 2026-10-06 they ran against a throwaway `bb-fork-test.service` on ports
+48886/48887:
+
+- first deploy, npm 0.43.1 → fork 0.45.0: full restart and backup
+- redeploy: server-only in 8 s, daemon PID unchanged
+- `rollback`: server-only toggle back to the previous build
+- `rollback --npm`: refused without a backup
+- `rollback --npm --restore-db`: back to 0.43.1 with 119 migrations
+
+`upgrade` also ran in a throwaway clone, 0.43.1 stack → 0.45.0. It stopped on
+a planted conflict, then `--continue` built and checked in 56 s.
 
 ## Patches
 
@@ -152,7 +193,7 @@ reconnects in about 3 s.
 The launcher patch only works once the running launcher contains it. The
 first switch to a patched 0.45.0 build is always a full restart.
 
-Example: deploy a UI tweak.
+`scripts/fork/deploy` does all of this. By hand, a UI tweak deploys like this:
 
 ```bash
 cd ~/Code/bb && pnpm exec turbo run build --filter=bb-app
@@ -295,6 +336,11 @@ Force them visible with an injected style when a screenshot needs them.
 This is the first switch to the `current` layout and a version change, so it
 is a full restart. Back up first, because migrations only move forward.
 
+With the scripts, this is `scripts/fork/deploy --dry-run`, then
+`scripts/fork/deploy`. Its plan for this swap lists five reasons for a full
+restart and a backup. The steps below are what it does, for reference or for
+doing it by hand.
+
 ```bash
 B=~/.local/share/bb-fork; NEW=desktop-v0.45.0-4-gaae33ae3f; OLD=desktop-v0.43.1-1-ged171ddeb
 TGZ=~/Code/bb/.fork-build/bb-app-0.45.0.tgz
@@ -350,6 +396,9 @@ running SDK is 0.6.15)` once. The rebuilt `dist/` lands in
 0.45.0 ran 19 migrations, so 0.43.1 needs the pre-swap database. Changes made
 since the backup are lost.
 
+With the scripts: `scripts/fork/rollback --restore-db ~/.bb-backups/<date>-pre-<build>`.
+By hand:
+
 ```bash
 # From SSH, not a BB thread:
 systemctl --user stop bb-app.service
@@ -371,6 +420,9 @@ To leave the fork entirely, delete `fork.conf`, run
 ran newer migrations.
 
 ## Upgrade the fork to a new upstream release
+
+`scripts/fork/upgrade desktop-v0.46.0` runs the steps below and stops on a
+conflict with next steps. By hand:
 
 ```bash
 cd ~/Code/bb
