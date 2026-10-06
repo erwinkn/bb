@@ -132,16 +132,33 @@ Environment=PATH=$CURRENT/bin:$HOME/.npm-global/bin:$HOME/.local/bin:/usr/local/
 backup_databases() {
   local dir="$BACKUPS/$(date +%F-%H%M%S)-$1"
   step "Back up databases to $dir"
-  run mkdir -p "$dir/plugins"
+  run mkdir -p "$BACKUPS"
+  run mkdir "$dir" "$dir/plugins"
   run sqlite3 "$LIVE_DATA/bb.db" "VACUUM INTO '$dir/bb.db'"
   local db plugin
   for db in "$LIVE_DATA"/plugins/*/data.db; do
     [ -s "$db" ] || continue
     plugin=$(basename "$(dirname "$db")")
-    run mkdir -p "$dir/plugins/$plugin"
+    run mkdir "$dir/plugins/$plugin"
     run sqlite3 "$db" "VACUUM INTO '$dir/plugins/$plugin/data.db'"
   done
+  [ "$DRY_RUN" = 1 ] || verify_backup "$dir"
   say "backup: $dir"
+}
+
+verify_backup() {
+  local dir=$1 db plugin live
+  [ -s "$dir/bb.db" ] || die "backup $dir has no bb.db"
+  live=$(sqlite3 -readonly "$LIVE_DATA/bb.db" "select count(*) from __drizzle_migrations")
+  [ "$(sqlite3 -readonly "$dir/bb.db" "select count(*) from __drizzle_migrations")" = "$live" ] \
+    || die "backup $dir/bb.db does not match the live migrations ($live)"
+  for db in "$LIVE_DATA"/plugins/*/data.db; do
+    [ -s "$db" ] || continue
+    plugin=$(basename "$(dirname "$db")")
+    [ "$(sqlite3 -readonly "$dir/plugins/$plugin/data.db" "pragma quick_check" 2>/dev/null)" = ok ] \
+      || die "backup of plugin $plugin is missing or damaged in $dir"
+  done
+  say "verified: bb.db at $live migrations, $(ls "$dir/plugins" | wc -l) plugin databases"
 }
 
 restart_server_only() {

@@ -82,6 +82,7 @@ possible when all of these hold:
 
 - same `bb-app` version as the running build
 - byte-identical `host-daemon/dist/daemon-bundle.mjs`
+- byte-identical launcher (`dist/bb-app.js`)
 - identical database migrations (`server/dist/drizzle`)
 - the running launcher has the follow-install patch, and the systemd drop-in
   starts `~/.local/share/bb-fork/current`
