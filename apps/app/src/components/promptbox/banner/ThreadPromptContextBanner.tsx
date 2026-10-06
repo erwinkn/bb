@@ -659,6 +659,8 @@ function PullRequestBannerLink({
   );
 }
 
+const NO_CHILD_THREAD_ITEMS: readonly ThreadPromptChildThreadItem[] = [];
+
 function useExpandForNewNeedsInput(
   items: readonly ThreadPromptChildThreadItem[],
   isExpanded: boolean,
@@ -692,7 +694,6 @@ function ActiveChildThreadsCard({
 }) {
   const focus = useDisclosureFocusHandoff(isExpanded, onToggle);
   const items = childThreadsSection.items;
-  useExpandForNewNeedsInput(items, isExpanded, onToggle);
   if (items.length === 0) {
     return null;
   }
@@ -893,6 +894,13 @@ export function ThreadPromptContextBanner({
   const parentFocus = useDisclosureFocusHandoff(
     expandedSection === "parentThread",
     () => onToggleSection("parentThread"),
+  );
+  useExpandForNewNeedsInput(
+    archivedSection || environmentGoneSection
+      ? NO_CHILD_THREAD_ITEMS
+      : (childThreadsSection?.items ?? NO_CHILD_THREAD_ITEMS),
+    expandedSection === "childThreads",
+    () => onToggleSection("childThreads"),
   );
   if (archivedSection || environmentGoneSection) {
     const environmentGone = environmentGoneSection !== null;
