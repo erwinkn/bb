@@ -75,6 +75,7 @@ import {
 import { siteHeadLinks } from "../landing/page-head";
 import { SiteFooter, SiteNav } from "../landing/site-chrome";
 import { useDesktopPlatform } from "../landing/desktop-platform";
+import { SendToComputerButton } from "../landing/send-to-computer-button";
 import {
   ClaudeIcon,
   CursorIcon,
@@ -275,12 +276,13 @@ function InstallOptions({ placement }: { placement: CtaPlacement }) {
           <DownloadLink
             placement={placement}
             platform={platform}
-            className="btn btn-primary btn-install"
+            className="btn btn-primary btn-install install-download"
           >
             <DesktopDownloadIcon platform={platform} />
             {download.buttonLabel}
           </DownloadLink>
-          <span className="install-note">
+          <SendToComputerButton placement={placement} />
+          <span className="install-note install-note-desktop">
             {download.note}
             {" · "}
             <DownloadLink
@@ -290,6 +292,9 @@ function InstallOptions({ placement }: { placement: CtaPlacement }) {
             >
               Also for {DESKTOP_DOWNLOADS[otherPlatform].label}
             </DownloadLink>
+          </span>
+          <span className="install-note install-note-touch">
+            bb runs on macOS, Windows, and Linux
           </span>
         </span>
         <span className="install-choice">
