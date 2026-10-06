@@ -42,13 +42,69 @@ const GROUPING_CONTEXT_KEY_LIMIT = 128;
 const GROUPING_CONTEXT_ENTRIES_PER_KEY = 4;
 const GROUPING_CONTEXT_REUSE_SEQUENCE_SPAN = 1024;
 
+type TimelineOrderingContextRow = ReturnType<
+  typeof listTimelineOrderingContext
+>[number];
+
+interface TimelineOrderingRowsEntry {
+  dataVersion: number;
+  generation: number;
+  maxSeq: number;
+  rows: TimelineOrderingContextRow[];
+}
+
+const ORDERING_ROWS_KEY_LIMIT = 32;
+
 const orderingContexts = new WeakMap<
   DbConnection,
   Map<string, TimelineGroupingContextEntry[]>
 >();
+const orderingRows = new WeakMap<
+  DbConnection,
+  Map<string, TimelineOrderingRowsEntry>
+>();
 
 export function clearTimelineOrderingContextCache(db: DbConnection): void {
   orderingContexts.delete(db);
+  orderingRows.delete(db);
+}
+
+function listTimelineOrderingContextIncrementally(
+  db: DbConnection,
+  args: TimelineGroupingContextArgs,
+): TimelineOrderingContextRow[] {
+  let cache = orderingRows.get(db);
+  if (cache === undefined) {
+    cache = new Map();
+    orderingRows.set(db, cache);
+  }
+  const key = JSON.stringify([args.threadId, args.sequenceStart]);
+  const generation = getThreadEventRewriteGeneration(args.threadId);
+  const dataVersion = getDatabaseDataVersion(db);
+  const cached = cache.get(key);
+  cache.delete(key);
+  const usable =
+    cached !== undefined &&
+    cached.generation === generation &&
+    cached.dataVersion === dataVersion;
+  if (usable && args.maxSeq <= cached.maxSeq) {
+    cache.set(key, cached);
+    return cached.rows.filter((row) => row.sequence <= args.maxSeq);
+  }
+  const rows = usable
+    ? [
+        ...cached.rows,
+        ...listTimelineOrderingContext(db, {
+          ...args,
+          sequenceStart: cached.maxSeq + 1,
+        }),
+      ]
+    : listTimelineOrderingContext(db, args);
+  cache.set(key, { dataVersion, generation, maxSeq: args.maxSeq, rows });
+  if (cache.size > ORDERING_ROWS_KEY_LIMIT) {
+    cache.delete(cache.keys().next().value!);
+  }
+  return rows;
 }
 
 function nearestEntry(
@@ -146,7 +202,7 @@ function computeTimelineOrderingContext(
   db: DbConnection,
   args: TimelineGroupingContextArgs,
 ): TimelineOrderingContext {
-  const context = listTimelineOrderingContext(db, args);
+  const context = listTimelineOrderingContextIncrementally(db, args);
   const spans = new Map<string, ExternalUserBoundaryTurnSpan>();
   const accepted = new Map<string, { sequence: number; turnId: string }>();
   for (const row of context) {
