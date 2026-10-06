@@ -49,12 +49,12 @@ export const AGENTS_COPY: SectionCopy = {
 };
 
 export const SPAWN_COPY: SectionCopy = {
-  title: "Let one agent run the others",
+  title: "Hand off the whole job",
   body: (
     <p>
-      Claude Code hands out the work, and Codex, Cursor, and others each take a
-      task in their own thread. They message each other as they go. No copying
-      between tools.
+      Give one agent a big task. It splits the work across Claude Code, Codex,
+      Cursor, and others running side by side, and they message each other as
+      they go. You come back to finished work, not notes to pass between tools.
     </p>
   ),
 };
