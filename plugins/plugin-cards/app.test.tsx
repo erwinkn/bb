@@ -136,7 +136,7 @@ describe("plugin-card directive", () => {
     expect(slot.navigateCalls).toEqual([]);
   });
 
-  it.each([{}, { id: "" }, { id: "Not An Id" }])(
+  it.each<Record<string, string>>([{}, { id: "" }, { id: "Not An Id" }])(
     "explains a missing or malformed id %j without calling rpc",
     async (attributes) => {
       const slot = renderCard(attributes, () => {
