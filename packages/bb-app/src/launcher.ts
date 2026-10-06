@@ -3,7 +3,7 @@ import type { ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { relayDesktopAppUpdates } from "@bb/config/desktop-app-update";
 import { spawn } from "node:child_process";
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, realpathSync } from "node:fs";
 import { spawnLoggedProcess } from "./logged-process.js";
 import {
   formatServerMovedNotice,
@@ -15,7 +15,7 @@ import { mutateManagedJsonFile } from "@bb/config/managed-json-file";
 import { access, readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join, resolve, win32 } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import { setTimeout as sleep } from "node:timers/promises";
 import {
@@ -1330,6 +1330,31 @@ function runsFromSourceCheckout(entrypointUrl: string): boolean {
   return entrypointDir === resolve(entrypointDir, "..", "src");
 }
 
+export function resolveFollowedInstallContext(
+  context: BbAppStartContext,
+  launchPath: string | undefined = process.argv[1],
+): BbAppStartContext {
+  if (launchPath === undefined || !existsSync(launchPath)) {
+    return context;
+  }
+  const installed = resolveBbAppStartContext({
+    entrypointUrl: pathToFileURL(realpathSync(launchPath)).href,
+    env: {},
+    homeDir: homedir(),
+  });
+  if (installed.packageRoot === context.packageRoot) {
+    return context;
+  }
+  return {
+    ...context,
+    appDistDir: installed.appDistDir,
+    appVersion: installed.appVersion,
+    daemonBundleDir: installed.daemonBundleDir,
+    packageRoot: installed.packageRoot,
+    serverEntry: installed.serverEntry,
+  };
+}
+
 export function resolveBbAppStartContext(
   args: ResolveBbAppStartContextArgs,
 ): BbAppStartContext {
@@ -2022,7 +2047,7 @@ async function runEnvCommand(args: RunEnvCommandArgs): Promise<void> {
   await refreshRunningServerConfigAfterWrite(args.serverUrl, "env", key);
 }
 
-async function writeOwnCliLauncher(
+export async function writeOwnCliLauncher(
   context: BbAppStartContext,
 ): Promise<string | null> {
   const launcherPath = formatCliLauncherPath({
@@ -4265,20 +4290,16 @@ export async function runBbApp(
           }),
       prepareFullStack: async (entry) => {
         const fullStackRuntime = await resolveFullStackRuntime(entry);
-        const serverEnv = createServerEnv({
-          cliLauncherPath,
+        const serverBaseEnv =
+          appUpdateController === null || appUpdateMode === null
+            ? fullStackRuntime.serverEnv
+            : {
+                ...fullStackRuntime.serverEnv,
+                [APP_UPDATE_MODE_ENV_NAME]: appUpdateMode,
+              };
+        const serverInstall = await resolveOwnAppInstall({
           context,
-          env:
-            appUpdateController === null || appUpdateMode === null
-              ? fullStackRuntime.serverEnv
-              : {
-                  ...fullStackRuntime.serverEnv,
-                  [APP_UPDATE_MODE_ENV_NAME]: appUpdateMode,
-                },
-          install: await resolveOwnAppInstall({
-            context,
-            env: fullStackRuntime.serverEnv,
-          }),
+          env: fullStackRuntime.serverEnv,
         });
         const sharedEnv = createSharedEnv({
           context,
@@ -4304,12 +4325,23 @@ export async function runBbApp(
                 serverUrl: context.serverUrl,
               });
           },
-          startServer: () =>
-            startFullStackServerProcess({
+          startServer: async () => {
+            const serverContext = resolveFollowedInstallContext(context);
+            const serverCliLauncherPath =
+              cliLauncherPath === null
+                ? null
+                : await writeOwnCliLauncher(serverContext);
+            const serverEnv = createServerEnv({
+              cliLauncherPath: serverCliLauncherPath,
+              context: serverContext,
+              env: serverBaseEnv,
+              install: serverInstall,
+            });
+            return startFullStackServerProcess({
               ...(options.beforeServerStart === undefined
                 ? {}
                 : { beforeStart: options.beforeServerStart }),
-              context,
+              context: serverContext,
               env: serverEnv,
               ...(parseAppSurface(serverEnv[APP_SURFACE_ENV_NAME]) ===
                 APP_SURFACE_DESKTOP && process.send !== undefined
@@ -4321,7 +4353,8 @@ export async function runBbApp(
                         appUpdateController.attachServer(childProcess),
                     }),
               processes,
-            }),
+            });
+          },
         };
       },
       processes,
