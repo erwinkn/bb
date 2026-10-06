@@ -84,7 +84,13 @@ if [ "$schema_changed" = 1 ]; then say "backup:   yes (schema or version changes
 
 step "Install into $TARGET"
 run npm install -g --prefix "$TARGET" "$TARBALL" --silent
-[ "$DRY_RUN" = 1 ] || has_follow_install "$TARGET/$PKG_SUFFIX" || warn "this build lacks the launcher patch; later deploys will all be full restarts"
+if [ "$DRY_RUN" = 0 ]; then
+  [ -x "$TARGET/bin/bb-app" ] || die "install produced no $TARGET/bin/bb-app"
+  [ "$(package_version "$TARGET/$PKG_SUFFIX")" = "$(package_version "$NEW_PKG")" ] || die "installed version does not match the tarball"
+  cmp -s "$TARGET/$PKG_SUFFIX/host-daemon/dist/daemon-bundle.mjs" "$NEW_PKG/host-daemon/dist/daemon-bundle.mjs" \
+    || die "installed daemon bundle does not match the tarball"
+  has_follow_install "$TARGET/$PKG_SUFFIX" || warn "this build lacks the launcher patch; later deploys will all be full restarts"
+fi
 
 if [ "$schema_changed" = 1 ]; then backup_databases "pre-$NAME"; fi
 

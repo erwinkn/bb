@@ -42,7 +42,10 @@ done
 MAIN=$(service_main_pid) || die "$SERVICE is not running"
 SERVER_PKG=$(running_server_package "$MAIN")
 DAEMON_PKG=$(running_daemon_package "$MAIN")
-[ -z "$RESTORE" ] || [ -f "$RESTORE/bb.db" ] || die "no bb.db in $RESTORE"
+if [ -n "$RESTORE" ]; then
+  [ -s "$RESTORE/bb.db" ] || die "no bb.db in $RESTORE"
+  [ "$(sqlite3 -readonly "$RESTORE/bb.db" "pragma quick_check" 2>/dev/null)" = ok ] || die "$RESTORE/bb.db fails quick_check"
+fi
 
 if [ "$NPM" = 0 ] && [ -z "$TO" ]; then
   [ -f "$PREVIOUS_FILE" ] || die "no previous build recorded; pass --to <build> or --npm"
