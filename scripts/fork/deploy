@@ -1,0 +1,105 @@
+#!/usr/bin/env bash
+source "$(dirname "$0")/lib.sh"
+
+usage() {
+  cat <<'EOF'
+Usage: scripts/fork/deploy [--tarball <path>] [--full] [--allow-dirty] [--dry-run]
+
+Coordinator only. Agents never run this.
+
+Builds this checkout (or takes --tarball), installs it into
+~/.local/share/bb-fork/<git describe>, points `current` at it and restarts:
+
+  server only  when the running launcher supports it, the version, host daemon
+               bundle and migrations are unchanged, and the systemd drop-in
+               already starts `current`. Takes ~3 s; agents keep running.
+  full         otherwise, or with --full. Runs `systemctl --user restart` in a
+               transient unit 15 s later, which stops every running turn.
+
+Backs up bb.db and the plugin databases first when migrations or the version
+change. Remembers the build it replaced for scripts/fork/rollback.
+EOF
+}
+
+TARBALL=""
+FULL=0
+ALLOW_DIRTY=0
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --tarball) TARBALL=$2; shift ;;
+    --full) FULL=1 ;;
+    --allow-dirty) ALLOW_DIRTY=1 ;;
+    --dry-run) DRY_RUN=1 ;;
+    -h|--help) usage; exit 0 ;;
+    *) usage >&2; exit 2 ;;
+  esac
+  shift
+done
+
+NAME=$(describe_head)
+case "$NAME" in
+  *-dirty) [ "$ALLOW_DIRTY" = 1 ] || die "uncommitted changes in $REPO; commit them or pass --allow-dirty" ;;
+esac
+if [ -z "$TARBALL" ]; then
+  if [ "$DRY_RUN" = 1 ]; then
+    TARBALL=$(newest_tarball)
+    say "[dry-run] would run scripts/fork/build; comparing with $TARBALL"
+  else
+    TARBALL=$("$REPO/scripts/fork/build" | tail -1)
+  fi
+fi
+[ -f "$TARBALL" ] || die "no tarball at '$TARBALL'"
+
+suffix=""; n=1
+while [ -e "$BUILDS/$NAME$suffix" ]; do n=$((n + 1)); suffix=".$n"; done
+NAME="$NAME$suffix"
+TARGET="$BUILDS/$NAME"
+
+STAGE=$(mktemp -d "$FORK_BUILD/deploy-stage.XXXXXX")
+trap 'rm -rf "$STAGE"' EXIT
+tar -xzf "$TARBALL" -C "$STAGE"
+NEW_PKG="$STAGE/package"
+
+MAIN=$(service_main_pid) || die "$SERVICE is not running; start it, or install by hand per FORK.md"
+SERVER_PKG=$(running_server_package "$MAIN")
+DAEMON_PKG=$(running_daemon_package "$MAIN")
+[ -n "$SERVER_PKG" ] && [ -n "$DAEMON_PKG" ] || die "cannot find the running server and daemon under PID $MAIN"
+
+mapfile -t reasons < <(full_restart_reasons "$NEW_PKG" "$SERVER_PKG" "$DAEMON_PKG")
+if [ "$FULL" = 1 ]; then reasons+=("--full was passed"); fi
+schema_changed=0
+[ "$(migrations_digest "$NEW_PKG")" = "$(migrations_digest "$SERVER_PKG")" ] || schema_changed=1
+[ "$(package_version "$NEW_PKG")" = "$(package_version "$SERVER_PKG")" ] || schema_changed=1
+
+step "Plan"
+say "running:  server $(build_name_of "$SERVER_PKG"), daemon $(build_name_of "$DAEMON_PKG")"
+say "deploy:   $NAME ($(basename "$TARBALL"))"
+if [ ${#reasons[@]} -eq 0 ]; then
+  say "restart:  server only"
+else
+  say "restart:  full, because:"
+  printf '            - %s\n' "${reasons[@]}"
+fi
+if [ "$schema_changed" = 1 ]; then say "backup:   yes (schema or version changes)"; fi
+
+step "Install into $TARGET"
+run npm install -g --prefix "$TARGET" "$TARBALL" --silent
+[ "$DRY_RUN" = 1 ] || has_follow_install "$TARGET/$PKG_SUFFIX" || warn "this build lacks the launcher patch; later deploys will all be full restarts"
+
+if [ "$schema_changed" = 1 ]; then backup_databases "pre-$NAME"; fi
+
+step "Point $CURRENT at $NAME"
+if [ -L "$CURRENT" ]; then
+  run_sh "readlink '$CURRENT' > '$PREVIOUS_FILE'"
+else
+  run_sh "printf '%s\n' '$(build_name_of "$DAEMON_PKG")' > '$PREVIOUS_FILE'"
+fi
+run ln -sfn "$NAME" "$CURRENT"
+dropin_uses_current || write_dropin
+
+if [ ${#reasons[@]} -eq 0 ]; then
+  restart_server_only "$MAIN" "$TARGET/$PKG_SUFFIX"
+  say "Deployed $NAME. Browser tabs pick up the new UI on reload."
+else
+  restart_full
+fi

@@ -1,0 +1,97 @@
+#!/usr/bin/env bash
+source "$(dirname "$0")/lib.sh"
+
+usage() {
+  cat <<'EOF'
+Usage: scripts/fork/rollback [--to <build>] [--restore-db <backup-dir>] [--full] [--dry-run]
+       scripts/fork/rollback --npm [--restore-db <backup-dir>] [--dry-run]
+
+Coordinator only. Agents never run this.
+
+Points `current` back at the build recorded by the last deploy (or --to <build>,
+a directory name under ~/.local/share/bb-fork) and restarts, server-only when
+that is safe, as deploy decides. Running it twice toggles between two builds.
+
+--npm leaves the fork: removes the systemd drop-in so the unit runs
+~/.npm-global/bin/bb-app again, then restarts fully.
+
+Going back to a build with older migrations needs the database from before
+they ran. Pass the backup deploy made (~/.bb-backups/<date>-pre-<build>) with
+--restore-db. A transient unit then stops the service, restores bb.db and the
+plugin databases, and starts it again. Changes since that backup are lost.
+EOF
+}
+
+TO=""
+NPM=0
+FULL=0
+RESTORE=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --to) TO=$2; shift ;;
+    --npm) NPM=1 ;;
+    --full) FULL=1 ;;
+    --restore-db) RESTORE=$2; shift ;;
+    --dry-run) DRY_RUN=1 ;;
+    -h|--help) usage; exit 0 ;;
+    *) usage >&2; exit 2 ;;
+  esac
+  shift
+done
+
+MAIN=$(service_main_pid) || die "$SERVICE is not running"
+SERVER_PKG=$(running_server_package "$MAIN")
+DAEMON_PKG=$(running_daemon_package "$MAIN")
+[ -z "$RESTORE" ] || [ -f "$RESTORE/bb.db" ] || die "no bb.db in $RESTORE"
+
+if [ "$NPM" = 0 ] && [ -z "$TO" ]; then
+  [ -f "$PREVIOUS_FILE" ] || die "no previous build recorded; pass --to <build> or --npm"
+  TO=$(cat "$PREVIOUS_FILE")
+  case "$TO" in npm*) NPM=1 ;; esac
+fi
+
+if [ "$NPM" = 1 ]; then
+  NEW_PKG="$NPM_PACKAGE"
+  label="npm ($(package_version "$NEW_PKG"))"
+else
+  NEW_PKG="$BUILDS/$TO/$PKG_SUFFIX"
+  [ -d "$NEW_PKG" ] || die "no build at $BUILDS/$TO"
+  label=$TO
+fi
+
+if [ "$(migrations_digest "$NEW_PKG")" != "$(migrations_digest "$SERVER_PKG")" ] && [ -z "$RESTORE" ]; then
+  die "$label has different migrations than the running server. Pass --restore-db <backup taken before the newer build>; newest backups: $(ls -t "$BACKUPS" 2>/dev/null | sed -n 1,3p | tr '\n' ' ')"
+fi
+
+server_only=1
+if [ "$FULL" = 1 ] || [ "$NPM" = 1 ] || [ -n "$RESTORE" ]; then server_only=0; fi
+if [ -n "$(full_restart_reasons "$NEW_PKG" "$SERVER_PKG" "$DAEMON_PKG")" ]; then server_only=0; fi
+
+step "Plan"
+say "running:  server $(build_name_of "$SERVER_PKG"), daemon $(build_name_of "$DAEMON_PKG")"
+say "back to:  $label"
+say "restart:  $([ "$server_only" = 1 ] && echo "server only" || echo full)"
+[ -z "$RESTORE" ] || say "restore:  $RESTORE (changes since then are lost)"
+
+if [ "$NPM" = 1 ]; then
+  run rm -f "$DROPIN"
+  run systemctl --user daemon-reload
+else
+  if [ -L "$CURRENT" ]; then run_sh "readlink '$CURRENT' > '$PREVIOUS_FILE'"; fi
+  run ln -sfn "$TO" "$CURRENT"
+fi
+
+if [ -n "$RESTORE" ]; then
+  restore="systemctl --user stop $SERVICE
+cp '$RESTORE/bb.db' '$LIVE_DATA/bb.db' && rm -f '$LIVE_DATA/bb.db-wal' '$LIVE_DATA/bb.db-shm'
+for f in '$RESTORE'/plugins/*/data.db; do p=\$(basename \$(dirname \"\$f\")); cp \"\$f\" '$LIVE_DATA'/plugins/\$p/data.db; rm -f '$LIVE_DATA'/plugins/\$p/data.db-wal '$LIVE_DATA'/plugins/\$p/data.db-shm; done
+systemctl --user start $SERVICE
+sleep 60; '$REPO/scripts/fork/status' > '$LAST_CHECK_FILE' 2>&1"
+  step "Stop, restore the databases and start again in 15 s"
+  run systemd-run --user --collect --on-active=15 $(fork_setenv_args) bash -c "$restore"
+  say "Read $LAST_CHECK_FILE about 90 s from now, or run scripts/fork/status."
+elif [ "$server_only" = 1 ]; then
+  restart_server_only "$MAIN" "$(readlink -f "$NEW_PKG")"
+else
+  restart_full
+fi
