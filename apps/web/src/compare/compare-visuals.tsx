@@ -1076,3 +1076,56 @@ export function TeamCost({
     </div>
   );
 }
+
+const PLANS = [
+  { agent: "Claude Code", plan: "Your Claude Max plan", icon: ClaudeIcon },
+  { agent: "Codex", plan: "Your ChatGPT Pro plan", icon: OpenAiIcon },
+  { agent: "Cursor", plan: "Your Cursor Pro plan", icon: CursorIcon },
+] as const;
+
+export function PlansVisual() {
+  return (
+    <div
+      className="cmp-plans"
+      role="img"
+      aria-label="Claude Code, Codex, and Cursor running in bb on your own Claude, ChatGPT, and Cursor plans. When your work Claude account reaches its limit, the thread continues on your personal account."
+    >
+      <ul className="cmp-plans-list">
+        {PLANS.map((plan) => (
+          <li key={plan.agent} className="cmp-plans-row">
+            <span className="cmp-plans-ic">
+              <plan.icon className="cmp-plans-agent" />
+            </span>
+            <span className="cmp-plans-who">
+              <span className="cmp-plans-name">{plan.agent}</span>
+              <span className="cmp-plans-plan">{plan.plan}</span>
+            </span>
+            <PhoneStatus status="running" />
+          </li>
+        ))}
+      </ul>
+      <div className="cmp-plans-thread">
+        <span className="cmp-plans-title">
+          <ClaudeIcon className="cmp-plans-agent" />
+          <span className="trow-title">Add rate limiting to uploads</span>
+        </span>
+        <span className="cmp-plans-acct cmp-plans-acct-work">
+          <span className="cmp-plans-dot" />
+          <span className="cmp-plans-acct-name">Work account</span>
+          <span className="cmp-plans-bar">
+            <span className="cmp-plans-fill" />
+          </span>
+          <span className="cmp-plans-limit">Limit</span>
+        </span>
+        <span className="cmp-plans-acct cmp-plans-acct-personal">
+          <span className="cmp-plans-dot" />
+          <span className="cmp-plans-acct-name">Personal account</span>
+          <span className="cmp-plans-bar">
+            <span className="cmp-plans-fill" />
+          </span>
+          <span className="cmp-plans-limit" />
+        </span>
+      </div>
+    </div>
+  );
+}

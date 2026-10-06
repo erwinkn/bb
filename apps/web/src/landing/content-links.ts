@@ -25,6 +25,10 @@ export const CONTENT_LINK_GROUPS: ContentLinkGroup[] = [
         label: "T3 Code alternatives",
         href: "/compare/t3-code-alternatives",
       },
+      {
+        label: "Cursor alternative",
+        href: "/compare/cursor-alternative",
+      },
     ],
   },
 ];
