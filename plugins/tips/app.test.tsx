@@ -133,9 +133,19 @@ describe("Tips homepage section", () => {
     expect(await slot.findByText("Run work in parallel")).toBeTruthy();
     expect(slot.getByRole("region", { name: "Ideas to try" })).toBeTruthy();
     expect(slot.getAllByRole("listitem")).toHaveLength(3);
-    expect(tile(slot, "subthreads").textContent).toContain("Adds prompt");
-    expect(tile(slot, "phone").textContent).toContain("Get the app");
-    expect(tile(slot, "command-palette").textContent).toContain("Open palette");
+    expect(
+      slot.getByRole("button", {
+        name: /Run work in parallel.*Adds prompt to composer$/u,
+      }),
+    ).toBe(tile(slot, "subthreads"));
+    expect(
+      slot.getByRole("button", { name: /Opens settings: Get the app$/u }),
+    ).toBe(tile(slot, "phone"));
+    expect(slot.getByRole("button", { name: /Open palette$/u })).toBe(
+      tile(slot, "command-palette"),
+    );
+    expect(slot.queryByText("Adds prompt")).toBeNull();
+    expect(slot.queryByText("Get the app")).toBeNull();
     expect(slot.queryByRole("button", { name: /dismiss/iu })).toBeNull();
     expect(slot.inspection.rpcCalls[0]).toEqual({
       method: "current",
@@ -210,7 +220,10 @@ describe("Tips homepage section", () => {
     );
     expect(slot.composer.focusCount).toBe(1);
     expect(slot.inspection.navigateCalls).toEqual([]);
-    expect(await slot.findByText("In composer")).toBeTruthy();
+    expect(
+      await slot.findByText("Added “Run work in parallel” to the composer"),
+    ).toBeTruthy();
+    expect(slot.queryByText("In composer")).toBeNull();
     await waitFor(() =>
       expect(slot.inspection.rpcCalls.at(-1)).toEqual({
         method: "act",
