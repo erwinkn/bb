@@ -1,14 +1,11 @@
 import type { ReactNode } from "react";
 
-import {
-  CustomizeBuild,
-  ProviderChips,
-  SpawnSidebar,
-} from "../landing/landing-visuals";
+import { CustomizeBuild, ProviderChips } from "../landing/landing-visuals";
 import type { CompareHighlight } from "./comparisons";
 import {
   AgentSplit,
   AnywhereVisual,
+  SpawnTimeline,
   TeamCost,
   type BrandLogo,
 } from "./compare-visuals";
@@ -56,7 +53,8 @@ export const SPAWN_COPY: SectionCopy = {
   body: (
     <p>
       Claude Code hands out the work, and Codex, Cursor, and others each take a
-      task in their own thread. No copying between tools.
+      task in their own thread. They message each other as they go. No copying
+      between tools.
     </p>
   ),
 };
@@ -141,8 +139,8 @@ export function agentsSection(copy: SectionCopy): CompareHighlight {
 export function spawnSection(copy: SectionCopy): CompareHighlight {
   return {
     title: copy.title,
-    wide: false,
-    visual: <SpawnSidebar />,
+    wide: true,
+    visual: <SpawnTimeline />,
     body: agentsBody(copy),
   };
 }

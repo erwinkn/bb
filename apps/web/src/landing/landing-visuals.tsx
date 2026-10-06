@@ -223,7 +223,7 @@ export function useCycle(holdMs: number, fadeMs: number) {
   return { cycle, leaving };
 }
 
-function SpawnRow({
+export function SpawnRow({
   icon,
   name,
   task,

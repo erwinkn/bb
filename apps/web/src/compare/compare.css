@@ -967,6 +967,34 @@
   text-wrap: pretty;
 }
 
+.cmp-crew {
+  width: 100%;
+  margin-top: 40px;
+}
+
+.cmp-crew-body {
+  display: grid;
+  grid-template-columns: minmax(0, 300px) minmax(0, 520px);
+  justify-content: center;
+  align-items: start;
+  gap: 20px;
+  text-align: left;
+}
+
+.cmp-crew-body.leaving {
+  animation: rc-leave 0.5s ease forwards;
+}
+
+.cmp-crew-thread {
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--bg);
+  overflow: hidden;
+  box-shadow:
+    0 1px 2px color-mix(in oklab, var(--shade) 6%, transparent),
+    0 30px 70px color-mix(in oklab, var(--shade) 14%, transparent);
+}
+
 .cmp-desktop {
   width: 100%;
   max-width: 980px;
@@ -1362,6 +1390,10 @@
 }
 
 @media (max-width: 720px) {
+  .cmp-crew-body {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
   .cmp-desktop {
     margin-top: 28px;
   }
