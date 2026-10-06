@@ -228,6 +228,7 @@ describe("buildBridgeInjectionScript", () => {
 });
 
 interface ImagePasteApi extends NativeShellApi {
+  __receive(event: unknown): void;
   __beginImagePaste(id: string, url: string): boolean;
   __finishImagePaste(
     id: string,
@@ -251,9 +252,23 @@ function installImageBridge(
     closest: vi.fn<() => object | null>(() => ({})),
     dispatchEvent,
   };
-  const document = { activeElement: target };
+  const listeners = new Map<string, (event: Record<string, unknown>) => void>();
+  const document = {
+    activeElement: target,
+    addEventListener: (
+      type: string,
+      listener: (event: Record<string, unknown>) => void,
+    ) => listeners.set(type, listener),
+  };
   class Transfer {
     files: File[] = [];
+    data = new Map<string, string>();
+    setData(type: string, value: string) {
+      this.data.set(type, value);
+    }
+    getData(type: string) {
+      return this.data.get(type) ?? "";
+    }
     items = { add: (file: File) => this.files.push(file) };
   }
   class Paste {
@@ -262,7 +277,7 @@ function installImageBridge(
       public options: { clipboardData: Transfer },
     ) {}
   }
-  const { native, fakeWindow } = installBridge(
+  const { native, fakeWindow, posted } = installBridge(
     { platform: "android" },
     { document, DataTransfer: Transfer, ClipboardEvent: Paste, fetch },
   );
@@ -273,6 +288,8 @@ function installImageBridge(
     dispatchEvent,
     fakeWindow,
     fetch,
+    listeners,
+    posted,
   };
 }
 
@@ -293,6 +310,115 @@ function pendingImageResponse() {
 }
 
 describe("native keyboard image paste", () => {
+  it.each(["keyboard text", "WebView image"])(
+    "restores the missing representation after %s paste",
+    async (mode) => {
+      const { native, posted, listeners, dispatchEvent } = installImageBridge();
+      const copying = native.copyTextAndImage?.(
+        "Text plus image",
+        "https://test/image.png",
+      );
+      const copy = JSON.parse(posted[0]!);
+      native.__receive?.({
+        type: "response",
+        id: copy.id,
+        response: {
+          ok: true,
+          result: { copied: true, imageName: "copied.png" },
+        },
+      });
+      await copying;
+      if (mode === "keyboard text") {
+        listeners.get("beforeinput")?.({
+          isTrusted: true,
+          inputType: "insertText",
+          data: "Text plus image",
+        });
+      } else {
+        listeners.get("paste")?.({
+          isTrusted: true,
+          clipboardData: {
+            getData: () => "",
+            files: [
+              new File([imageBytes], "copied.png", { type: "image/png" }),
+            ],
+          },
+        });
+      }
+      expect(posted).toHaveLength(2);
+      const request = JSON.parse(posted[1]!);
+      native.__receive?.({
+        type: "response",
+        id: request.id,
+        response: {
+          ok: true,
+          result:
+            mode === "keyboard text"
+              ? { kind: "image", id: "restored", url: imageUrl }
+              : { kind: "text", text: "Text plus image" },
+        },
+      });
+      await Promise.resolve();
+      if (mode === "keyboard text")
+        native.__finishImagePaste("restored", image);
+      await vi.waitFor(() => expect(dispatchEvent).toHaveBeenCalledOnce());
+      const data = dispatchEvent.mock.calls[0]?.[0].options.clipboardData;
+      if (mode === "keyboard text") {
+        expect(new Uint8Array(await data.files[0].arrayBuffer())).toEqual(
+          imageBytes,
+        );
+        expect(data.getData("text/plain")).toBe("");
+      } else {
+        expect(data.getData("text/plain")).toBe("Text plus image");
+        expect(data.files).toHaveLength(0);
+      }
+    },
+  );
+
+  it("leaves unrelated input alone and discards restoration after navigation", async () => {
+    const { native, posted, listeners, fakeWindow, dispatchEvent, fetch } =
+      installImageBridge();
+    const copying = native.copyTextAndImage?.(
+      "Text plus image",
+      "https://test/image.png",
+    );
+    const copy = JSON.parse(posted[0]!);
+    native.__receive?.({
+      type: "response",
+      id: copy.id,
+      response: { ok: true, result: { copied: true, imageName: "copied.png" } },
+    });
+    await copying;
+    listeners.get("beforeinput")?.({
+      isTrusted: true,
+      inputType: "insertText",
+      data: "Different text",
+    });
+    listeners.get("beforeinput")?.({
+      isTrusted: false,
+      inputType: "insertText",
+      data: "Text plus image",
+    });
+    expect(posted).toHaveLength(1);
+    listeners.get("beforeinput")?.({
+      isTrusted: true,
+      inputType: "insertText",
+      data: "Text plus image",
+    });
+    const request = JSON.parse(posted[1]!);
+    fakeWindow.location.href = "https://test/threads/two";
+    native.__receive?.({
+      type: "response",
+      id: request.id,
+      response: {
+        ok: true,
+        result: { kind: "image", id: "restored", url: imageUrl },
+      },
+    });
+    await Promise.resolve();
+    expect(fetch).not.toHaveBeenCalled();
+    expect(dispatchEvent).not.toHaveBeenCalled();
+  });
   it.each(["before", "after"])(
     "delivers bytes and metadata to the original editor when native completion arrives %s the body",
     async (order) => {

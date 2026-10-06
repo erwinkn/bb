@@ -31,6 +31,51 @@ export function buildBridgeInjectionScript(
     var pending = {};
     var nextId = 0;
     var imagePastes = {};
+    var copiedMessage = null;
+
+    var beginImagePaste = function (id, url, target, href) {
+      if (!target || !target.isContentEditable || !target.closest("[data-promptbox]")
+          || !target.isConnected || href !== window.location.href) return false;
+      var controller = new AbortController();
+      var timer = setTimeout(function () { discardImagePaste(id); }, 30000);
+      imagePastes[id] = { target: target, timer: timer, href: href, controller: controller };
+      fetch(url, { signal: controller.signal, credentials: "omit", cache: "no-store" })
+        .then(function (response) {
+          if (!response.ok) throw new Error("Keyboard image unavailable");
+          return response.blob();
+        })
+        .then(function (blob) {
+          var entry = imagePastes[id];
+          if (!entry) return;
+          entry.blob = blob;
+          deliverImagePaste(id);
+        })
+        .catch(function () { discardImagePaste(id); });
+      return true;
+    };
+
+    var restoreCopiedMessage = function (event, text, imageName) {
+      var target = document.activeElement;
+      if (!copiedMessage || !event.isTrusted || !target || !target.isContentEditable
+          || !target.closest("[data-promptbox]")) return;
+      if (imageName ? imageName !== copiedMessage.imageName : text !== copiedMessage.text) return;
+      var href = window.location.href;
+      native.request("clipboard-paste", { text: text, imageName: imageName }).then(function (result) {
+        if (!result || !target.isConnected || href !== window.location.href) return;
+        if (result.kind === "image" && typeof result.id === "string" && typeof result.url === "string") {
+          var url = new URL(result.url, href);
+          if (url.origin === new URL(href).origin && url.pathname.startsWith("/__bb_keyboard_image/")) {
+            beginImagePaste(result.id, url.href, target, href);
+          }
+        } else if (result.kind === "text" && typeof result.text === "string") {
+          var clipboard = new DataTransfer();
+          clipboard.setData("text/plain", result.text);
+          target.dispatchEvent(new ClipboardEvent("paste", {
+            bubbles: true, cancelable: true, clipboardData: clipboard
+          }));
+        }
+      }).catch(function () {});
+    };
 
     var discardImagePaste = function (id) {
       var entry = imagePastes[id];
@@ -67,24 +112,7 @@ export function buildBridgeInjectionScript(
     var native = {
       __installed: true,
       __beginImagePaste: function (id, url) {
-        var target = document.activeElement;
-        if (!target || !target.isContentEditable || !target.closest("[data-promptbox]")) return false;
-        var controller = new AbortController();
-        var timer = setTimeout(function () { discardImagePaste(id); }, 30000);
-        imagePastes[id] = { target: target, timer: timer, href: window.location.href, controller: controller };
-        fetch(url, { signal: controller.signal, credentials: "omit", cache: "no-store" })
-          .then(function (response) {
-            if (!response.ok) throw new Error("Keyboard image unavailable");
-            return response.blob();
-          })
-          .then(function (blob) {
-            var entry = imagePastes[id];
-            if (!entry) return;
-            entry.blob = blob;
-            deliverImagePaste(id);
-          })
-          .catch(function () { discardImagePaste(id); });
-        return true;
+        return beginImagePaste(id, url, document.activeElement, window.location.href);
       },
       __finishImagePaste: function (id, image) {
         var entry = imagePastes[id];
@@ -127,7 +155,12 @@ export function buildBridgeInjectionScript(
       },
       post: post,
       copyTextAndImage: handshake.platform === "android" ? function (text, imageUrl) {
-        return native.request("clipboard", { text: text, imageUrl: imageUrl });
+        return native.request("clipboard", { text: text, imageUrl: imageUrl }).then(function (result) {
+          if (result && result.copied === true) {
+            copiedMessage = { text: text, imageName: typeof result.imageName === "string" ? result.imageName : "" };
+          }
+          return result;
+        });
       } : undefined,
       request: function (kind, payload) {
         return new Promise(function (resolve, reject) {
@@ -150,6 +183,20 @@ export function buildBridgeInjectionScript(
     };
     native.__apply(handshake);
     root.native = native;
+    if (handshake.platform === "android" && typeof document !== "undefined" && document && document.addEventListener) {
+      document.addEventListener("beforeinput", function (event) {
+        if (event.inputType === "insertText" && typeof event.data === "string" && event.data.length > 1) {
+          restoreCopiedMessage(event, event.data, "");
+        }
+      }, true);
+      document.addEventListener("paste", function (event) {
+        if (!event.clipboardData) return;
+        var text = event.clipboardData.getData("text/plain");
+        var files = event.clipboardData.files;
+        if (text && files.length === 0) restoreCopiedMessage(event, text, "");
+        else if (!text && files.length === 1) restoreCopiedMessage(event, "", files[0].name);
+      }, true);
+    }
   } catch (error) {
     // No bridge is a supported state. Leave the page alone.
   }

@@ -783,6 +783,16 @@ text as an alternate `text/plain` stream. Image-capable paste targets can read
 the image, while text fields and keyboards can read the text directly from the
 same item. Image-only messages omit the text and the text MIME type.
 
+Android paste targets can still choose just one representation: WebView's
+Paste command sends an image-only paste event, while Gboard's clipboard
+suggestion inserts the text as keyboard input. Within the BB composer, the
+bridge restores the missing representation for a message copied in that
+WebView. It matches the image filename or the complete bulk text insertion
+against the copied message, then validates the current native clipboard item
+belongs to BB before reading the other representation. Unrelated input,
+synthetic events, and navigation during restoration do not attach content.
+Other apps control which clipboard representations they accept.
+
 Downloads are limited to 35 MB, reject redirects, and expire after 25 seconds
 with 10-second network timeouts. Old clipboard cache files are removed on the
 next copy after 24 hours. Image copy failures fall back to text and explicitly
@@ -791,7 +801,9 @@ change; older peers retain their existing behavior.
 
 Verify by copying a user message containing text and an image, checking that
 the clipboard advertises both formats and its first item contains the full
-message text and image URI, pasting through Gboard into a composer, and pasting
-into a native text field. Also check an
+message text and image URI, then separately pasting with long-press → Paste
+and Gboard's clipboard suggestion into the BB composer. Both routes must show
+the message text and an image attachment exactly once. Also paste into a native
+text field and check an
 image-only message, ordinary text copy, and an unavailable image. Remove test
 drafts without sending them.
