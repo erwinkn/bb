@@ -2,7 +2,7 @@
 import type { ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, realpathSync } from "node:fs";
 import { spawnLoggedProcess } from "./logged-process.js";
 import {
   formatServerMovedNotice,
@@ -14,7 +14,7 @@ import { mutateManagedJsonFile } from "@bb/config/managed-json-file";
 import { access, readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join, resolve, win32 } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import { setTimeout as sleep } from "node:timers/promises";
 import {
@@ -1291,6 +1291,31 @@ export function readBbAppPackageVersion(packageRoot: string): string {
 function runsFromSourceCheckout(entrypointUrl: string): boolean {
   const entrypointDir = dirname(fileURLToPath(entrypointUrl));
   return entrypointDir === resolve(entrypointDir, "..", "src");
+}
+
+export function resolveFollowedInstallContext(
+  context: BbAppStartContext,
+  launchPath: string | undefined = process.argv[1],
+): BbAppStartContext {
+  if (launchPath === undefined || !existsSync(launchPath)) {
+    return context;
+  }
+  const installed = resolveBbAppStartContext({
+    entrypointUrl: pathToFileURL(realpathSync(launchPath)).href,
+    env: {},
+    homeDir: homedir(),
+  });
+  if (installed.packageRoot === context.packageRoot) {
+    return context;
+  }
+  return {
+    ...context,
+    appDistDir: installed.appDistDir,
+    appVersion: installed.appVersion,
+    daemonBundleDir: installed.daemonBundleDir,
+    packageRoot: installed.packageRoot,
+    serverEntry: installed.serverEntry,
+  };
 }
 
 export function resolveBbAppStartContext(
@@ -4144,16 +4169,13 @@ export async function runBbApp(
           }),
       prepareFullStack: async (entry) => {
         const fullStackRuntime = await resolveFullStackRuntime(entry);
-        const serverEnv = createServerEnv({
-          context,
-          env:
-            appUpdateController === null || appUpdateMode === null
-              ? fullStackRuntime.serverEnv
-              : {
-                  ...fullStackRuntime.serverEnv,
-                  [APP_UPDATE_MODE_ENV_NAME]: appUpdateMode,
-                },
-        });
+        const serverBaseEnv =
+          appUpdateController === null || appUpdateMode === null
+            ? fullStackRuntime.serverEnv
+            : {
+                ...fullStackRuntime.serverEnv,
+                [APP_UPDATE_MODE_ENV_NAME]: appUpdateMode,
+              };
         const sharedEnv = createSharedEnv({
           context,
           env: stripThreadContextEnv(fullStackRuntime.env),
@@ -4178,13 +4200,17 @@ export async function runBbApp(
                 serverUrl: context.serverUrl,
               });
           },
-          startServer: () =>
-            startFullStackServerProcess({
+          startServer: () => {
+            const serverContext = resolveFollowedInstallContext(context);
+            return startFullStackServerProcess({
               ...(options.beforeServerStart === undefined
                 ? {}
                 : { beforeStart: options.beforeServerStart }),
-              context,
-              env: serverEnv,
+              context: serverContext,
+              env: createServerEnv({
+                context: serverContext,
+                env: serverBaseEnv,
+              }),
               ...(appUpdateController === null
                 ? {}
                 : {
@@ -4192,7 +4218,8 @@ export async function runBbApp(
                       appUpdateController.attachServer(childProcess),
                   }),
               processes,
-            }),
+            });
+          },
         };
       },
       processes,
