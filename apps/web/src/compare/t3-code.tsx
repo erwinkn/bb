@@ -52,14 +52,9 @@ export const BB_VS_T3_CODE: Comparison = {
       title: "Agents",
       rows: [
         {
-          feature: "Agent-to-agent handoff",
-          bb: cell("yes", "Any provider, each in its own thread"),
-          competitor: cell("partial", "Subagents, inside one provider"),
-        },
-        {
           feature: "Message a subagent",
           bb: cell("yes", "Mid-run, from any device"),
-          competitor: cell("no", "Message the parent instead"),
+          competitor: cell("no", "Subagent threads can't take messages"),
         },
         {
           feature: "Switch accounts at usage limits",
@@ -138,11 +133,10 @@ export const BB_VS_T3_CODE: Comparison = {
             <p>
               Both are free, MIT-licensed apps that run Claude Code, Codex, and
               other coding agents in Git worktrees on your own machines, with
-              mobile and remote access. In bb, agents start and message each
-              other whatever the provider, and every agent they start gets a
-              thread you can open and message. You change bb with plugins
-              instead of a fork, and Account Pooler moves a thread to your next
-              account when one hits its limit.
+              mobile and remote access. In bb, every agent another agent starts
+              is a full thread you can open and message mid-run. You change bb
+              with plugins instead of a fork, and Account Pooler moves a thread
+              to your next account when one hits its limit.
             </p>
           ),
         },
@@ -174,8 +168,8 @@ export const BB_VS_T3_CODE: Comparison = {
           answer: (
             <ul>
               <li>
-                When an agent starts another, the new one is a full thread: you
-                can message it, and it can be a different provider.
+                When an agent starts another, the new one is a full thread you
+                can message.
               </li>
               <li>
                 Several threads can share one worktree, so a reviewer works
@@ -229,8 +223,8 @@ export const BB_VS_T3_CODE: Comparison = {
             <p>
               bb lets you rewind the conversation instead. Edit any earlier
               message to rerun the thread from there, or fork a new thread from
-              any message to try a different approach. Every change stays on the
-              thread’s own Git branch, so nothing lands until you merge it.
+              any message to try a different approach. In a worktree thread,
+              changes stay on that thread’s branch until you merge them.
             </p>
           ),
         },
