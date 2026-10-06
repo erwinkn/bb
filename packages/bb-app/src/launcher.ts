@@ -13,7 +13,7 @@ import {
 import { mutateManagedJsonFile } from "@bb/config/managed-json-file";
 import { access, readFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { dirname, join, resolve, win32 } from "node:path";
+import { basename, dirname, join, resolve, win32 } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -1293,19 +1293,57 @@ function runsFromSourceCheckout(entrypointUrl: string): boolean {
   return entrypointDir === resolve(entrypointDir, "..", "src");
 }
 
+function isBbAppEntrypoint(path: string): boolean {
+  if (basename(path) !== "bb-app.js" || basename(dirname(path)) !== "dist") {
+    return false;
+  }
+  try {
+    const packageJson: unknown = JSON.parse(
+      readFileSync(join(dirname(path), "..", "package.json"), "utf8"),
+    );
+    return (
+      typeof packageJson === "object" &&
+      packageJson !== null &&
+      "name" in packageJson &&
+      packageJson.name === "bb-app"
+    );
+  } catch {
+    return false;
+  }
+}
+
+function haveSameContents(left: string, right: string): boolean {
+  try {
+    return readFileSync(left).equals(readFileSync(right));
+  } catch {
+    return false;
+  }
+}
+
 export function resolveFollowedInstallContext(
   context: BbAppStartContext,
   launchPath: string | undefined = process.argv[1],
+  warn: (message: string) => void = (message) => log(yellow("!"), message),
 ): BbAppStartContext {
   if (launchPath === undefined || !existsSync(launchPath)) {
     return context;
   }
+  const entrypoint = realpathSync(launchPath);
+  if (!isBbAppEntrypoint(entrypoint)) {
+    return context;
+  }
   const installed = resolveBbAppStartContext({
-    entrypointUrl: pathToFileURL(realpathSync(launchPath)).href,
+    entrypointUrl: pathToFileURL(entrypoint).href,
     env: {},
     homeDir: homedir(),
   });
   if (installed.packageRoot === context.packageRoot) {
+    return context;
+  }
+  if (!haveSameContents(installed.daemonEntry, context.daemonEntry)) {
+    warn(
+      `Keeping the server in ${context.packageRoot}: ${installed.packageRoot} has a different host daemon, so switching to it needs a full bb-app restart`,
+    );
     return context;
   }
   return {

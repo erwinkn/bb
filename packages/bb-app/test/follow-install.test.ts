@@ -8,7 +8,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   resolveBbAppStartContext,
   resolveFollowedInstallContext,
@@ -22,15 +22,43 @@ afterEach(() => {
   }
 });
 
-function installBuild(root: string, name: string, version: string): string {
-  const packageRoot = join(root, name, "lib", "node_modules", "bb-app");
+function tempRoot(): string {
+  const root = mkdtempSync(join(tmpdir(), "bb-follow-install-"));
+  roots.push(root);
+  return root;
+}
+
+function writePackage(
+  packageRoot: string,
+  version: string,
+  daemon = "daemon",
+  name = "bb-app",
+): string {
   mkdirSync(join(packageRoot, "dist"), { recursive: true });
+  mkdirSync(join(packageRoot, "host-daemon", "dist"), { recursive: true });
   writeFileSync(join(packageRoot, "dist", "bb-app.js"), "");
   writeFileSync(
+    join(packageRoot, "host-daemon", "dist", "daemon-bundle.mjs"),
+    daemon,
+  );
+  writeFileSync(
     join(packageRoot, "package.json"),
-    JSON.stringify({ name: "bb-app", version }),
+    JSON.stringify({ name, version }),
   );
   return packageRoot;
+}
+
+function installBuild(
+  root: string,
+  name: string,
+  version: string,
+  daemon = "daemon",
+): string {
+  return writePackage(
+    join(root, name, "lib", "node_modules", "bb-app"),
+    version,
+    daemon,
+  );
 }
 
 function startContext(packageRoot: string) {
@@ -41,33 +69,35 @@ function startContext(packageRoot: string) {
   });
 }
 
+function currentLaunchPath(root: string): string {
+  return join(
+    root,
+    "current",
+    "lib",
+    "node_modules",
+    "bb-app",
+    "dist",
+    "bb-app.js",
+  );
+}
+
 describe("resolveFollowedInstallContext", () => {
-  it("follows a repointed install for the server and keeps runtime settings", () => {
-    const root = mkdtempSync(join(tmpdir(), "bb-follow-install-"));
-    roots.push(root);
+  it("follows a repointed install with the same host daemon and keeps runtime settings", () => {
+    const root = tempRoot();
     const oldRoot = installBuild(root, "old", "0.45.0");
-    const newRoot = installBuild(root, "new", "0.45.1");
+    const newRoot = installBuild(root, "new", "0.45.0");
     symlinkSync("new", join(root, "current"));
-    const launchPath = join(
-      root,
-      "current",
-      "lib",
-      "node_modules",
-      "bb-app",
-      "dist",
-      "bb-app.js",
-    );
 
     const context = resolveFollowedInstallContext(
       startContext(oldRoot),
-      launchPath,
+      currentLaunchPath(root),
     );
 
     expect(context.packageRoot).toBe(newRoot);
-    expect(context.appVersion).toBe("0.45.1");
     expect(context.serverEntry).toBe(
       join(newRoot, "server", "dist", "index.js"),
     );
+    expect(context.appDistDir).toBe(join(newRoot, "app", "dist"));
     expect(context.daemonEntry).toBe(
       join(oldRoot, "host-daemon", "dist", "daemon-bundle.mjs"),
     );
@@ -75,9 +105,59 @@ describe("resolveFollowedInstallContext", () => {
     expect(context.serverPort).toBe(48886);
   });
 
-  it("keeps the launch context when the install has not moved", () => {
-    const root = mkdtempSync(join(tmpdir(), "bb-follow-install-"));
-    roots.push(root);
+  it("keeps the running build when the repointed install has a different host daemon", () => {
+    const root = tempRoot();
+    const oldRoot = installBuild(root, "old", "0.45.0", "protocol 227");
+    installBuild(root, "new", "0.46.0", "protocol 228");
+    symlinkSync("new", join(root, "current"));
+    const context = startContext(oldRoot);
+    const warn = vi.fn();
+
+    expect(
+      resolveFollowedInstallContext(context, currentLaunchPath(root), warn),
+    ).toBe(context);
+    expect(warn).toHaveBeenCalledOnce();
+  });
+
+  it("keeps the desktop app's own package when a bridge script is the launch path", () => {
+    const desktop = tempRoot();
+    const packageRoot = writePackage(
+      join(desktop, "node_modules", "bb-app"),
+      "0.45.0",
+    );
+    mkdirSync(join(desktop, "dist"), { recursive: true });
+    writeFileSync(
+      join(desktop, "dist", "bb-app-bridge.mjs"),
+      'import "bb-app/dist/bb-app.js";\n',
+    );
+    const context = startContext(packageRoot);
+
+    expect(
+      resolveFollowedInstallContext(
+        context,
+        join(desktop, "dist", "bb-app-bridge.mjs"),
+      ),
+    ).toBe(context);
+  });
+
+  it("ignores a dist/bb-app.js that does not belong to bb-app", () => {
+    const root = tempRoot();
+    const packageRoot = installBuild(root, "only", "0.45.0");
+    const other = writePackage(
+      join(root, "other"),
+      "1.0.0",
+      "daemon",
+      "something-else",
+    );
+    const context = startContext(packageRoot);
+
+    expect(
+      resolveFollowedInstallContext(context, join(other, "dist", "bb-app.js")),
+    ).toBe(context);
+  });
+
+  it("keeps the launch context when the install has not moved or the path is missing", () => {
+    const root = tempRoot();
     const packageRoot = installBuild(root, "only", "0.45.0");
     const context = startContext(packageRoot);
 
