@@ -159,11 +159,7 @@
     "sonner"
   ],
   "splitBoundaries": {
-    "src/components/code/BbDiff.tsx": [
-      "boot",
-      "ThreadPage",
-      "NewThreadPage"
-    ],
+    "src/components/code/BbDiff.tsx": ["boot", "ThreadPage", "NewThreadPage"],
     "src/components/code/BbSourceCode.tsx": [
       "boot",
       "ThreadPage",
@@ -261,10 +257,7 @@
       "NewThreadPage",
       "PluginFrontend"
     ],
-    "src/views/RootComposeView.tsx": [
-      "boot",
-      "ThreadPage"
-    ]
+    "src/views/RootComposeView.tsx": ["boot", "ThreadPage"]
   },
   "onDemandPackages": {
     "@pierre/trees": "src/components/secondary-panel/ThreadStorageFileTree.tsx",

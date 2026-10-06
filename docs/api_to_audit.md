@@ -2644,6 +2644,44 @@ files, thread-storage files, and project files that use the primary host.
    this remains compatible with persisted opener tabs created before the field
    existed.
 
+## `experimental_VoiceInputTextarea` (`@get-bb/plugin-sdk/app`)
+
+**What it does.** A host-owned controlled textarea with bb's voice input. It
+takes `value`, `onValueChange`, and an optional `onVoiceInputActiveChange`;
+every other textarea attribute, including `ref` and `className`, reaches the
+underlying `<textarea>`. The caller styles the textarea; the host wraps it in
+a relative container and, when the browser supports voice input, adds bottom
+padding and the microphone, waveform, cancel, and stop controls. Finished
+transcripts are appended to `value` through `onValueChange` and stay editable;
+nothing is submitted. `onVoiceInputActiveChange` is true from the start of
+recording until transcription finishes or is cancelled, and false on unmount,
+so a form can hold navigation and submission. Unmounting discards late
+transcripts. It uses the same microphone preference, transcription service,
+and error handling as the prompt box. Without voice support it renders the
+plain textarea; the test harness renders that plain textarea too.
+
+The registry's `voice-input-textarea` item re-exports it, and the registry's
+`question-form` renders its free-text answer with it. Inside bb, the built-in
+Ask User Question and pi plugins and bb's own question form reach the same
+component through the `@bb/shared-ui/voice-input-textarea` module the build
+shims.
+
+**Audit before stabilizing.**
+
+1. **Prop surface.** Every textarea attribute passes through. Decide whether a
+   narrower explicit list is the better contract, and whether callers need to
+   style the host's wrapper (it is a plain block today, so a flex child cannot
+   stretch it).
+2. **Voice lifecycle.** Verify cancellation, microphone permissions, mobile
+   capture, and late transcription isolation when the component unmounts or
+   its `value` changes mid-transcription.
+3. **Unsupported hosts.** The textarea renders without controls when voice is
+   unsupported, with no reason shown. Decide whether callers need the
+   unsupported reason or a way to hide the controls.
+4. **Consumer count.** One form (the shared question form, used by Ask User
+   Question, pi, and bb's own questions). Confirm a third-party consumer before
+   the prefix drops.
+
 ## `experimental_SourceCode` / `experimental_Diff` (`@get-bb/plugin-sdk/app`)
 
 **Kept experimental (2026-08-22).** one consumer (the github plugin's `Diff`); items 2–4 (multi-file input, language override, worker pool at the component) all change the prop surface.
