@@ -147,6 +147,7 @@ export const pluginHandlerStatsSchema = z.object({
   count: z.number(),
   totalMs: z.number(),
   maxMs: z.number(),
+  maxCall: z.object({ label: z.string(), startedAt: z.number() }).optional(),
   errorCount: z.number(),
 });
 export type PluginHandlerStats = z.infer<typeof pluginHandlerStatsSchema>;
