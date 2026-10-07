@@ -22,6 +22,8 @@ Spawning:
     --project <id>                 Project (required; when omitted the error prints this thread's project ID to add)
     --parent-thread <id>           Parent thread (may be in another project)
     --parent-self                  Parent to the current thread (BB_THREAD_ID)
+    --parent-notices <mode>        Whether turn ends notify the parent: turns (default) or explicit
+    --final-reports-only           Same as --parent-notices explicit
     --lifecycle-owner-thread <id>  Archive/delete with this owner
     --provider <id>                Provider override
     --model <model>                Model override
@@ -77,6 +79,9 @@ Spawning:
   a hidden thread stay hidden too. Pass --visibility to override the inherited
   value. A hidden child still reports its turns and blockers to its parent
   thread; only source-derived forks stay silent.
+  With --final-reports-only (--parent-notices explicit), the child's turn ends
+  (completed, failed or interrupted) never notify the parent. The parent hears
+  only the messages the child sends it and its needs-input notices.
   A machine selector accepts an exact ID or an unambiguous name. It works with
   an unmanaged --environment path, --new-environment worktree, or the personal
   workspace. It cannot be combined with an existing environment ID because that
@@ -318,6 +323,8 @@ Ownership:
     --model <model>                        Set the sticky model for the next and later turns
     --reasoning-level <level>              Set the sticky reasoning level (provider-dependent)
     --visibility <visibility>              Set visible or hidden
+    --parent-notices <mode>                Whether turn ends notify the parent: turns or explicit
+    --final-reports-only                   Same as --parent-notices explicit
 
   Clearing a parent inherits the former parent's section unless --section or
   --clear-section is also supplied. Children released by environment archiving

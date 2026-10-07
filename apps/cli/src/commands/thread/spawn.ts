@@ -38,6 +38,11 @@ import {
   SERVICE_TIER_HELP,
 } from "./helpers.js";
 import { SEND_AT_HELP, parseSendAt } from "./send-time.js";
+import {
+  FINAL_REPORTS_ONLY_HELP,
+  PARENT_NOTICES_HELP,
+  resolveParentNoticesOption,
+} from "./parent-notices.js";
 
 const PROVIDER_HELP =
   "Provider ID for the thread. Omit to use the project's remembered provider choice";
@@ -75,6 +80,8 @@ interface ThreadSpawnCommandOptions {
   sourceSeqEnd?: string;
   visibility?: string;
   sendAt?: string;
+  parentNotices?: string;
+  finalReportsOnly?: boolean;
 }
 
 export function looksLikePath(value: string): boolean {
@@ -361,6 +368,8 @@ export function registerSpawnCommand(
     )
     .option("--parent-thread <id>", "Parent thread ID for worker thread links")
     .option("--parent-self", "Parent the new thread to BB_THREAD_ID")
+    .option("--parent-notices <mode>", PARENT_NOTICES_HELP)
+    .option("--final-reports-only", FINAL_REPORTS_ONLY_HELP)
     .option("--provider <id>", PROVIDER_HELP)
     .option(
       "--model <model>",
@@ -553,6 +562,7 @@ export function registerSpawnCommand(
           parentSelf: opts.parentSelf,
           parentThread: opts.parentThread,
         });
+        const parentNotices = resolveParentNoticesOption(opts);
         if (opts.originKind !== undefined && opts.originKind !== "fork") {
           throw new Error("--origin-kind must be fork.");
         }
@@ -598,6 +608,7 @@ export function registerSpawnCommand(
             startedOnBehalfOf: null,
             originKind: opts.originKind ?? null,
             ...(parentThreadId ? { parentThreadId } : {}),
+            ...(parentNotices ? { parentNotices } : {}),
             ...(opts.lifecycleOwnerThread !== undefined
               ? { lifecycleOwnerThreadId: opts.lifecycleOwnerThread }
               : {}),
@@ -624,7 +635,11 @@ export function registerSpawnCommand(
           thread.parentThreadId &&
           thread.parentThreadId === resolveContextThreadId()
         ) {
-          console.log("You will be notified when this thread is done.");
+          console.log(
+            parentNotices === "explicit"
+              ? "This thread reports to you by message; its turn ends will not notify you."
+              : "You will be notified when this thread is done.",
+          );
         }
         printThread(thread);
       }),

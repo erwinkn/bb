@@ -7,7 +7,6 @@ import {
 import {
   resolveEnvironmentMergeBaseBranch,
   type Environment,
-  type Thread,
   type ThreadEventRow,
   type ThreadGitDiffResponse,
   type ThreadPullRequest,
@@ -17,6 +16,7 @@ import {
 import { BbHttpError, type BbSdk } from "@bb/sdk";
 import type {
   EnvironmentDiffQuery,
+  ThreadResponse,
   ThreadTimelineResponse,
 } from "@bb/server-contract";
 import { THREAD_EVENT_LIST_PAGE_SIZE } from "@bb/server-contract";
@@ -33,6 +33,7 @@ import {
   printEnvironmentInfo,
 } from "../environment-helpers.js";
 import { fetchThreadPendingTodos, printPendingTodos } from "./pending-todos.js";
+import { describeParentNotices } from "./parent-notices.js";
 
 interface ThreadShowCommandOptions {
   self?: boolean;
@@ -62,7 +63,7 @@ interface ThreadOutputCommandOptions {
 }
 
 interface ThreadStatusPayload {
-  thread: Thread;
+  thread: ThreadResponse;
 }
 
 type ThreadShowEnvironmentJsonPayload = Environment & {
@@ -544,6 +545,9 @@ function printThreadStatus(
   console.log(`  Project: ${thread.projectId}`);
   if (thread.parentThreadId) {
     console.log(`  Parent: ${thread.parentThreadId}`);
+    console.log(
+      `  Parent notices: ${describeParentNotices(thread.parentNotices)}`,
+    );
   }
   if (thread.archivedAt !== null) {
     console.log(`  Archived: ${new Date(thread.archivedAt).toLocaleString()}`);
