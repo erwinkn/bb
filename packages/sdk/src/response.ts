@@ -10,15 +10,9 @@ export interface RequestTimeoutFetchOptions {
 
 interface RequestTimeoutContext {
   requestSignal: AbortSignal;
-  timeoutSignal: AbortSignal;
   timeoutMs: number;
-}
-
-type ResponseBodyReader<TBody> = () => Promise<TBody>;
-
-interface ReadResponseBodyWithTimeoutMappingArgs<TBody> {
-  context: RequestTimeoutContext;
-  read: ResponseBodyReader<TBody>;
+  timeoutReason(): DOMException | null;
+  finish(): void;
 }
 
 interface WrapRequestTimeoutResponseArgs {
@@ -42,13 +36,11 @@ export type JsonBodyOf<TResponse> = TResponse extends {
   ? TBody
   : never;
 
-const RESPONSE_BODY_READER_METHODS = new Set<PropertyKey>([
-  "arrayBuffer",
-  "blob",
-  "bytes",
-  "formData",
-  "json",
-  "text",
+const ORIGINAL_RESPONSE_PROPERTIES = new Set<PropertyKey>([
+  "headers",
+  "redirected",
+  "type",
+  "url",
 ]);
 
 const ERROR_EXTRACT_OPTS: { legacyKeys: readonly ["detail", "error"] } = {
@@ -99,26 +91,64 @@ export function createRequestTimeoutFetch(
   validateRequestTimeoutMs(options.timeoutMs);
 
   return async (input, init) => {
-    const timeoutSignal = AbortSignal.timeout(options.timeoutMs);
-    const requestSignal = init?.signal
-      ? AbortSignal.any([init.signal, timeoutSignal])
-      : timeoutSignal;
-    const context: RequestTimeoutContext = {
-      requestSignal,
-      timeoutSignal,
-      timeoutMs: options.timeoutMs,
-    };
+    const context = startRequestTimeout(options.timeoutMs, init?.signal);
 
     try {
-      const response = await fetch(input, { ...init, signal: requestSignal });
+      const response = await fetch(input, {
+        ...init,
+        signal: context.requestSignal,
+      });
       return wrapRequestTimeoutResponse({ context, response });
     } catch (error) {
+      context.finish();
       if (isRequestTimeoutError(context, error)) {
         throw new BbRequestTimeoutError(options.timeoutMs);
       }
       throw error;
     }
   };
+}
+
+function startRequestTimeout(
+  timeoutMs: number,
+  callerSignal: AbortSignal | null | undefined,
+): RequestTimeoutContext {
+  const controller = new AbortController();
+  let timeoutReason: DOMException | null = null;
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  const onCallerAbort = () => abort(callerSignal?.reason);
+  const finish = () => {
+    if (timer !== null) {
+      clearTimeout(timer);
+      timer = null;
+    }
+    callerSignal?.removeEventListener("abort", onCallerAbort);
+  };
+  const abort = (reason: unknown) => {
+    finish();
+    controller.abort(reason);
+  };
+  const context: RequestTimeoutContext = {
+    requestSignal: controller.signal,
+    timeoutMs,
+    timeoutReason: () => timeoutReason,
+    finish,
+  };
+
+  if (callerSignal?.aborted) {
+    controller.abort(callerSignal.reason);
+    return context;
+  }
+  callerSignal?.addEventListener("abort", onCallerAbort, { once: true });
+  timer = setTimeout(() => {
+    timeoutReason = new DOMException(
+      "The operation was aborted due to timeout",
+      "TimeoutError",
+    );
+    abort(timeoutReason);
+  }, timeoutMs);
+  timer.unref?.();
+  return context;
 }
 
 export async function readJsonResponse<TResponse extends SdkResponseLike>(
@@ -131,7 +161,8 @@ export async function readJsonResponse<TResponse extends SdkResponseLike>(
 export async function readVoidResponse<TResponse extends SdkResponseLike>(
   response: Promise<TResponse>,
 ): Promise<void> {
-  await resolveResponse(response);
+  const resolved = await resolveResponse(response);
+  await resolved.arrayBuffer();
 }
 
 export async function resolveResponse<TResponse extends SdkResponseLike>(
@@ -155,59 +186,36 @@ export async function resolveResponse<TResponse extends SdkResponseLike>(
   return response;
 }
 
-async function readResponseBodyWithTimeoutMapping<TBody>(
-  args: ReadResponseBodyWithTimeoutMappingArgs<TBody>,
-): Promise<TBody> {
-  try {
-    return await args.read();
-  } catch (error) {
-    if (isRequestTimeoutError(args.context, error)) {
-      throw new BbRequestTimeoutError(args.context.timeoutMs);
-    }
-    throw error;
-  }
-}
-
 function wrapRequestTimeoutResponse(
   args: WrapRequestTimeoutResponseArgs,
 ): Response {
   const { context, response } = args;
-  let body: ReadableStream<Uint8Array> | null | undefined;
+  if (response.body === null) {
+    context.finish();
+    return response;
+  }
+  const body = new Response(
+    wrapRequestTimeoutBody({ context, stream: response.body }),
+    {
+      headers: response.headers,
+      status: response.status,
+      statusText: response.statusText,
+    },
+  );
+  return proxyResponseBody(response, body);
+}
 
-  return new Proxy(response, {
+function proxyResponseBody(response: Response, body: Response): Response {
+  return new Proxy(body, {
     get(target, property) {
-      if (RESPONSE_BODY_READER_METHODS.has(property)) {
-        const read = Reflect.get(target, property, target);
-        if (typeof read === "function") {
-          return () =>
-            readResponseBodyWithTimeoutMapping({
-              context,
-              read: read.bind(target),
-            });
-        }
+      if (property === "clone") {
+        return () => proxyResponseBody(response, target.clone());
       }
-
-      switch (property) {
-        case "body":
-          if (target.body === null) {
-            return null;
-          }
-          body ??= wrapRequestTimeoutBody({
-            context,
-            stream: target.body,
-          });
-          return body;
-        case "clone":
-          return () =>
-            wrapRequestTimeoutResponse({
-              context,
-              response: target.clone(),
-            });
-        default: {
-          const value = Reflect.get(target, property, target);
-          return typeof value === "function" ? value.bind(target) : value;
-        }
-      }
+      const source = ORIGINAL_RESPONSE_PROPERTIES.has(property)
+        ? response
+        : target;
+      const value = Reflect.get(source, property, source);
+      return typeof value === "function" ? value.bind(source) : value;
     },
   });
 }
@@ -215,46 +223,50 @@ function wrapRequestTimeoutResponse(
 function wrapRequestTimeoutBody(
   args: WrapRequestTimeoutBodyArgs,
 ): ReadableStream<Uint8Array> {
-  let reader: ReadableStreamDefaultReader<Uint8Array> | null = null;
-  const getReader = () => {
-    reader ??= args.stream.getReader();
-    return reader;
-  };
+  const reader = args.stream.getReader();
 
-  return new ReadableStream<Uint8Array>({
-    async pull(controller) {
-      try {
-        const result = await getReader().read();
-        if (result.done) {
-          controller.close();
-          return;
+  return new ReadableStream<Uint8Array>(
+    {
+      async pull(controller) {
+        try {
+          const result = await reader.read();
+          if (result.done) {
+            args.context.finish();
+            controller.close();
+            return;
+          }
+          controller.enqueue(result.value);
+        } catch (error) {
+          args.context.finish();
+          if (isRequestTimeoutError(args.context, error)) {
+            controller.error(new BbRequestTimeoutError(args.context.timeoutMs));
+            return;
+          }
+          controller.error(error);
         }
-        controller.enqueue(result.value);
-      } catch (error) {
-        if (isRequestTimeoutError(args.context, error)) {
-          controller.error(new BbRequestTimeoutError(args.context.timeoutMs));
-          return;
-        }
-        controller.error(error);
-      }
+      },
+      cancel(reason) {
+        return reader.cancel(reason).finally(args.context.finish);
+      },
     },
-    cancel(reason) {
-      return getReader().cancel(reason);
-    },
-  });
+    { highWaterMark: 0 },
+  );
 }
 
 function isRequestTimeoutError(
   context: RequestTimeoutContext,
   error: unknown,
 ): boolean {
-  if (context.timeoutSignal.aborted && error === context.timeoutSignal.reason) {
+  const timeoutReason = context.timeoutReason();
+  if (timeoutReason === null) {
+    return false;
+  }
+  if (error === timeoutReason) {
     return true;
   }
 
   return (
-    context.timeoutSignal.aborted &&
-    context.requestSignal.reason === context.timeoutSignal.reason &&
+    context.requestSignal.reason === timeoutReason &&
     error instanceof Error &&
     (error.name === "AbortError" || error.name === "TimeoutError")
   );

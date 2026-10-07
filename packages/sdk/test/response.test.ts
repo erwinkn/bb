@@ -22,6 +22,7 @@ const SHORT_TIMEOUT_MS = 20;
 const SHORT_TIMEOUT_MESSAGE = requestTimeoutMessage("20 ms");
 
 afterEach(() => {
+  vi.useRealTimers();
   vi.restoreAllMocks();
 });
 
@@ -52,6 +53,7 @@ async function expectPendingFetchTimeout(
   args: PendingFetchTimeoutExpectation,
 ): Promise<void> {
   mockPendingFetchUntilAbort();
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
 
   const timeoutFetch = createRequestTimeoutFetch({
     timeoutMs: args.timeoutMs,
@@ -64,6 +66,7 @@ async function expectPendingFetchTimeout(
     name: REQUEST_TIMEOUT_ERROR_NAME,
   });
 
+  await vi.advanceTimersByTimeAsync(args.timeoutMs);
   await expectation;
 }
 
@@ -122,27 +125,6 @@ function getBytesReader(response: Response): () => Promise<Uint8Array> {
     throw new Error("Expected Response.bytes to be available");
   }
   return () => read();
-}
-
-function createAbortedTimeoutSignal(): AbortSignal {
-  const controller = new AbortController();
-  controller.abort(
-    new DOMException("The operation timed out.", "TimeoutError"),
-  );
-  return controller.signal;
-}
-
-interface ImmediateTimeoutSignalArgs {
-  timeoutMs: number;
-}
-
-function useImmediateTimeoutSignalFor(args: ImmediateTimeoutSignalArgs): void {
-  vi.spyOn(AbortSignal, "timeout").mockImplementation((timeoutMs) => {
-    if (timeoutMs === args.timeoutMs) {
-      return createAbortedTimeoutSignal();
-    }
-    return new AbortController().signal;
-  });
 }
 
 function readJson<TBody>(response: Response): Promise<TBody> {
@@ -327,15 +309,15 @@ describe("createRequestTimeoutFetch()", () => {
   });
 
   it("uses the default timeout when creating the node transport", async () => {
-    useImmediateTimeoutSignalFor({
-      timeoutMs: DEFAULT_BB_REQUEST_TIMEOUT_MS,
-    });
     mockPendingFetchUntilAbort();
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     const transport = createNodeTransport({ baseUrl: "http://server" });
 
-    await expect(transport.api.v1.hosts.$get()).rejects.toThrow(
+    const expectation = expect(transport.api.v1.hosts.$get()).rejects.toThrow(
       requestTimeoutMessage("75 seconds"),
     );
+    await vi.advanceTimersByTimeAsync(DEFAULT_BB_REQUEST_TIMEOUT_MS);
+    await expectation;
   });
 
   it("rejects negative timeout values", () => {
@@ -353,8 +335,6 @@ describe("createRequestTimeoutFetch()", () => {
   });
 
   it("formats plural timeout durations", async () => {
-    useImmediateTimeoutSignalFor({ timeoutMs: 2_000 });
-
     await expectPendingFetchTimeout({
       timeoutMs: 2_000,
       expectedMessage: requestTimeoutMessage("2 seconds"),
@@ -362,8 +342,6 @@ describe("createRequestTimeoutFetch()", () => {
   });
 
   it("formats non-integer second timeout durations as milliseconds", async () => {
-    useImmediateTimeoutSignalFor({ timeoutMs: 1_250 });
-
     await expectPendingFetchTimeout({
       timeoutMs: 1_250,
       expectedMessage: requestTimeoutMessage("1250 ms"),
