@@ -34,6 +34,10 @@ Build output goes to `.fork-build/`, which is listed in `.git/info/exclude`
   that HOME first, and pnpm before 10.33.2 could recurse doing so
   (pnpm/pnpm#11337); that took the machine down on 2026-10-07. The global
   pnpm is now 10.33.2 and still switches to 9.15.0 inside `~/Code/bb`.
+  `scripts/fork/build` (and so `deploy` and `upgrade`) checks this without
+  running pnpm: it stops when `HOME` is inside the checkout, or when the pnpm
+  on `PATH` is older than 10.33.2, is not the pinned version, and the pinned
+  version is not already in its tools directory.
 
 ## Scripts
 
