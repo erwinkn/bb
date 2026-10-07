@@ -54,6 +54,30 @@ package_version() {
   node -p "require('$1/package.json').version"
 }
 
+PNPM_SAFE_SWITCH_VERSION=10.33.2
+
+version_at_least() {
+  [ "$(printf '%s\n%s\n' "$2" "$1" | sort -V | head -1)" = "$2" ]
+}
+
+require_safe_pnpm() {
+  local wanted bin manifest version tools home_real
+  wanted=$(node -p "require('$REPO/package.json').packageManager.replace(/^pnpm@/, '')")
+  home_real=$(cd "$HOME" 2>/dev/null && pwd -P || printf '%s' "$HOME")
+  case "$home_real/" in
+    "$(cd "$REPO" && pwd -P)/"*) die "HOME ($HOME) is inside the checkout. pnpm would install pnpm@$wanted under it and, before $PNPM_SAFE_SWITCH_VERSION, recurse without end (pnpm/pnpm#11337). Use your real HOME." ;;
+  esac
+  bin=$(command -v pnpm) || die "pnpm is not on PATH"
+  manifest="$(dirname "$(readlink -f "$bin")")/../package.json"
+  version=$(node -p "require('$manifest').version" 2>/dev/null) \
+    || die "cannot read the version of $bin without running it; expected $manifest"
+  [ "$version" = "$wanted" ] && return 0
+  version_at_least "$version" "$PNPM_SAFE_SWITCH_VERSION" && return 0
+  tools="${PNPM_HOME:-${XDG_DATA_HOME:-$HOME/.local/share}/pnpm}/.tools/pnpm/$wanted/bin"
+  [ -d "$tools" ] && return 0
+  die "pnpm $version would install pnpm@$wanted into $(dirname "$tools"), and pnpm before $PNPM_SAFE_SWITCH_VERSION can recurse without end doing that (pnpm/pnpm#11337). Upgrade the global pnpm to $PNPM_SAFE_SWITCH_VERSION or later first."
+}
+
 migrations_digest() {
   (cd "$1/server/dist/drizzle" && ls ./*.sql | LC_ALL=C sort | xargs cat | sha256sum | cut -c1-16)
 }

@@ -20,6 +20,7 @@ for arg in "$@"; do
 done
 
 cd "$REPO"
+require_safe_pnpm
 mkdir -p "$FORK_BUILD"
 version=$(package_version "$REPO/packages/bb-app")
 log="$FORK_BUILD/build-$version.log"
