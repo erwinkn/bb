@@ -61,6 +61,7 @@ export {
   listThreadPluginMetadataRows,
   patchThreadPluginMetadata,
 } from "./thread-plugin-metadata.js";
+export * from "./parent-notices.js";
 
 export {
   createThread,

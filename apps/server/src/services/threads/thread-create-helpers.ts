@@ -6,6 +6,7 @@ import {
   getProject,
   getThread,
   isSqliteForeignKeyConstraint,
+  setThreadParentNoticesMode,
 } from "@bb/db";
 import type { DbNotifier } from "@bb/db";
 import type { HostDaemonCommand } from "@bb/host-daemon-contract";
@@ -124,6 +125,12 @@ export function createThreadRecord(
       status: "pending",
       startupContext: args.startupContext,
     });
+    if (args.request.parentNotices !== undefined) {
+      setThreadParentNoticesMode(deps.db, {
+        threadId: thread.id,
+        mode: args.request.parentNotices,
+      });
+    }
     emitPluginThreadCreated(thread);
     return thread;
   } catch (error) {

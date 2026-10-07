@@ -4,7 +4,10 @@ import type {
   ThreadEventTurnStatus,
   ChildThreadOutcome,
 } from "@bb/domain";
-import { listActiveBackgroundTaskCountsByThreadIds } from "@bb/db";
+import {
+  getThreadParentNoticesMode,
+  listActiveBackgroundTaskCountsByThreadIds,
+} from "@bb/db";
 import { renderTemplate } from "@bb/templates";
 import type { LoggedPendingInteractionWorkSessionDeps } from "../../types.js";
 import {
@@ -483,6 +486,11 @@ export async function queueChildThreadTurnNotificationBestEffort(
   args: QueueChildThreadTurnNotificationArgs,
 ): Promise<void> {
   try {
+    if (
+      getThreadParentNoticesMode(deps.db, args.childThread.id) === "explicit"
+    ) {
+      return;
+    }
     queueChildThreadTurnNotificationBatchItem(deps, args);
   } catch (error) {
     deps.logger.error(

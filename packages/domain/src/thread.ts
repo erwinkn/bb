@@ -418,6 +418,8 @@ export const threadSchema = z.object({
 });
 export type Thread = z.infer<typeof threadSchema>;
 
+export type ParentNoticesMode = "turns" | "explicit";
+
 export const threadWithRuntimeSchema = threadSchema.extend({
   runtime: threadRuntimeStateSchema,
 });

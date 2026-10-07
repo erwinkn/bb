@@ -14,6 +14,7 @@ import {
   markThreadDeleted,
   listLifecycleThreadTree,
   searchThreadsWithPendingInteractionState,
+  setThreadParentNoticesMode,
   updateThread,
   type ThreadSearchResultGroup as DbThreadSearchResultGroup,
   type UpdateThreadInput,
@@ -432,6 +433,15 @@ export function registerThreadBaseRoutes(app: Hono, deps: AppDeps): void {
     }
     if ("visibility" in payload) {
       metadataUpdate.visibility = payload.visibility;
+    }
+    if (payload.parentNotices !== undefined) {
+      setThreadParentNoticesMode(deps.db, {
+        threadId: thread.id,
+        mode: payload.parentNotices,
+      });
+      deps.hub.notifyThread(thread.id, ["parent-changed"], {
+        projectId: thread.projectId,
+      });
     }
     const updated =
       Object.keys(metadataUpdate).length > 0

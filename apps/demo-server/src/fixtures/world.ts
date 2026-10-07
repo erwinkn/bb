@@ -107,6 +107,7 @@ export function threadResponse(
     activeBackgroundAgentCount: 0,
     canRestoreEnvironment: false,
     canSpawnChild: true,
+    parentNotices: "turns",
     queuedMessageCount: 0,
   };
 }

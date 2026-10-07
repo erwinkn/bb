@@ -34,7 +34,7 @@ import {
   threadVisibilitySchema,
   threadWithRuntimeSchema,
 } from "@bb/domain";
-import type { CallerExecutionInputSource } from "@bb/domain";
+import type { CallerExecutionInputSource, ParentNoticesMode } from "@bb/domain";
 import { THREAD_EVENT_LIST_PAGE_SIZE } from "../common.js";
 import {
   timelineDeltaSchema,
@@ -87,6 +87,12 @@ export type ExistingThreadExecutionInputSources = z.infer<
   typeof existingThreadExecutionInputSourcesSchema
 >;
 
+export const parentNoticesModeSchema = z.enum([
+  "turns",
+  "explicit",
+]) satisfies z.ZodType<ParentNoticesMode>;
+export const DEFAULT_PARENT_NOTICES_MODE: ParentNoticesMode = "turns";
+
 export const createThreadRequestSchema = z
   .object({
     projectId: z.string().min(1),
@@ -94,6 +100,7 @@ export const createThreadRequestSchema = z
     origin: threadCreateOriginSchema,
     originPluginId: z.string().min(1).optional(),
     pluginMetadata: pluginMetadataSchema.optional(),
+    parentNotices: parentNoticesModeSchema.optional(),
     lifecycleOwnerThreadId: z.string().min(1).optional(),
     visibility: threadVisibilitySchema.optional(),
     title: z.string().min(1).optional(),
@@ -494,6 +501,7 @@ export const threadResponseSchema = threadWithRuntimeSchema.extend({
    */
   canRestoreEnvironment: z.boolean(),
   canSpawnChild: z.boolean(),
+  parentNotices: parentNoticesModeSchema,
   // How many messages are waiting on this thread's queue right now — waiting on
   // the clock, on the running turn, on provisioning, on an interaction, or on
   // a plugin. The count alone drives the pending-region and thread-row badges;
@@ -632,10 +640,12 @@ export const updateThreadRequestSchema = z
     model: z.string().min(1).nullable(),
     reasoningLevel: reasoningLevelSchema.nullable(),
     visibility: threadVisibilitySchema,
+    parentNotices: parentNoticesModeSchema,
   })
   .partial()
   .refine(
     (value) =>
+      value.parentNotices !== undefined ||
       value.title !== undefined ||
       value.sectionId !== undefined ||
       value.parentThreadId !== undefined ||
