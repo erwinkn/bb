@@ -29,6 +29,11 @@ Build output goes to `.fork-build/`, which is listed in `.git/info/exclude`
   which BB loads for threads in this checkout. `.bb/AGENTS.md` points every
   thread here at it. Agents patch, build and check. Only the coordinator
   deploys or rolls back.
+- Never run `pnpm`, `npm` or `turbo` under `env -i` or with a fresh `HOME`.
+  The checkout pins pnpm 9.15.0 (`packageManager`), so pnpm downloads it into
+  that HOME first, and pnpm before 10.33.2 could recurse doing so
+  (pnpm/pnpm#11337); that took the machine down on 2026-10-07. The global
+  pnpm is now 10.33.2 and still switches to 9.15.0 inside `~/Code/bb`.
 
 ## Scripts
 

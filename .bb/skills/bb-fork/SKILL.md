@@ -21,6 +21,11 @@ holds the tools, and `scripts/fork/<tool> --help` explains each one.
   sanitized copy.
 - Never put a checkout, worktree or `pnpm install` under `/tmp`. It is a RAM
   disk, and pnpm copies the whole store there.
+- Never run `pnpm`, `npm` or `turbo` under `env -i` or with a fresh `HOME`.
+  The checkout pins pnpm 9.15.0 (`packageManager`), so pnpm downloads it into
+  that HOME first, and pnpm before 10.33.2 could recurse doing so
+  (pnpm/pnpm#11337); that took the machine down on 2026-10-07. The global
+  pnpm is now 10.33.2 and still switches to 9.15.0 inside `~/Code/bb`.
 - Follow the repository's `AGENTS.md`. In particular, code comments are
   forbidden, and `oxlint` enforces it.
 
@@ -32,12 +37,14 @@ holds the tools, and `scripts/fork/<tool> --help` explains each one.
 2. Keep the change small and in as few files as possible. Every upstream
    upgrade has to replay it. Prefer new files (for example a new test file)
    over edits to upstream ones.
-3. Verify the touched package. Run tests with a clean environment, because
-   this shell exports the live `BB_SERVER_URL`:
+3. Verify the touched package. Typecheck and lint through turbo in your
+   normal environment. Run the test binary directly in a clean environment,
+   because this shell exports the live `BB_SERVER_URL`; never wrap pnpm or
+   turbo in `env -i`:
 
    ```bash
-   cd ~/Code/bb/apps/app && pnpm run typecheck && pnpm run lint
-   env -i HOME=/tmp/bb-test-home USER=$USER PATH=/usr/local/bin:/usr/bin:/bin \
+   cd ~/Code/bb && pnpm exec turbo run typecheck lint --filter=@bb/app
+   cd ~/Code/bb/apps/app && env -i HOME=/tmp/bb-test-home USER=$USER PATH=/usr/local/bin:/usr/bin:/bin \
      ./node_modules/.bin/vitest run --config vitest.config.ts src/components/thread
    ```
 
