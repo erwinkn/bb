@@ -101,6 +101,7 @@ import { runEventLoopWork } from "../system/event-loop-work.js";
 import { abortPluginToolCallsForPlugin } from "./plugin-tool-calls.js";
 import { buildCachedPluginServer } from "./plugin-server-cache.js";
 import { createPluginRpcCallerRegistry } from "./plugin-rpc-caller.js";
+import { createSlowHandlerLog } from "./slow-handler-log.js";
 
 const serverRuntimeDir = dirname(fileURLToPath(import.meta.url));
 const pluginSdkRuntimePath = join(serverRuntimeDir, "plugin-sdk-runtime.js");
@@ -377,6 +378,7 @@ export function createPluginRuntime(context: PluginRuntimeContext) {
   const { deps } = context;
   const settingsChanged = context.settingsChanged ?? (() => {});
   const logger = deps.logger;
+  const slowHandlerLog = createSlowHandlerLog(logger);
   const loadTimeoutMs = deps.loadTimeoutMs ?? DEFAULT_LOAD_TIMEOUT_MS;
   const serviceStopTimeoutMs =
     deps.serviceStopTimeoutMs ?? DEFAULT_SERVICE_STOP_TIMEOUT_MS;
@@ -856,7 +858,11 @@ export function createPluginRuntime(context: PluginRuntimeContext) {
       const elapsedMs = performance.now() - startedAt;
       stats.count += 1;
       stats.totalMs += elapsedMs;
-      if (elapsedMs > stats.maxMs) stats.maxMs = elapsedMs;
+      if (elapsedMs > stats.maxMs) {
+        stats.maxMs = elapsedMs;
+        stats.maxCall = { label, startedAt: Date.now() - elapsedMs };
+      }
+      slowHandlerLog.record(id, label, elapsedMs);
       pending.delete(marker);
       settle();
     }
