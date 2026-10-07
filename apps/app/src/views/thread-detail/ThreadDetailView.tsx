@@ -34,6 +34,7 @@ import { ThreadProviderContext } from "@/components/thread/thread-provider-conte
 import {
   defaultAppSettings,
   resolveEnvironmentMergeBaseBranch,
+  type ParentNoticesMode,
   type ThreadListEntry,
   type ThreadWithRuntime,
 } from "@bb/domain";
@@ -2053,6 +2054,15 @@ function ThreadDetailViewInternal(
     },
     [thread, updateThread],
   );
+  const handleParentNoticesChange = useCallback(
+    (mode: ParentNoticesMode) => {
+      if (!thread || updateThread.isPending) {
+        return;
+      }
+      updateThread.mutate({ id: thread.id, parentNotices: mode });
+    },
+    [thread, updateThread],
+  );
   const handleTimelineLocalFileLinkResolution = useCallback(
     (
       resolution: ThreadLocalFileLinkResolution,
@@ -2928,6 +2938,10 @@ function ThreadDetailViewInternal(
               updateThreadPending:
                 updateThread.isPending || updateEnvironment.isPending,
               storage: metadataStorage,
+              parentNotices: {
+                mode: thread.parentNotices,
+                onChange: handleParentNoticesChange,
+              },
               onAssignParent: handleAssignParent,
               onParentSelectorOpenChange: handleParentSelectorOpenChange,
               onRetryParentThreads: handleRetryParentThreads,
