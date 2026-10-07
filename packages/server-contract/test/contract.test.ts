@@ -413,6 +413,7 @@ const OPTIONAL_SERVER_FIELD_GROUPS: readonly OptionalServerFieldGroup[] = [
       "createThreadRequestSchema.sectionId",
       "createThreadRequestSchema.pinned",
       "createThreadRequestSchema.model",
+      "createThreadRequestSchema.parentNotices",
       "createThreadRequestSchema.parentThreadId",
       "createThreadRequestSchema.providerId",
       "createThreadRequestSchema.permissionMode",
@@ -491,6 +492,7 @@ const OPTIONAL_SERVER_FIELD_GROUPS: readonly OptionalServerFieldGroup[] = [
     fields: [
       "updateThreadRequestSchema.model",
       "updateThreadRequestSchema.sectionId",
+      "updateThreadRequestSchema.parentNotices",
       "updateThreadRequestSchema.parentThreadId",
       "updateThreadRequestSchema.reasoningLevel",
       "updateThreadRequestSchema.sessionOptions",

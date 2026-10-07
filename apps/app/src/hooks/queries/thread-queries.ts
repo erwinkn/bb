@@ -30,7 +30,10 @@ import type {
   TimelineTurnSummaryDetailsResponse,
 } from "@bb/server-contract";
 import { useDebouncedValue } from "../useDebouncedValue";
-import { applyTimelineDelta } from "@bb/server-contract";
+import {
+  applyTimelineDelta,
+  DEFAULT_PARENT_NOTICES_MODE,
+} from "@bb/server-contract";
 import type { ThreadListFilters } from "@bb/client-core";
 import type { FilePreview } from "@bb/client-core";
 import type { PathListOptions } from "@/lib/path-list-options";
@@ -759,6 +762,7 @@ function liftThreadListPlaceholder(
     activeBackgroundAgentCount: thread.activity.activeBackgroundAgentCount,
     canRestoreEnvironment: false,
     canSpawnChild: false,
+    parentNotices: DEFAULT_PARENT_NOTICES_MODE,
     queuedMessageCount: 0,
   };
 }

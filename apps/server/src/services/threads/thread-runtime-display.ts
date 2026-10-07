@@ -1,6 +1,7 @@
 import {
   getEnvironment,
   getSessionById,
+  getThreadParentNoticesMode,
   listActiveBackgroundTaskCountsByThreadIds,
   listLatestClosedSessionsForHosts,
   listLatestThreadStateEventRowsByThreadIds,
@@ -341,6 +342,7 @@ export function toThreadResponseFromThread(
       thread: args.thread,
     }),
     canSpawnChild: canThreadSpawnChild(deps, { thread: args.thread }),
+    parentNotices: getThreadParentNoticesMode(deps.db, args.thread.id),
     queuedMessageCount:
       listQueuedThreadMessageCountsByThreadIds(deps.db, {
         threadIds: [args.thread.id],

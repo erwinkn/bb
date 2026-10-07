@@ -759,6 +759,7 @@ function updateJson(args: ThreadUpdateArgs): UpdateThreadRequest {
     reasoningLevel: args.reasoningLevel,
     sessionOptions: args.sessionOptions,
     visibility: args.visibility,
+    parentNotices: args.parentNotices,
   };
 }
 
