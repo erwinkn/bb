@@ -9,7 +9,10 @@ import {
 } from "react";
 import { UncommittedChangesSection } from "./info/ChangesSection";
 import { CommitsSection } from "./info/CommitsSection";
-import { ForksSection, ChildThreadsSection } from "./info/RelatedThreadsSection";
+import {
+  ForksSection,
+  ChildThreadsSection,
+} from "./info/RelatedThreadsSection";
 import {
   ThreadStorageSection,
   type ThreadStorageSectionProps,
@@ -18,6 +21,7 @@ import { Link } from "react-router-dom";
 import type {
   Environment,
   GitBranchRefClassification,
+  ParentNoticesMode,
   Thread,
   ThreadListEntry,
   ThreadPullRequest,
@@ -77,6 +81,7 @@ import { PullRequestStateIcon } from "@/components/pull-request/PullRequestStatu
 import { GithubFaviconIcon } from "@/components/pull-request/GithubFaviconIcon";
 import { useUrlAnchorClickHandler } from "@/lib/url-open-routing";
 import { ParentThreadPicker } from "@/components/pickers/ParentThreadPicker";
+import { Switch } from "@bb/shared-ui/switch";
 
 interface ParentSelectorRowProps {
   thread: Thread;
@@ -187,6 +192,58 @@ export function ParentSelectorRow({
           defaultOpen={defaultOpen}
         />
       )}
+    </DetailRow>
+  );
+}
+
+export interface ThreadParentNoticesControl {
+  mode: ParentNoticesMode;
+  onChange: (mode: ParentNoticesMode) => void;
+}
+
+interface FinalReportsOnlyRowProps {
+  thread: Thread;
+  parentNotices: ThreadParentNoticesControl | undefined;
+  disabled: boolean;
+}
+
+export function FinalReportsOnlyRow({
+  thread,
+  parentNotices,
+  disabled,
+}: FinalReportsOnlyRowProps) {
+  if (!thread.parentThreadId || !parentNotices) {
+    return null;
+  }
+  return (
+    <DetailRow
+      label={<DetailRowIconLabel icon="BellDot">Notices</DetailRowIconLabel>}
+    >
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <label
+            className={cn(
+              "inline-flex items-center gap-2 text-foreground",
+              COARSE_POINTER_TEXT_SM_CLASS,
+            )}
+          >
+            <Switch
+              aria-label="Final reports only"
+              checked={parentNotices.mode === "explicit"}
+              disabled={disabled}
+              onCheckedChange={(checked) => {
+                parentNotices.onChange(checked ? "explicit" : "turns");
+              }}
+            />
+            Final reports only
+          </label>
+        </TooltipTrigger>
+        <TooltipContent>
+          {parentNotices.mode === "explicit"
+            ? "The parent hears only the messages this thread sends it and its needs-input notices."
+            : "The parent hears every turn this thread ends."}
+        </TooltipContent>
+      </Tooltip>
     </DetailRow>
   );
 }
@@ -780,6 +837,7 @@ export interface ThreadMetadataContentProps {
   isLoadingMergeBaseBranchOptions: boolean;
   updateThreadPending: boolean;
   storage?: ThreadStorageSectionProps;
+  parentNotices?: ThreadParentNoticesControl;
   onAssignParent: (parentThreadId: string | null) => void;
   onParentSelectorOpenChange: (open: boolean) => void;
   onRetryParentThreads: () => void;
@@ -906,6 +964,7 @@ export function ThreadMetadataContent(props: ThreadMetadataContentProps) {
     isLoadingMergeBaseBranchOptions,
     updateThreadPending,
     storage,
+    parentNotices,
     onAssignParent,
     onParentSelectorOpenChange,
     onRetryParentThreads,
@@ -938,6 +997,11 @@ export function ThreadMetadataContent(props: ThreadMetadataContentProps) {
             onAssignParent={onAssignParent}
             onParentSelectorOpenChange={onParentSelectorOpenChange}
             onRetryParentThreads={onRetryParentThreads}
+          />
+          <FinalReportsOnlyRow
+            thread={thread}
+            parentNotices={parentNotices}
+            disabled={updateThreadPending}
           />
           <ProjectRow projectId={projectId} />
           <EnvironmentRow
