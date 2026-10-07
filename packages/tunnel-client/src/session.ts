@@ -18,6 +18,11 @@ import {
 } from "@bb/tunnel-contract";
 import { headersForLoopbackRequest } from "./headers.js";
 import type { TunnelClientLogger } from "./logger.js";
+import {
+  createHttpRequestLog,
+  pathWithoutQuery,
+  type HttpRequestLog,
+} from "./request-log.js";
 
 const HEARTBEAT_INTERVAL_MS = 20_000;
 const HEARTBEAT_DEADLINE_MS = 60_000;
@@ -95,6 +100,7 @@ interface HttpStream {
   meta: OpenHttpFrame;
   chunks: Buffer[];
   abort: AbortController;
+  relayCloseReason: string | null;
 }
 interface WsStream {
   socket: NodeWebSocket;
@@ -132,7 +138,11 @@ export class TunnelSession {
   private remoteClientCount = 0;
   lastRemoteActivityAt: number | null = null;
 
-  constructor(private readonly options: TunnelSessionOptions) {}
+  private readonly requestLog: HttpRequestLog;
+
+  constructor(private readonly options: TunnelSessionOptions) {
+    this.requestLog = createHttpRequestLog(options.log);
+  }
 
   get remoteClients(): number {
     return this.remoteClientCount;
@@ -187,6 +197,7 @@ export class TunnelSession {
     this.httpStreams.clear();
     this.wsStreams.clear();
     this.setRemoteClients(0);
+    this.requestLog.dispose();
   }
 
   private noteActivity(): void {
@@ -221,6 +232,7 @@ export class TunnelSession {
           meta: frame,
           chunks: [],
           abort: new AbortController(),
+          relayCloseReason: null,
         };
         this.httpStreams.set(frame.streamId, stream);
         if (!frame.hasBody) void this.executeHttp(frame.streamId, stream);
@@ -254,6 +266,7 @@ export class TunnelSession {
       case "close-stream": {
         const h = this.httpStreams.get(frame.streamId);
         if (h) {
+          h.relayCloseReason = frame.reason;
           h.abort.abort();
           this.httpStreams.delete(frame.streamId);
           return;
@@ -305,8 +318,10 @@ export class TunnelSession {
       loopbackOrigin: new URL(resolved.origin).origin,
       ...(resolved.host !== undefined ? { host: resolved.host } : {}),
     });
+    const startedAt = performance.now();
+    let status: number | null = null;
+    let originTtfbMs: number | null = null;
     try {
-      const startedAt = performance.now();
       const body = meta.hasBody ? Buffer.concat(stream.chunks) : undefined;
       const res = await requestOriginHttp({
         url: new URL(`${resolved.origin.replace(/\/$/u, "")}${meta.path}`),
@@ -315,7 +330,8 @@ export class TunnelSession {
         body,
         signal: stream.abort.signal,
       });
-      const originTtfbMs = performance.now() - startedAt;
+      originTtfbMs = performance.now() - startedAt;
+      status = res.statusCode ?? 502;
       const respHeaders = responseHeaderPairs(res);
       const initialThreadLoad = isInitialThreadLoad(meta.path);
       if (initialThreadLoad) {
@@ -343,7 +359,7 @@ export class TunnelSession {
         this.options.log.info?.(
           [
             "bb connect thread load",
-            `path=${meta.path}`,
+            `path=${pathWithoutQuery(meta.path)}`,
             `status=${res.statusCode ?? 502}`,
             `originTtfbMs=${roundDurationMs(originTtfbMs)}`,
             `originBodyMs=${roundDurationMs(totalMs - originTtfbMs)}`,
@@ -356,7 +372,7 @@ export class TunnelSession {
     } catch (e) {
       if (!stream.abort.signal.aborted) {
         this.options.log.warn(
-          `origin http error on ${meta.method} ${new URL(meta.path, "http://bb.local").pathname}: ${String(e)}`,
+          `origin http error on ${meta.method} ${pathWithoutQuery(meta.path)}: ${String(e)}`,
         );
         this.send({
           type: "close-stream",
@@ -367,6 +383,14 @@ export class TunnelSession {
       }
     } finally {
       this.httpStreams.delete(streamId);
+      this.requestLog.record({
+        method: meta.method,
+        path: meta.path,
+        status,
+        originTtfbMs,
+        totalMs: performance.now() - startedAt,
+        relayCloseReason: stream.relayCloseReason,
+      });
     }
   }
 
