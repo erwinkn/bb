@@ -58,6 +58,8 @@ Ownership:
     --model <model>                        Set the sticky model for the next and later turns
     --reasoning-level <level>              Set the sticky reasoning level (provider-dependent)
     --visibility <visibility>              Set visible or hidden
+    --parent-notices <mode>                Whether turn ends notify the parent: turns or explicit
+    --final-reports-only                   Same as --parent-notices explicit
 
   Clearing a parent inherits the former parent's section unless --section or
   --clear-section is also supplied. Children released by environment archiving
