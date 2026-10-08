@@ -213,7 +213,7 @@ const threadEntryMapByPayload = new WeakMap<
   ReadonlyMap<string, ThreadListEntry>
 >();
 
-function threadEntryMapFor(
+export function threadEntryMapFor(
   data: ReturnType<typeof useSidebarNavigation>["data"],
 ): ReadonlyMap<string, ThreadListEntry> {
   if (data === undefined) return EMPTY_ENTRIES;

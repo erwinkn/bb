@@ -58,6 +58,7 @@ interface ThreadDetailHeaderProps {
   onOpenThreadGitAction: (target: ThreadGitActionDialogTarget) => void;
   onToggleSecondaryPanel: () => void;
   pluginActions?: ReactNode;
+  renderTitle?: (title: ReactNode) => ReactNode;
   threadHeaderGitActions: ThreadHeaderGitAction[];
   threadId: string;
   threadTitle: string;
@@ -72,6 +73,7 @@ export function ThreadDetailHeader({
   onOpenThreadGitAction,
   onToggleSecondaryPanel,
   pluginActions,
+  renderTitle,
   threadHeaderGitActions,
   threadId,
   threadTitle,
@@ -152,7 +154,7 @@ export function ThreadDetailHeader({
   const showRightPanelToggle =
     secondaryPanelHost === null && (!isSecondaryPanelOpen || isCompactViewport);
 
-  const center = (
+  const title = (
     <>
       <div
         data-pane-header-focus-tab={
@@ -186,6 +188,12 @@ export function ThreadDetailHeader({
           {childPillLabel}
         </Pill>
       ) : null}
+    </>
+  );
+
+  const center = (
+    <>
+      {renderTitle ? renderTitle(title) : title}
       {actionsMenu == null ? null : (
         <span
           className={cn(

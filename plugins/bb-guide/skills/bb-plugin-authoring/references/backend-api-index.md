@@ -280,6 +280,11 @@ Read the installed declarations for exact current signatures.
 - `PluginThreadEventPayloads`
 - `PluginThreadHeaderActionProps`
 - `PluginThreadHeaderActionRegistration`
+- `ExperimentalThreadGroupTabsRegistration`
+- `ExperimentalThreadGroupTabsProps`
+- `ExperimentalThreadGroup`
+- `ExperimentalThreadGroupTab`
+- `ExperimentalThreadGroupCreateAction`
 - `PluginThreadListProps`
 - `PluginThreadListRegistration`
 - `PluginThreadPanelActionContext`

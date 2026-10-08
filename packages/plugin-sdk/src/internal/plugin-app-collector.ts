@@ -30,6 +30,7 @@ import type {
   ExperimentalSidebarHeaderRegistration,
   PluginSourceCodeRendererRegistration,
   PluginThreadHeaderActionRegistration,
+  ExperimentalThreadGroupTabsRegistration,
   ExperimentalPluginBrowserToolbarActionRegistration,
   PluginThreadListRegistration,
   PluginThreadPanelActionRegistration,
@@ -357,6 +358,7 @@ export interface CollectedPluginAppRegistrations {
   experimentalSidebarHeaders: ExperimentalSidebarHeaderRegistration[];
   threadLists: PluginThreadListRegistration[];
   threadHeaderActions: PluginThreadHeaderActionRegistration[];
+  threadGroupTabs: ExperimentalThreadGroupTabsRegistration[];
   browserToolbarActions: ExperimentalPluginBrowserToolbarActionRegistration[];
   fileOpeners: PluginFileOpenerRegistration[];
   sourceCodeRenderers: PluginSourceCodeRendererRegistration[];
@@ -483,6 +485,7 @@ export function collectPluginAppRegistrations(
     experimentalSidebarHeaders: [],
     threadLists: [],
     threadHeaderActions: [],
+    threadGroupTabs: [],
     browserToolbarActions: [],
     fileOpeners: [],
     sourceCodeRenderers: [],
@@ -513,6 +516,7 @@ export function collectPluginAppRegistrations(
     sidebarHeader: new Set<string>(),
     threadList: new Set<string>(),
     threadHeaderAction: new Set<string>(),
+    threadGroupTabs: new Set<string>(),
     browserToolbarAction: new Set<string>(),
     fileOpener: new Set<string>(),
     sourceCodeRenderer: new Set<string>(),
@@ -810,6 +814,19 @@ export function collectPluginAppRegistrations(
           id,
           title: requireNonEmptyString(kind, "title", registration.title),
           component: requireComponent(kind, registration.component),
+        });
+      },
+      experimental_threadGroupTabs(registration) {
+        const kind = "slots.experimental_threadGroupTabs";
+        const id = requireSlotId(kind, registration?.id);
+        requireUniqueId(kind, seenIds.threadGroupTabs, id);
+        if (typeof registration.useThreadGroup !== "function") {
+          throw new Error(`${kind}: "useThreadGroup" must be a function`);
+        }
+        collected.threadGroupTabs.push({
+          id,
+          title: requireNonEmptyString(kind, "title", registration.title),
+          useThreadGroup: registration.useThreadGroup,
         });
       },
       experimental_browserToolbarAction(registration) {

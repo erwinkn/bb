@@ -163,6 +163,46 @@ A common pairing with a replaced sidebar: hide child threads from the list and
 surface them here instead, filtering `experimental_useSidebarThreads()` by
 `parentThreadId === threadId`.
 
+### Tabs over a group of threads
+
+`app.slots.experimental_threadGroupTabs` shows related threads as tabs in
+place of the thread title. You supply a hook that returns the group for a
+thread; bb draws the tabs, opens a tab's thread in the same pane, and owns the
+keyboard, overflow, and status glyphs.
+
+```tsx
+app.slots.experimental_threadGroupTabs({
+  id: "initiative",
+  title: "Initiative threads",
+  useThreadGroup: ({ threadId, projectId }) => {
+    const group = useGroupFor(threadId);
+    if (group === null) return null;
+    return {
+      tabs: [
+        { threadId: group.coordinatorId, label: "Coordinator", pinned: true },
+        ...group.discussions.map((id) => ({ threadId: id })),
+      ],
+      create: {
+        label: "New discussion",
+        onCreate: () => createDiscussion(group.id),
+      },
+    };
+  },
+});
+```
+
+`useThreadGroup` is a React hook called inside each thread header, so
+`useRpc` and `useRealtime` work in it; return `null` for threads outside any
+group. A tab without `label` shows the thread's title, archived threads
+included. Pinned tabs come first and stay in view while the others scroll. On
+a narrow header, pinned and scrolling tabs split the strip evenly, either side
+handing space it doesn't need to the other, and pinned labels truncate to fit.
+`onCreate` may
+resolve to the new thread's id, which bb then opens in the same pane. Tab
+status comes from bb's own thread status, including a status your plugin set
+on the sidebar row. When several plugins return a group for one thread, the
+first plugin id in lexical order wins.
+
 ### A control in the Browser toolbar
 
 `app.slots.experimental_browserToolbarAction` renders a component beside the

@@ -1962,7 +1962,11 @@ export function PromptBoxInternal({
 
     const focusEditor = () => {
       if (editor.isDestroyed) return;
-      if (document.activeElement?.closest("[data-sidebar-rename-editor]"))
+      if (
+        document.activeElement?.closest(
+          "[data-sidebar-rename-editor], [data-thread-group-tabs]",
+        )
+      )
         return;
       focusEditorAtEnd(editor);
       scheduleRevealEditorSelection();

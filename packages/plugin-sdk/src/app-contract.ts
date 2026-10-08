@@ -404,6 +404,59 @@ export interface PluginThreadHeaderActionProps {
   isCompactViewport: boolean;
 }
 
+/**
+ * Props passed to an `experimental_threadGroupTabs` registration's
+ * `useThreadGroup` hook, once per thread header.
+ */
+export interface ExperimentalThreadGroupTabsProps {
+  /**
+   * The thread this header belongs to. A split layout renders one header per
+   * pane, so the hook runs once per visible thread.
+   */
+  threadId: string;
+  projectId: string;
+}
+
+/** One tab in a thread group. Selecting it opens the thread in the same pane. */
+export interface ExperimentalThreadGroupTab {
+  threadId: string;
+  /** Tab text. Omit it to show the thread's current title. */
+  label?: string;
+  /**
+   * Pinned tabs come first and stay in view while the rest of the strip
+   * scrolls. Defaults to false.
+   */
+  pinned?: boolean;
+}
+
+/** The "+" button at the end of a thread group's tab strip. */
+export interface ExperimentalThreadGroupCreateAction {
+  /** Accessible name and tooltip, e.g. "New discussion". */
+  label: string;
+  /**
+   * Runs when the user presses "+". Return (or resolve to) the new thread's
+   * id to have bb open it in the same pane; return nothing to stay put. The
+   * button is disabled until a returned promise settles, and a rejection is
+   * shown as an error toast.
+   */
+  onCreate(): string | void | Promise<string | void>;
+}
+
+/**
+ * The threads a header shows as tabs. Status glyphs are not part of the
+ * group: each tab shows bb's own thread status (running, waiting for input,
+ * unread), including any status a plugin set on the thread's sidebar row.
+ */
+export interface ExperimentalThreadGroup {
+  /**
+   * In display order; bb moves pinned tabs to the front and keeps their
+   * relative order. Include the thread the header belongs to, or no tab is
+   * shown as selected.
+   */
+  tabs: readonly ExperimentalThreadGroupTab[];
+  create?: ExperimentalThreadGroupCreateAction;
+}
+
 /** JavaScript world a Browser page expression runs in. */
 export type ExperimentalPluginBrowserPageWorld = "isolated" | "main";
 
@@ -1508,6 +1561,32 @@ export interface PluginThreadHeaderActionRegistration {
   component: ComponentType<PluginThreadHeaderActionProps>;
 }
 
+/**
+ * Show a thread as one tab in a group of related threads.
+ *
+ * bb renders the strip in place of the thread title in the header, and owns
+ * selection, keyboard navigation, overflow, and per-tab status. The plugin
+ * only says which threads belong together. Threads outside any group keep the
+ * plain title.
+ */
+export interface ExperimentalThreadGroupTabsRegistration {
+  /** Unique within the plugin; letters, digits, `-`, `_`. */
+  id: string;
+  /** Accessible name for the tab strip, e.g. "Initiative threads". */
+  title: string;
+  /**
+   * A React hook bb calls inside each thread header, under the plugin's own
+   * context, so `useRpc`, `useRealtime` and other hooks work here. Return
+   * null when the thread is not in a group. Follow the rules of hooks: call
+   * the same hooks in the same order on every render. When several plugins
+   * return a group for one thread, the first plugin id in lexical order wins,
+   * independent of bundle load order.
+   */
+  useThreadGroup(
+    props: ExperimentalThreadGroupTabsProps,
+  ): ExperimentalThreadGroup | null;
+}
+
 export interface ExperimentalPluginBrowserToolbarActionRegistration {
   /** Unique within the plugin; letters, digits, `-`, `_`. */
   id: string;
@@ -2108,6 +2187,14 @@ export interface PluginAppSlots {
    */
   experimental_threadHeaderAction(
     registration: PluginThreadHeaderActionRegistration,
+  ): void;
+  /**
+   * Show the thread header as tabs over a group of related threads (see
+   * {@link ExperimentalThreadGroupTabsRegistration}). Experimental: see
+   * docs/api_to_audit.md.
+   */
+  experimental_threadGroupTabs(
+    registration: ExperimentalThreadGroupTabsRegistration,
   ): void;
   /** Render a component beside each Browser tab's address bar. */
   experimental_browserToolbarAction(

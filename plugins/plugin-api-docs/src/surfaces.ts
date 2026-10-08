@@ -222,8 +222,16 @@ export const SURFACE_GROUPS: SurfaceGroup[] = [
           "Render a React component rather than a plain button, so it can show live state",
           "Receive the id of the thread currently on screen",
           "Render in the same row as bb's own header controls",
+          'Turn the title into tabs over a group of related threads; bb draws the tabs, their status, and the "+" button',
         ],
-        apiSymbols: ["PluginThreadHeaderActionRegistration"],
+        apiSymbols: [
+          "PluginThreadHeaderActionRegistration",
+          "ExperimentalThreadGroupTabsRegistration",
+          "ExperimentalThreadGroupTabsProps",
+          "ExperimentalThreadGroup",
+          "ExperimentalThreadGroupTab",
+          "ExperimentalThreadGroupCreateAction",
+        ],
         experimental: true,
       },
       {

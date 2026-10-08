@@ -2907,6 +2907,50 @@ deliberately: it mounts once, and a crash there should disable it everywhere.
 Confirm that split before stabilizing, and decide whether other multi-mount
 slots need the same treatment.
 
+## `app.slots.experimental_threadGroupTabs` (`@get-bb/plugin-sdk/app`)
+
+**What it does.** Shows a thread header as tabs over a group of related
+threads, in place of the title. The plugin registers a `useThreadGroup` hook;
+bb calls it inside each thread header, under the plugin's context and crash
+boundary, with that pane's `threadId` and `projectId`. It returns `null` for
+threads outside any group, or `{ tabs, create? }`. Each tab is a `threadId`
+with an optional `label` (default: the thread's title) and `pinned` flag.
+
+bb owns the rest: pinned tabs first and outside the scrolling area (when the
+strip is too narrow, pinned and scrolling tabs split it evenly, either side
+handing space it doesn't need to the other, and pinned labels truncate), the
+selected tab kept in view as the group or width changes, `role="tablist"` with
+arrow/Home/End keys and a roving tab stop (a tab chosen from the keyboard keeps
+focus after the pane changes thread), horizontal scroll with edge fades,
+per-tab titles and status (live from the sidebar; archived and other unlisted
+threads from the Archive list or thread detail, with loading and unavailable
+states), opening a tab's thread in the same pane, and the "+" button. `create.onCreate` may return or resolve to a thread id,
+which bb opens in the same pane; the button is disabled while it runs, and a
+rejection shows an error toast. When the plugin returns `null` or crashes, the
+plain title comes back. When several plugins claim one thread, the first
+plugin id in lexical order wins, independent of bundle load order (the slot
+store sorts plugin ids).
+
+**Audit before stabilizing.**
+
+1. **Hook as registration.** This is the first registration member that is a
+   React hook rather than a component or callback. Confirm the pattern, or
+   replace it with a component that renders a host-provided strip.
+2. **Title replacement.** The strip replaces the title, the child/side-chat
+   pill, double-click rename, and the split-pane focus marker (the selected
+   tab carries the focus surface and starts a pane drag instead). Confirm no
+   other title behavior is needed, and whether the full thread title should
+   stay reachable (today: the tab tooltip and the actions menu's Rename).
+3. **Precedence.** "Lexically first plugin id wins" is implicit. Decide
+   whether conflicts should merge, be user-chosen, or be rejected.
+4. **First paint.** A hook that loads asynchronously returns `null` first, so
+   the title shows briefly before the tabs. Decide whether the host should
+   offer a pending state.
+5. **Create result.** `onCreate` returns a bare id and bb looks up its project.
+   Confirm that beats returning `{ threadId, projectId }`.
+6. **Guide.** The Plugin Guide lists the types on the "Thread header controls"
+   card, but the wireframe does not draw the strip yet.
+
 ## `app.slots.experimental_browserToolbarAction` (`@get-bb/plugin-sdk/app`)
 
 **What it does.** Renders a plugin component beside the address bar in each

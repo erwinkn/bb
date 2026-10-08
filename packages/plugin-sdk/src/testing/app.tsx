@@ -73,6 +73,7 @@ import {
   type PluginSidebarThreadsState,
   type PluginSourceCodeRendererRegistration,
   type PluginThreadHeaderActionRegistration,
+  type ExperimentalThreadGroupTabsRegistration,
   type ExperimentalPluginBrowserToolbarActionRegistration,
   type PluginThreadListRegistration,
   type PluginThreadPanelActionRegistration,
@@ -1250,6 +1251,7 @@ export interface CapturedPluginApp {
   experimentalSidebarHeaders: ExperimentalSidebarHeaderRegistration[];
   threadLists: PluginThreadListRegistration[];
   threadHeaderActions: PluginThreadHeaderActionRegistration[];
+  threadGroupTabs: ExperimentalThreadGroupTabsRegistration[];
   browserToolbarActions: ExperimentalPluginBrowserToolbarActionRegistration[];
   fileOpeners: PluginFileOpenerRegistration[];
   sourceCodeRenderers: PluginSourceCodeRendererRegistration[];

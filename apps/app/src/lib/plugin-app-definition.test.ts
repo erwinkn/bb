@@ -120,6 +120,50 @@ describe("collectPluginAppRegistrations — experimental_threadHeaderAction", ()
   });
 });
 
+describe("collectPluginAppRegistrations — experimental_threadGroupTabs", () => {
+  const useThreadGroup = () => null;
+
+  it("collects a thread group", () => {
+    const definition = definePluginApp((app) => {
+      app.slots.experimental_threadGroupTabs({
+        id: "initiative",
+        title: "Initiative threads",
+        useThreadGroup,
+      });
+    });
+    expect(collectPluginAppRegistrations(definition).threadGroupTabs).toEqual([
+      { id: "initiative", title: "Initiative threads", useThreadGroup },
+    ]);
+  });
+
+  it("rejects a registration without a hook", () => {
+    const definition = definePluginApp((app) => {
+      app.slots.experimental_threadGroupTabs({
+        id: "initiative",
+        title: "Initiative threads",
+      } as never);
+    });
+    expect(() => collectPluginAppRegistrations(definition)).toThrow(
+      '"useThreadGroup" must be a function',
+    );
+  });
+
+  it("rejects two thread groups with the same id", () => {
+    const definition = definePluginApp((app) => {
+      for (const title of ["One", "Two"]) {
+        app.slots.experimental_threadGroupTabs({
+          id: "initiative",
+          title,
+          useThreadGroup,
+        });
+      }
+    });
+    expect(() => collectPluginAppRegistrations(definition)).toThrow(
+      /initiative/,
+    );
+  });
+});
+
 describe("collectPluginAppRegistrations — experimental_browserToolbarAction", () => {
   it("collects a browser toolbar action", () => {
     const definition = definePluginApp((app) => {

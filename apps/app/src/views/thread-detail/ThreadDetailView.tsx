@@ -98,6 +98,7 @@ import {
   type ThreadActionsMenuResponsiveAction,
 } from "@/components/thread/ThreadActionsMenu";
 import { PluginThreadHeaderActions } from "@/components/plugin/PluginThreadHeaderActions";
+import { PluginThreadGroupTabs } from "@/components/plugin/PluginThreadGroupTabs";
 import { ThreadWorkspaceOpenButton } from "@/components/thread/ThreadWorkspaceOpenButton";
 import {
   formatEnvironmentDisplay,
@@ -2527,6 +2528,13 @@ function ThreadDetailViewInternal(
           projectId={thread.projectId}
         />
       }
+      renderTitle={(title) => (
+        <PluginThreadGroupTabs
+          fallback={title}
+          projectId={thread.projectId}
+          threadId={thread.id}
+        />
+      )}
       threadHeaderGitActions={
         executionUnavailable ? [] : gitActions.threadHeaderGitActions
       }

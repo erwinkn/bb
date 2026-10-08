@@ -118,6 +118,7 @@ Read the installed SDK declarations for the exact current signatures.
 - `ExperimentalSidebarHeaderProps`
 - `PluginThreadListProps`
 - `PluginThreadHeaderActionProps`
+- `ExperimentalThreadGroupTabsProps`
 - `ExperimentalPluginBrowserToolbarActionProps`
 - `ExperimentalPluginBrowserPage`
 - `ExperimentalPluginBrowserPageEvaluateOptions`
@@ -183,6 +184,10 @@ Read the installed SDK declarations for the exact current signatures.
 - `PluginBoundThreadsArea`
 - `PluginBrowserBbSdk`
 - `PluginThreadHeaderActionRegistration`
+- `ExperimentalThreadGroupTabsRegistration`
+- `ExperimentalThreadGroup`
+- `ExperimentalThreadGroupTab`
+- `ExperimentalThreadGroupCreateAction`
 - `ExperimentalPluginBrowserToolbarActionRegistration`
 - `PluginSidebarSplitPane`
 - `PluginSidebarSplitLayout`

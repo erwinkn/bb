@@ -299,6 +299,12 @@ function pluginAppSurfaceItems(
     ),
     ...namedSlotItems(
       pluginId,
+      slots.threadGroupTabs,
+      "thread-group-tabs",
+      "Shows related threads as tabs in thread headers.",
+    ),
+    ...namedSlotItems(
+      pluginId,
       slots.browserToolbarActions,
       "browser-toolbar",
       "Adds an action to Browser tab toolbars.",

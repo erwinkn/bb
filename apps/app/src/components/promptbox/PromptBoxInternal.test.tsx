@@ -1388,6 +1388,35 @@ describe("PromptBoxInternal controlled value sync", () => {
     }
   });
 
+  it("keeps focus on a thread-group tab when composer autofocus starts", async () => {
+    const restoreMatchMedia = mockPointerCoarse(false);
+    const strip = document.createElement("div");
+    strip.setAttribute("data-thread-group-tabs", "");
+    const tab = document.createElement("button");
+    tab.setAttribute("role", "tab");
+    strip.append(tab);
+    document.body.append(strip);
+    try {
+      const props = createPromptBoxProps({ autoFocus: false });
+      const view = render(<PromptBoxInternal {...props} />);
+      await waitFor(() =>
+        expect(getPromptEditorElement()).toBeInstanceOf(HTMLElement),
+      );
+      tab.focus();
+      view.rerender(<PromptBoxInternal {...props} autoFocus />);
+      await act(
+        () =>
+          new Promise<void>((resolve) =>
+            requestAnimationFrame(() => resolve()),
+          ),
+      );
+      expect(document.activeElement).toBe(tab);
+    } finally {
+      strip.remove();
+      restoreMatchMedia();
+    }
+  });
+
   it("releases passive editor focus when autofocus becomes blocked", async () => {
     const restoreMatchMedia = mockPointerCoarse(false);
     try {
