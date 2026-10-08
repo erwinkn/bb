@@ -33,7 +33,7 @@ export interface SdkSessionOptions {
   allowBypassPermissions: boolean;
   sandbox?: Options["sandbox"];
   hooks?: Options["hooks"];
-  mcpServers?: Record<string, McpSdkServerConfigWithInstance>;
+  createMcpServers?: () => Record<string, McpSdkServerConfigWithInstance>;
   allowedTools?: string[];
   canUseTool?: CanUseTool;
   env?: NodeJS.ProcessEnv;
@@ -176,6 +176,7 @@ export class SdkSession {
     private readonly options: SdkSessionOptions,
     private readonly onMessage: SdkSessionMessageHandler,
     private readonly onDone: SdkSessionDoneHandler,
+    private readonly systemPromptOverride?: SdkSessionOptions["systemPrompt"],
   ) {
     this.completion = new Promise((resolve) => {
       this.complete = resolve;
@@ -247,7 +248,7 @@ export class SdkSession {
     const sdkOptions: Options = {
       abortController: this.abortController,
       cwd: this.options.cwd,
-      systemPrompt: this.options.systemPrompt,
+      systemPrompt: this.systemPromptOverride ?? this.options.systemPrompt,
       ...permissionOptions,
       ...(experimental_isProviderBridgeRecording()
         ? {
@@ -264,8 +265,8 @@ export class SdkSession {
       persistSession: true,
       env: this.options.env ?? process.env,
       stderr: onStderr,
-      ...(this.options.mcpServers
-        ? { mcpServers: this.options.mcpServers }
+      ...(this.options.createMcpServers
+        ? { mcpServers: this.options.createMcpServers() }
         : {}),
       ...(this.options.allowedTools
         ? { allowedTools: this.options.allowedTools }
@@ -308,6 +309,33 @@ export class SdkSession {
     }
 
     void this.consumeStream();
+  }
+
+  async initialized(timeoutMs: number): Promise<void> {
+    const query = this.query;
+    if (!query) {
+      throw new Error("Claude SDK session is not running");
+    }
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await Promise.race([
+        query.initializationResult(),
+        this.completion.then(() => {
+          throw new Error("Claude SDK stream ended during initialization");
+        }),
+        new Promise<never>((_, reject) => {
+          timeout = setTimeout(() => {
+            reject(
+              new Error(
+                `Claude SDK session did not initialize within ${timeoutMs}ms`,
+              ),
+            );
+          }, timeoutMs);
+        }),
+      ]);
+    } finally {
+      clearTimeout(timeout);
+    }
   }
 
   pushInput(
