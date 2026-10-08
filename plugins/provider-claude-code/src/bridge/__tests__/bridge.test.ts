@@ -107,6 +107,8 @@ interface ControlledClaudeQuery {
 }
 
 interface ClaudeQueryCallOptions {
+  additionalDirectories?: string[];
+  allowDangerouslySkipPermissions?: boolean;
   canUseTool?: CanUseTool;
   env?: Record<string, string | undefined>;
   extraArgs?: Record<string, string | null>;
@@ -570,6 +572,50 @@ function planCommandInput(text: string): JsonValue[] {
       ],
     },
   ];
+}
+
+function fullAccessOptions(args?: {
+  providerOptions?: Record<string, JsonValue>;
+}): Record<string, JsonValue> {
+  return {
+    ...canonicalOptions(args),
+    permissionMode: "full",
+    permissionScope: "full",
+    approvalReviewer: null,
+    permissionEscalation: null,
+  };
+}
+
+function textInput(text: string): JsonValue[] {
+  return [{ type: "text", text, mentions: [] }];
+}
+
+async function approvePlan(bridge: BridgeJsonRpcTestHarness): Promise<void> {
+  const planPromise = getLastCanUseTool()(
+    "ExitPlanMode",
+    { plan: "# Plan" },
+    {
+      requestId: "control-request",
+      signal: new AbortController().signal,
+      toolUseID: "tool-plan",
+    },
+  );
+  await bridge.flushWork();
+  const approvalRequest = bridge.messages.find((message) =>
+    isApprovalInteraction(message),
+  );
+  if (approvalRequest?.id === undefined) {
+    throw new Error("Expected ExitPlanMode to request user approval");
+  }
+  handleLine(
+    JSON.stringify({
+      jsonrpc: "2.0",
+      id: approvalRequest.id,
+      result: { decision: "allow_once", grantedPermissions: null },
+    }),
+  );
+  await expect(planPromise).resolves.toMatchObject({ behavior: "allow" });
+  await bridge.flushWork();
 }
 
 async function startBridgeThread(args: StartBridgeThreadArgs): Promise<void> {
@@ -2320,6 +2366,454 @@ describe("bridge", () => {
 
       await stopBridgeThread({ bridge, queries, threadId });
     } finally {
+      bridge.restore();
+    }
+  });
+
+  it("restarts the conversation in a follow-up's new permission mode, once", async () => {
+    const bridge = createBridgeJsonRpcTestHarness(handleLine);
+    const queries: ControlledClaudeQuery[] = [];
+    queryMock.mockImplementation(() => {
+      const query = createControlledClaudeQuery();
+      queries.push(query);
+      return query;
+    });
+
+    try {
+      const threadId = "thread-permission-follow-up";
+      await startBridgeThread({ bridge, threadId });
+      const started = getLatestQueryCall();
+      expect(started.options.permissionMode).toBe("acceptEdits");
+      const full = {
+        ...canonicalTurnParams({
+          threadId,
+          input: [{ type: "text", text: "Go", mentions: [] }],
+        }),
+        options: {
+          ...canonicalOptions(),
+          permissionMode: "full",
+          permissionScope: "full",
+          approvalReviewer: null,
+          permissionEscalation: null,
+        },
+      };
+
+      bridge.sendRequest(2, "turn/start", full);
+      await vi.waitFor(() => expect(queries).toHaveLength(2));
+      const restarted = getLatestQueryCall();
+      expect(await readNextPromptText(restarted)).toBe("Go");
+      await bridge.waitForResponse(2);
+      expect(queries[0]?.close).toHaveBeenCalled();
+      expect(restarted.options).toMatchObject({
+        resume: started.options.sessionId,
+        permissionMode: "bypassPermissions",
+        allowDangerouslySkipPermissions: true,
+      });
+      expect(restarted.options.sandbox).toBeUndefined();
+
+      bridge.sendRequest(3, "turn/start", full);
+      expect(await readNextPromptText(restarted)).toBe("Go");
+      await bridge.waitForResponse(3);
+      expect(queries).toHaveLength(2);
+
+      await stopBridgeThread({ bridge, queries, threadId });
+    } finally {
+      bridge.restore();
+    }
+  });
+
+  it("keeps the approved mode's sandbox and extra roots when the permission mode changes during Plan mode", async () => {
+    const bridge = createBridgeJsonRpcTestHarness(handleLine);
+    const queries: ControlledClaudeQuery[] = [];
+    queryMock.mockImplementation(() => {
+      const query = createControlledClaudeQuery();
+      queries.push(query);
+      return query;
+    });
+
+    try {
+      const threadId = "thread-plan-permission-change";
+      const roots = ["/repo/.git/worktrees/bb13", "/repo/.git/objects"];
+      bridge.sendRequest(1, "thread/start", {
+        cwd: "/tmp/worktree",
+        instructionMode: "append",
+        options: fullAccessOptions({
+          providerOptions: { additionalWorkspaceWriteRoots: roots },
+        }),
+        threadId,
+      });
+      await bridge.waitForResponse(1);
+      const started = getLatestQueryCall();
+      expect(started.options).toMatchObject({
+        permissionMode: "bypassPermissions",
+        allowDangerouslySkipPermissions: true,
+      });
+      expect(started.options.sandbox).toBeUndefined();
+      expect(started.options.additionalDirectories).toBeUndefined();
+
+      bridge.sendRequest(2, "turn/start", {
+        ...canonicalTurnParams({
+          threadId,
+          input: planCommandInput("plan it"),
+        }),
+        options: fullAccessOptions({
+          providerOptions: { claudeCodePermissionMode: "plan" },
+        }),
+      });
+      expect(await readNextPromptText(started)).toBe("plan it");
+      await bridge.waitForResponse(2);
+      expect(queries[0]?.setPermissionMode).toHaveBeenLastCalledWith("plan");
+
+      bridge.sendRequest(
+        3,
+        "turn/start",
+        canonicalTurnParams({
+          threadId,
+          input: textInput("keep planning, in the workspace"),
+          providerOptions: { claudeCodePermissionMode: "plan" },
+        }),
+      );
+      await vi.waitFor(() => expect(queries).toHaveLength(2));
+      const restarted = getLatestQueryCall();
+      expect(await readNextPromptText(restarted)).toBe(
+        "keep planning, in the workspace",
+      );
+      await bridge.waitForResponse(3);
+      expect(restarted.options).toMatchObject({
+        resume: started.options.sessionId,
+        permissionMode: "plan",
+        additionalDirectories: roots,
+        sandbox: { enabled: true, filesystem: { allowWrite: roots } },
+      });
+      expect(restarted.options.allowDangerouslySkipPermissions).toBeUndefined();
+
+      await approvePlan(bridge);
+      await vi.waitFor(() =>
+        expect(queries[1]?.setPermissionMode).toHaveBeenLastCalledWith(
+          "acceptEdits",
+        ),
+      );
+
+      bridge.sendRequest(
+        4,
+        "turn/start",
+        canonicalTurnParams({ threadId, input: textInput("build it") }),
+      );
+      expect(await readNextPromptText(restarted)).toBe("build it");
+      await bridge.waitForResponse(4);
+      expect(queries).toHaveLength(2);
+
+      await stopBridgeThread({ bridge, queries, threadId });
+    } finally {
+      queries.forEach((query) => query.finish());
+      bridge.restore();
+    }
+  });
+
+  it("restarts a thread that started in Plan mode with its approved mode's sandbox after the plan is approved", async () => {
+    const bridge = createBridgeJsonRpcTestHarness(handleLine);
+    const queries: ControlledClaudeQuery[] = [];
+    queryMock.mockImplementation(() => {
+      const query = createControlledClaudeQuery();
+      queries.push(query);
+      return query;
+    });
+
+    try {
+      const threadId = "thread-started-in-plan";
+      bridge.sendRequest(1, "thread/start", {
+        cwd: "/tmp/worktree",
+        instructionMode: "append",
+        options: canonicalOptions({
+          providerOptions: { claudeCodePermissionMode: "plan" },
+        }),
+        threadId,
+      });
+      await bridge.waitForResponse(1);
+      const started = getLatestQueryCall();
+      expect(started.options.permissionMode).toBe("plan");
+      expect(started.options.sandbox).toBeUndefined();
+
+      await approvePlan(bridge);
+      expect(queries[0]?.setPermissionMode).toHaveBeenLastCalledWith(
+        "acceptEdits",
+      );
+
+      bridge.sendRequest(
+        2,
+        "turn/start",
+        canonicalTurnParams({ threadId, input: textInput("build it") }),
+      );
+      await vi.waitFor(() => expect(queries).toHaveLength(2));
+      const restarted = getLatestQueryCall();
+      expect(await readNextPromptText(restarted)).toBe("build it");
+      await bridge.waitForResponse(2);
+      expect(restarted.options).toMatchObject({
+        resume: started.options.sessionId,
+        permissionMode: "acceptEdits",
+        sandbox: { enabled: true },
+      });
+
+      await stopBridgeThread({ bridge, queries, threadId });
+    } finally {
+      queries.forEach((query) => query.finish());
+      bridge.restore();
+    }
+  });
+
+  it("puts the running CLI in a steer's lower permission mode before delivering the steer", async () => {
+    const bridge = createBridgeJsonRpcTestHarness(handleLine);
+    const queries: ControlledClaudeQuery[] = [];
+    queryMock.mockImplementation(() => {
+      const query = createControlledClaudeQuery();
+      queries.push(query);
+      return query;
+    });
+
+    try {
+      const threadId = "thread-lower-steer";
+      bridge.sendRequest(1, "thread/start", {
+        cwd: "/tmp/worktree",
+        instructionMode: "append",
+        options: fullAccessOptions(),
+        threadId,
+      });
+      await bridge.waitForResponse(1);
+      const started = getLatestQueryCall();
+      let release: () => void = () => {};
+      queries[0]?.setPermissionMode.mockImplementationOnce(
+        () =>
+          new Promise<void>((resolve) => {
+            release = resolve;
+          }),
+      );
+
+      bridge.sendRequest(
+        2,
+        "turn/steer",
+        canonicalTurnParams({
+          threadId,
+          expectedTurnId: "turn-1",
+          input: textInput("restrict"),
+        }),
+      );
+      let delivered = false;
+      const steer = readNextPromptText(started).then((text) => {
+        delivered = true;
+        return text;
+      });
+      await bridge.flushWork();
+      expect(queries[0]?.setPermissionMode).toHaveBeenCalledWith("acceptEdits");
+      expect(delivered).toBe(false);
+      release();
+      expect(await steer).toBe("restrict");
+      expect((await bridge.waitForResponse(2)).error).toBeUndefined();
+      expect(queries).toHaveLength(1);
+
+      bridge.sendRequest(
+        3,
+        "turn/start",
+        canonicalTurnParams({ threadId, input: textInput("next") }),
+      );
+      await vi.waitFor(() => expect(queries).toHaveLength(2));
+      const restarted = getLatestQueryCall();
+      expect(await readNextPromptText(restarted)).toBe("next");
+      await bridge.waitForResponse(3);
+      expect(restarted.options).toMatchObject({
+        permissionMode: "acceptEdits",
+        sandbox: { enabled: true },
+      });
+      expect(restarted.options.allowDangerouslySkipPermissions).toBeUndefined();
+
+      await stopBridgeThread({ bridge, queries, threadId });
+    } finally {
+      queries.forEach((query) => query.finish());
+      bridge.restore();
+    }
+  });
+
+  it("fails a steer whose lower permission mode the CLI refuses, rather than run it in bypass", async () => {
+    const bridge = createBridgeJsonRpcTestHarness(handleLine);
+    const queries: ControlledClaudeQuery[] = [];
+    queryMock.mockImplementation(() => {
+      const query = createControlledClaudeQuery();
+      queries.push(query);
+      return query;
+    });
+
+    try {
+      const threadId = "thread-lower-steer-refused";
+      bridge.sendRequest(1, "thread/start", {
+        cwd: "/tmp/worktree",
+        instructionMode: "append",
+        options: fullAccessOptions(),
+        threadId,
+      });
+      await bridge.waitForResponse(1);
+      const started = getLatestQueryCall();
+      queries[0]?.setPermissionMode.mockRejectedValueOnce(
+        new Error("control request refused"),
+      );
+
+      bridge.sendRequest(
+        2,
+        "turn/steer",
+        canonicalTurnParams({
+          threadId,
+          expectedTurnId: "turn-1",
+          input: textInput("restrict"),
+        }),
+      );
+      expect((await bridge.waitForResponse(2)).error?.message).toBe(
+        "control request refused",
+      );
+
+      bridge.sendRequest(3, "turn/steer", {
+        ...canonicalTurnParams({
+          threadId,
+          expectedTurnId: "turn-1",
+          input: textInput("carry on"),
+        }),
+        options: fullAccessOptions(),
+      });
+      expect(await readNextPromptText(started)).toBe("carry on");
+      expect((await bridge.waitForResponse(3)).error).toBeUndefined();
+
+      await stopBridgeThread({ bridge, queries, threadId });
+    } finally {
+      queries.forEach((query) => query.finish());
+      bridge.restore();
+    }
+  });
+
+  it("switches the CLI for each of two overlapping steers before delivering it, so the lower one never runs in bypass", async () => {
+    const bridge = createBridgeJsonRpcTestHarness(handleLine);
+    const queries: ControlledClaudeQuery[] = [];
+    queryMock.mockImplementation(() => {
+      const query = createControlledClaudeQuery();
+      queries.push(query);
+      return query;
+    });
+
+    try {
+      const threadId = "thread-overlapping-steers";
+      bridge.sendRequest(1, "thread/start", {
+        cwd: "/tmp/worktree",
+        instructionMode: "append",
+        options: fullAccessOptions(),
+        threadId,
+      });
+      await bridge.waitForResponse(1);
+      const started = getLatestQueryCall();
+      let cliMode = "bypassPermissions";
+      const releases: Array<() => void> = [];
+      queries[0]?.setPermissionMode.mockImplementation(
+        (mode: string) =>
+          new Promise<void>((resolve) => {
+            releases.push(() => {
+              cliMode = mode;
+              resolve();
+            });
+          }),
+      );
+      const delivered: Array<[string, string]> = [];
+      const read = async () => {
+        const text = await readNextPromptText(started);
+        delivered.push([text, cliMode]);
+      };
+
+      const first = read();
+      bridge.sendRequest(
+        2,
+        "turn/steer",
+        canonicalTurnParams({
+          threadId,
+          expectedTurnId: "turn-1",
+          input: textInput("restrict"),
+        }),
+      );
+      bridge.sendRequest(3, "turn/steer", {
+        ...canonicalTurnParams({
+          threadId,
+          expectedTurnId: "turn-1",
+          input: textInput("continue full"),
+        }),
+        options: fullAccessOptions(),
+      });
+      await bridge.flushWork();
+      expect(queries[0]?.setPermissionMode.mock.calls).toEqual([
+        ["acceptEdits"],
+      ]);
+      expect(delivered).toEqual([]);
+
+      releases.shift()?.();
+      await first;
+      const second = read();
+      await vi.waitFor(() =>
+        expect(queries[0]?.setPermissionMode.mock.calls).toEqual([
+          ["acceptEdits"],
+          ["bypassPermissions"],
+        ]),
+      );
+      expect(delivered).toEqual([["restrict", "acceptEdits"]]);
+      releases.shift()?.();
+      await second;
+      expect(delivered).toEqual([
+        ["restrict", "acceptEdits"],
+        ["continue full", "bypassPermissions"],
+      ]);
+      expect((await bridge.waitForResponse(2)).error).toBeUndefined();
+      expect((await bridge.waitForResponse(3)).error).toBeUndefined();
+
+      await stopBridgeThread({ bridge, queries, threadId });
+    } finally {
+      queries.forEach((query) => query.finish());
+      bridge.restore();
+    }
+  });
+
+  it("keeps a CLI started without bypass in its mode for a steer asking for full access, until the next turn restarts it", async () => {
+    const bridge = createBridgeJsonRpcTestHarness(handleLine);
+    const queries: ControlledClaudeQuery[] = [];
+    queryMock.mockImplementation(() => {
+      const query = createControlledClaudeQuery();
+      queries.push(query);
+      return query;
+    });
+
+    try {
+      const threadId = "thread-higher-steer";
+      await startBridgeThread({ bridge, threadId });
+      const started = getLatestQueryCall();
+
+      bridge.sendRequest(2, "turn/steer", {
+        ...canonicalTurnParams({
+          threadId,
+          expectedTurnId: "turn-1",
+          input: textInput("loosen"),
+        }),
+        options: fullAccessOptions(),
+      });
+      expect(await readNextPromptText(started)).toBe("loosen");
+      expect((await bridge.waitForResponse(2)).error).toBeUndefined();
+      expect(queries[0]?.setPermissionMode).not.toHaveBeenCalled();
+
+      bridge.sendRequest(3, "turn/start", {
+        ...canonicalTurnParams({ threadId, input: textInput("next") }),
+        options: fullAccessOptions(),
+      });
+      await vi.waitFor(() => expect(queries).toHaveLength(2));
+      const restarted = getLatestQueryCall();
+      expect(await readNextPromptText(restarted)).toBe("next");
+      await bridge.waitForResponse(3);
+      expect(restarted.options).toMatchObject({
+        permissionMode: "bypassPermissions",
+        allowDangerouslySkipPermissions: true,
+      });
+
+      await stopBridgeThread({ bridge, queries, threadId });
+    } finally {
+      queries.forEach((query) => query.finish());
       bridge.restore();
     }
   });
@@ -4879,6 +5373,11 @@ describe("bridge", () => {
             threadId,
             input: [{ type: "text", text: "loosen permissions" }],
           }),
+          options: {
+            ...canonicalOptions(),
+            permissionMode: "auto",
+            approvalReviewer: "automatic",
+          },
           ...(testCase.method === "turn/steer"
             ? { expectedTurnId: "turn-1" }
             : {}),

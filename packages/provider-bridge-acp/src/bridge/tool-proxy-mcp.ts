@@ -17,6 +17,7 @@ const ENV_TOKEN = "BB_ACP_DYNAMIC_TOOL_TOKEN";
 const ENV_THREAD_ID = "BB_ACP_DYNAMIC_TOOL_THREAD_ID";
 const ENV_TOOLS = "BB_ACP_DYNAMIC_TOOLS";
 const ENV_PROGRESS_INTERVAL_MS = "BB_ACP_DYNAMIC_TOOL_PROGRESS_INTERVAL_MS";
+const ALWAYS_LOAD_META_KEY = "anthropic/alwaysLoad";
 
 export interface AcpMcpServerConfig {
   name: string;
@@ -288,6 +289,9 @@ async function handleRequest(
           name: tool.name,
           description: tool.description,
           inputSchema: tool.inputSchema,
+          ...(tool.alwaysLoad === true
+            ? { _meta: { [ALWAYS_LOAD_META_KEY]: true } }
+            : {}),
         })),
       });
       return;

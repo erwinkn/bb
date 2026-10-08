@@ -8,6 +8,12 @@ export const TURN_CONTEXT_TIMEOUT_MS = 20_000;
 export const FRESH_SESSION_INIT_TIMEOUT_MS = 30_000;
 export const MAX_TURN_CONTEXT_REPORTS = 16;
 export const MAX_RETAINED_TURN_CONTEXTS = 64;
+export const FRESH_SESSION_TITLE = "BB OptChat turn";
+export const FRESH_SESSION_SEED_TITLE = "BB OptChat seed";
+export const FRESH_SESSION_SEED_PROMPT =
+  "This opening exchange only prepares the session; the conversation starts with the next message. Reply with only: Ready.";
+export const FRESH_SESSION_SEED_TIMEOUT_MS = 60_000;
+export const FRESH_SESSION_SEED_MAX_AGE_MS = 60 * 60_000;
 
 const turnContextSchema = z.object({
   session: z.literal("fresh"),
@@ -16,19 +22,22 @@ const turnContextSchema = z.object({
   input: z.string().min(1),
 });
 
-const turnContextAckSchema = z.object({ ack: z.string().min(1) });
+const ackSchema = z.string().min(1).optional();
+
+const freshAnswerSchema = turnContextSchema.extend({ ack: ackSchema });
+
+const residentAnswerSchema = z.object({ ack: ackSchema }).strict();
 
 export type TurnContext = z.infer<typeof turnContextSchema>;
 
-export interface TurnContextAnswer {
-  ack: string | null;
-  context: TurnContext | null;
-}
+export type TurnContextAnswer =
+  | { ok: true; ack: string | null; context: TurnContext | null }
+  | { ok: false; error: string };
 
 export interface TurnContextReport {
   requestId: string;
   offeredSessionId: string | null;
-  outcome: "fresh" | "resident" | "failed";
+  outcome: "fresh" | "resident";
   sessionId: string | null;
 }
 
@@ -53,20 +62,27 @@ export function parseTurnContext(result: {
   isError?: boolean;
 }): TurnContextAnswer {
   if (result.isError === true) {
-    return { ack: null, context: null };
+    return { ok: false, error: result.content || "the tool call failed" };
   }
   let value: unknown;
   try {
     value = JSON.parse(result.content);
   } catch {
-    return { ack: null, context: null };
+    return { ok: false, error: "the answer is not JSON" };
   }
-  const ack = turnContextAckSchema.safeParse(value);
-  const context = turnContextSchema.safeParse(value);
-  return {
-    ack: ack.success ? ack.data.ack : null,
-    context: context.success ? context.data : null,
-  };
+  if (typeof value === "object" && value !== null && "session" in value) {
+    const fresh = freshAnswerSchema.safeParse(value);
+    if (!fresh.success) {
+      return { ok: false, error: "the fresh session answer is malformed" };
+    }
+    const { ack, ...context } = fresh.data;
+    return { ok: true, ack: ack ?? null, context };
+  }
+  const resident = residentAnswerSchema.safeParse(value);
+  if (!resident.success) {
+    return { ok: false, error: "the answer is malformed" };
+  }
+  return { ok: true, ack: resident.data.ack ?? null, context: null };
 }
 
 export function acknowledgeReports(

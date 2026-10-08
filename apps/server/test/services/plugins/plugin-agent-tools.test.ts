@@ -415,6 +415,34 @@ describe("bb.agents.registerTool", () => {
     );
   });
 
+  it("passes alwaysLoad to providers only for the tools that ask for it", async () => {
+    const rootDir = await writePlugin(workDir, {
+      name: "bb-plugin-upfront-tools",
+      serverSource: "export default function plugin() {}",
+    });
+    await service.installPath(rootDir);
+    const api = service.getApi("upfront-tools")!;
+    api.agents.registerTool({
+      name: "upfront_tool",
+      description: "Always loaded",
+      alwaysLoad: true,
+      parameters: { type: "object" },
+      execute: () => "ok",
+    });
+    api.agents.registerTool({
+      name: "deferred_tool",
+      description: "Deferred",
+      parameters: { type: "object" },
+      execute: () => "ok",
+    });
+
+    const byName = new Map(
+      service.listAgentTools().map((entry) => [entry.tool.name, entry.tool]),
+    );
+    expect(byName.get("upfront_tool")?.alwaysLoad).toBe(true);
+    expect(byName.get("deferred_tool")).not.toHaveProperty("alwaysLoad");
+  });
+
   it("cross-plugin name collision drops the later registration with a status detail", async () => {
     const first = await writePlugin(workDir, {
       name: "bb-plugin-collide-a",

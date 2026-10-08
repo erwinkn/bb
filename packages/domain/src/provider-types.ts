@@ -181,5 +181,6 @@ export const dynamicToolSchema = z.object({
   description: z.string(),
   inputSchema: z.unknown(),
   presentation: threadEventItemPresentationSchema.optional(),
+  alwaysLoad: z.boolean().optional(),
 });
 export type DynamicTool = z.infer<typeof dynamicToolSchema>;

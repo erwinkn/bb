@@ -1133,6 +1133,13 @@ export interface PluginAgentToolRegistrationBase {
    * BB's standard rendering. See docs/api_to_audit.md.
    */
   presentation?: PluginRowPresentation;
+  /**
+   * Give the model this tool's full definition at session start, instead of
+   * deferring it behind the provider's tool search. Providers without tool
+   * search ignore it. Claude Code receives it as the MCP tool's
+   * `_meta["anthropic/alwaysLoad"]`. Defaults to false. Fork-only (FORK.md).
+   */
+  alwaysLoad?: boolean;
 }
 
 /** Stable, plain-data context resolved by the server for one agent session. */

@@ -119,6 +119,12 @@ async function connectLikeOpenCode(port: number): Promise<Client> {
         description: "Ask the user a question.",
         inputSchema: { type: "object", properties: {} },
       },
+      {
+        name: "initiative_read",
+        description: "Read the Initiative.",
+        inputSchema: { type: "object", properties: {} },
+        alwaysLoad: true,
+      },
     ],
     host: "127.0.0.1",
     port,
@@ -146,6 +152,20 @@ async function connectLikeOpenCode(port: number): Promise<Client> {
   cleanups.push(() => client.close());
   return client;
 }
+
+describe("bb-bridge MCP tool list", () => {
+  it("flags only always-loaded tools for upfront loading", async () => {
+    const fakeBridge = await listenFakeBridge({ responseDelayMs: 0 });
+    const client = await connectLikeOpenCode(fakeBridge.port);
+
+    const { tools } = await client.listTools();
+
+    expect(tools.map((tool) => [tool.name, tool._meta ?? null])).toEqual([
+      ["AskUserQuestion", null],
+      ["initiative_read", { "anthropic/alwaysLoad": true }],
+    ]);
+  }, 20_000);
+});
 
 describe("bb-bridge MCP server keeps long tool calls alive", () => {
   it("sends progress notifications so an OpenCode-style client does not time out while the user answers", async () => {

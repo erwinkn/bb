@@ -173,7 +173,7 @@ describe("claude session workspace-write roots", () => {
     ).not.toHaveProperty("additionalWorkspaceWriteRoots");
   });
 
-  it("shares workspace roots with auto but omits them for full", () => {
+  it("keeps workspace roots for every scope, so a later switch to workspace has them", () => {
     const shared = {
       cwd: "/tmp/worktree",
       instructionMode: "append" as const,
@@ -199,7 +199,10 @@ describe("claude session workspace-write roots", () => {
       permissionMode: "auto",
       additionalWorkspaceWriteRoots: EXTRA_WORKSPACE_WRITE_ROOTS,
     });
-    expect(fullParams).not.toHaveProperty("additionalWorkspaceWriteRoots");
+    expect(fullParams).toMatchObject({
+      permissionMode: "bypassPermissions",
+      additionalWorkspaceWriteRoots: EXTRA_WORKSPACE_WRITE_ROOTS,
+    });
   });
 });
 

@@ -832,6 +832,7 @@ export function createPluginService(deps: PluginServiceDeps): PluginService {
         description: record.description,
         inputSchema,
         presentation: resolveAgentToolPresentation(pluginId, record),
+        ...(record.alwaysLoad ? { alwaysLoad: true } : {}),
       },
       instructions: record.instructions,
     };

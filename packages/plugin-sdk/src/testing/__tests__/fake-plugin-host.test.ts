@@ -1261,6 +1261,35 @@ describe("agent tools", () => {
     ]);
   });
 
+  it("records which tools load upfront and refuses a non-boolean alwaysLoad", () => {
+    const { bb, harness } = createFakePluginHost();
+    bb.agents.registerTool({
+      name: "read_state",
+      description: "Read state",
+      alwaysLoad: true,
+      parameters: { type: "object" },
+      execute: () => "ok",
+    });
+    bb.agents.registerTool({
+      name: "rare_tool",
+      description: "Deferred",
+      parameters: { type: "object" },
+      execute: () => "ok",
+    });
+    expect(
+      harness.registrations.agentTools.map((tool) => tool.alwaysLoad),
+    ).toEqual([true, false]);
+    expect(() =>
+      bb.agents.registerTool({
+        name: "bad_tool",
+        description: "Bad",
+        alwaysLoad: "yes" as unknown as boolean,
+        parameters: { type: "object" },
+        execute: () => "ok",
+      }),
+    ).toThrow('tool "bad_tool" alwaysLoad must be a boolean');
+  });
+
   it("lets a tool presentation name one of the plugin's own declared icons and nothing else, like production", () => {
     const { bb } = createFakePluginHost({
       pluginId: "tooled",

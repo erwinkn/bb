@@ -225,6 +225,29 @@ export function resolveClaudeCodeExecutable(
   return null;
 }
 
+export function buildPermissionSessionOptions(
+  params: WorkspaceWriteSandboxArgs,
+): Pick<
+  SdkSessionOptions,
+  | "permissionMode"
+  | "allowBypassPermissions"
+  | "sandbox"
+  | "additionalDirectories"
+> {
+  const sandbox = buildWorkspaceWriteSandbox(params);
+  const additionalDirectories = isWorkspaceWriteSession(params)
+    ? (params.additionalWorkspaceWriteRoots ?? [])
+    : [];
+  return {
+    permissionMode: params.permissionMode,
+    allowBypassPermissions: params.permissionScope === "full",
+    ...(sandbox ? { sandbox } : {}),
+    ...(additionalDirectories.length > 0
+      ? { additionalDirectories: [...additionalDirectories] }
+      : {}),
+  };
+}
+
 export function buildSessionOptions(
   params: BuildSessionOptionsArgs,
   env: NodeJS.ProcessEnv,
@@ -240,10 +263,6 @@ export function buildSessionOptions(
             : {}),
         };
   const model = params.model;
-  const sandbox = buildWorkspaceWriteSandbox(params);
-  const additionalDirectories = isWorkspaceWriteSession(params)
-    ? (params.additionalWorkspaceWriteRoots ?? [])
-    : [];
   const pathToClaudeCodeExecutable = resolveClaudeCodeExecutable({ env });
   const flagSettings = buildFlagSettings(params);
   const extraArgs = buildChromeExtraArgs(params.chromeEnabled);
@@ -256,8 +275,7 @@ export function buildSessionOptions(
       ...env,
       CLAUDE_CODE_DISABLE_1M_CONTEXT: params.disable1MContext ? "1" : "0",
     },
-    permissionMode: params.permissionMode,
-    allowBypassPermissions: params.permissionScope === "full",
+    ...buildPermissionSessionOptions(params),
     ...(params.reasoningLevel
       ? { effort: toSdkEffort(params.reasoningLevel) }
       : {}),
@@ -268,9 +286,5 @@ export function buildSessionOptions(
     ...(extraArgs ? { extraArgs } : {}),
     ...(pathToClaudeCodeExecutable ? { pathToClaudeCodeExecutable } : {}),
     ...(params.plugins ? { plugins: params.plugins } : {}),
-    ...(sandbox ? { sandbox } : {}),
-    ...(additionalDirectories.length > 0
-      ? { additionalDirectories: [...additionalDirectories] }
-      : {}),
   };
 }

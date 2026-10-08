@@ -106,14 +106,13 @@ function buildInternalSessionParams(
     name: t.name,
     description: t.description,
     inputSchema: jsonValueSchema.parse(t.inputSchema),
+    ...(t.alwaysLoad === true ? { alwaysLoad: true } : {}),
   }));
   const permissionPolicy = args.options;
   const additionalWorkspaceWriteRootsParams =
-    permissionPolicy.permissionScope === "workspace"
-      ? buildAdditionalWorkspaceWriteRootsParams(
-          args.additionalWorkspaceWriteRoots,
-        )
-      : undefined;
+    buildAdditionalWorkspaceWriteRootsParams(
+      args.additionalWorkspaceWriteRoots,
+    );
   const skillConfig = buildClaudeSkillConfigParams(args.options.skillRoots);
   return {
     baseInstructions,
@@ -255,6 +254,8 @@ export function buildClaudeTurnParams(
     memoryEnabled: providerOptions.memoryEnabled,
     providerSubagentsEnabled: providerOptions.providerSubagentsEnabled,
     ...(config ? { config } : {}),
+    permissionMode: toClaudePermissionMode(args.options),
+    permissionScope: args.options.permissionScope,
     permissionEscalation: args.options.permissionEscalation,
     ...(providerOptions.claudeCodePermissionMode !== undefined
       ? { claudeCodePermissionMode: providerOptions.claudeCodePermissionMode }

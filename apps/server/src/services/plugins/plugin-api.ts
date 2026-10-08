@@ -204,6 +204,7 @@ export interface PluginAgentToolRecord {
   description: string;
   presentation: PluginRowPresentation | null;
   instructions: string | null;
+  alwaysLoad: boolean;
   inputSchema: unknown;
   parse(
     input: unknown,
@@ -929,6 +930,7 @@ export function createPluginApi(options: {
       description: string;
       instructions?: string;
       presentation?: PluginRowPresentation;
+      alwaysLoad?: boolean;
       parameters: unknown;
       execute(
         params: never,

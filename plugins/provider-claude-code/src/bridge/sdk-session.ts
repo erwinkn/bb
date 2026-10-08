@@ -59,6 +59,12 @@ export type ClaudeMutableFlagSettings = {
   fastMode: boolean;
 };
 
+export interface SdkSessionLaunch {
+  systemPrompt?: SdkSessionOptions["systemPrompt"];
+  title?: string;
+  forkFrom?: string;
+}
+
 type SdkSessionMessageHandler = (message: SDKMessage) => void;
 type SdkSessionDoneHandler = (error?: unknown) => void;
 
@@ -170,12 +176,13 @@ export class SdkSession {
   private readonly completion: Promise<void>;
   private complete: (() => void) | null = null;
   private stderrTail = "";
+  private runningPermissions: SdkPermissionOptions | undefined;
 
   constructor(
     private readonly options: SdkSessionOptions,
     private readonly onMessage: SdkSessionMessageHandler,
     private readonly onDone: SdkSessionDoneHandler,
-    private readonly systemPromptOverride?: SdkSessionOptions["systemPrompt"],
+    private readonly launch: SdkSessionLaunch = {},
   ) {
     this.completion = new Promise((resolve) => {
       this.complete = resolve;
@@ -192,7 +199,21 @@ export class SdkSession {
 
   async setPermissionMode(mode: ClaudePermissionMode): Promise<void> {
     this.options.permissionMode = mode;
-    await this.query?.setPermissionMode(mode);
+    if (!this.query) return;
+    await this.query.setPermissionMode(mode);
+    if (this.runningPermissions) this.runningPermissions.permissionMode = mode;
+  }
+
+  getRunningPermissions():
+    | { mode: ClaudePermissionMode; bypassAvailable: boolean }
+    | undefined {
+    return this.runningPermissions
+      ? {
+          mode: this.runningPermissions.permissionMode,
+          bypassAvailable:
+            this.runningPermissions.allowDangerouslySkipPermissions === true,
+        }
+      : undefined;
   }
 
   async getContextUsage(): Promise<unknown> {
@@ -220,6 +241,8 @@ export class SdkSession {
   }
 
   start(resumeSessionId?: string): void {
+    const resume = resumeSessionId ?? this.launch.forkFrom;
+    const fork = resumeSessionId === undefined && resume !== undefined;
     if (resumeSessionId) {
       this.sessionId = resumeSessionId;
     } else if (this.options.sessionId) {
@@ -231,6 +254,7 @@ export class SdkSession {
       allowBypassPermissions: this.options.allowBypassPermissions,
       permissionMode: this.options.permissionMode,
     });
+    this.runningPermissions = { ...permissionOptions };
     const onStderr = (data: string): void => {
       this.stderrTail = appendBoundedText({
         current: this.stderrTail,
@@ -241,7 +265,7 @@ export class SdkSession {
     const sdkOptions: Options = {
       abortController: this.abortController,
       cwd: this.options.cwd,
-      systemPrompt: this.systemPromptOverride ?? this.options.systemPrompt,
+      systemPrompt: this.launch.systemPrompt ?? this.options.systemPrompt,
       ...permissionOptions,
       ...(experimental_isProviderBridgeRecording()
         ? {
@@ -269,10 +293,12 @@ export class SdkSession {
         : {}),
       ...(this.options.sandbox ? { sandbox: this.options.sandbox } : {}),
       ...(this.options.hooks ? { hooks: this.options.hooks } : {}),
-      ...(resumeSessionId ? { resume: resumeSessionId } : {}),
-      ...(!resumeSessionId && this.options.sessionId
+      ...(resume ? { resume } : {}),
+      ...(fork ? { forkSession: true } : {}),
+      ...((!resume || fork) && this.options.sessionId
         ? { sessionId: this.options.sessionId }
         : {}),
+      ...(this.launch.title ? { title: this.launch.title } : {}),
       ...(this.options.model ? { model: this.options.model } : {}),
       ...(this.options.additionalDirectories
         ? { additionalDirectories: [...this.options.additionalDirectories] }
