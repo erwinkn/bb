@@ -100,6 +100,22 @@ import {
 } from "./tool-proxy-mcp.js";
 import { BB_BRIDGE_MCP_SERVER_NAME } from "../tool-classification.js";
 import {
+  FRESH_SESSION_INIT_TIMEOUT_MS,
+  MAX_RETAINED_TURN_CONTEXTS,
+  MAX_TURN_CONTEXT_REPORTS,
+  TURN_CONTEXT_PROTOCOL,
+  TURN_CONTEXT_TIMEOUT_MS,
+  TURN_CONTEXT_TOOL_NAME,
+  acknowledgeReports,
+  extendSystemPrompt,
+  hasTurnContextTool,
+  parseTurnContext,
+  withoutTurnContextTool,
+  type TurnContext,
+  type TurnContextAnswer,
+  type TurnContextReport,
+} from "./turn-context.js";
+import {
   type ClaudeInteractiveResponse,
   type ClaudePermissionMode,
   type ClaudePermissionRequestApprovalParams,
@@ -240,6 +256,16 @@ interface ThreadSession {
     PermissionEscalation | null
   >;
   permissionEscalationByToolUseId: Map<string, PermissionEscalation | null>;
+  turnPreparation: TurnPreparation | null;
+}
+
+interface TurnPreparation {
+  steers: Array<{
+    id: string | number;
+    params: TurnSteerParams;
+    acceptance: CanonicalTurnAcceptance;
+  }>;
+  starting: SdkSession | null;
 }
 
 interface ThreadAttachment {
@@ -255,6 +281,13 @@ interface ThreadAttachment {
   providerThreadId?: string;
   sessionPermissionGrants: ClaudeSessionPermissionGrant[];
   threadIdRef: ThreadIdRef;
+  turnContext: boolean;
+  turnContextState: TurnContextState;
+}
+
+interface TurnContextState {
+  reports: TurnContextReport[];
+  systemPromptExtra: string | null;
 }
 
 interface CreateThreadAttachmentArgs {
@@ -404,6 +437,7 @@ const { send, sendResult, sendError } = createBridgeIo<
 
 const threadAttachments = new Map<string, ThreadAttachment>();
 const closingSessions = new Map<string, Promise<void>>();
+const retainedTurnContexts = new Map<string, TurnContextState>();
 const toolCallTracker = createPendingToolCallTracker({ sendToolCall: send });
 const { forwardToolCall, handleToolCallResponse } = toolCallTracker;
 
@@ -412,7 +446,21 @@ function resolvePendingSessionWork(
   message: string,
 ): void {
   toolCallTracker.resolvePendingToolCalls(threadSession, message);
+  if (threadSession.turnPreparation) {
+    toolCallTracker.resolvePendingToolCalls(
+      threadSession.turnPreparation,
+      message,
+    );
+  }
   resolvePendingInteractiveRequests(threadSession, message);
+}
+
+function closePendingSessionWork(
+  threadSession: ThreadSession,
+  message: string,
+): void {
+  resolvePendingSessionWork(threadSession, message);
+  threadSession.turnPreparation?.starting?.stop();
 }
 
 function applyChromeSetting(
@@ -524,10 +572,11 @@ async function closeThreadSession(args: {
   }
 
   attachment.closing = true;
+  retainTurnContext(attachment);
   const threadSession = attachment.residentSession;
   if (threadSession) {
     threadSession.closing = true;
-    resolvePendingSessionWork(threadSession, args.message);
+    closePendingSessionWork(threadSession, args.message);
   }
   const closePromise = Promise.resolve()
     .then(async () => {
@@ -980,14 +1029,52 @@ function createThreadAttachment(
       : {}),
     sessionPermissionGrants: [],
     threadIdRef: args.threadIdRef,
+    turnContext: hasTurnContextTool(
+      args.sessionConstructionConfig.dynamicTools,
+    ),
+    turnContextState: takeRetainedTurnContext(args.providerThreadId),
   };
   attachment.residentSession = createThreadSession(attachment);
   return attachment;
 }
 
-function createThreadSession(attachment: ThreadAttachment): ThreadSession {
-  const sessionSerial = nextSessionSerial();
-  const session = new SdkSession(
+function retainTurnContext(attachment: ThreadAttachment): void {
+  const sessionId = attachment.providerThreadId;
+  const state = attachment.turnContextState;
+  if (
+    !sessionId ||
+    (state.reports.length === 0 && state.systemPromptExtra === null)
+  ) {
+    return;
+  }
+  retainedTurnContexts.delete(sessionId);
+  retainedTurnContexts.set(sessionId, state);
+  for (const oldest of retainedTurnContexts.keys()) {
+    if (retainedTurnContexts.size <= MAX_RETAINED_TURN_CONTEXTS) break;
+    retainedTurnContexts.delete(oldest);
+  }
+}
+
+function takeRetainedTurnContext(
+  providerThreadId: string | undefined,
+): TurnContextState {
+  const retained =
+    providerThreadId === undefined
+      ? undefined
+      : retainedTurnContexts.get(providerThreadId);
+  if (providerThreadId === undefined || retained === undefined) {
+    return { reports: [], systemPromptExtra: null };
+  }
+  retainedTurnContexts.delete(providerThreadId);
+  return retained;
+}
+
+function createSdkSession(
+  attachment: ThreadAttachment,
+  sessionSerial: number,
+): SdkSession {
+  const extra = attachment.turnContextState.systemPromptExtra;
+  return new SdkSession(
     attachment.sessionOptions,
     createOnSdkMessage({
       sessionSerial,
@@ -997,7 +1084,15 @@ function createThreadSession(attachment: ThreadAttachment): ThreadSession {
       sessionSerial,
       threadIdRef: attachment.threadIdRef,
     }),
+    extra === null
+      ? undefined
+      : extendSystemPrompt(attachment.sessionOptions.systemPrompt, extra),
   );
+}
+
+function createThreadSession(attachment: ThreadAttachment): ThreadSession {
+  const sessionSerial = nextSessionSerial();
+  const session = createSdkSession(attachment, sessionSerial);
 
   const translator = createClaudeDeltaTranslator({
     cwd: attachment.sessionConstructionConfig.sessionOptions.cwd,
@@ -1026,6 +1121,7 @@ function createThreadSession(attachment: ThreadAttachment): ThreadSession {
     permissionEscalationByPromptId: new Map(),
     permissionEscalationBySubagentParentToolUseId: new Map(),
     permissionEscalationByToolUseId: new Map(),
+    turnPreparation: null,
   };
   seedModelContextWindowHint(
     threadSession,
@@ -1287,7 +1383,7 @@ function buildTrackedSessionOptions(
 
 function replaceThreadSession(args: ReplaceThreadSessionArgs): ThreadSession {
   args.threadSession.closing = true;
-  resolvePendingSessionWork(args.threadSession, args.restart.reason);
+  closePendingSessionWork(args.threadSession, args.restart.reason);
   emitSessionReplacement({
     providerThreadId: args.providerThreadId,
     reason: args.restart.reason,
@@ -2153,13 +2249,13 @@ function attachThreadSession(
     sessionOptions.sessionId = providerThreadId;
   }
   sessionOptions.canUseTool = createCanUseTool(threadIdRef);
-  if (params.dynamicTools && params.dynamicTools.length > 0) {
-    const mcpServer = buildBridgeMcpServer(
-      params.dynamicTools,
-      createForwardToolCall(() => threadIdRef.current),
-    );
-    sessionOptions.mcpServers = { [BB_BRIDGE_MCP_SERVER_NAME]: mcpServer };
-    sessionOptions.allowedTools = getAllowedToolNames(params.dynamicTools);
+  const modelTools = withoutTurnContextTool(params.dynamicTools ?? []);
+  if (modelTools.length > 0) {
+    const forward = createForwardToolCall(() => threadIdRef.current);
+    sessionOptions.createMcpServers = () => ({
+      [BB_BRIDGE_MCP_SERVER_NAME]: buildBridgeMcpServer(modelTools, forward),
+    });
+    sessionOptions.allowedTools = getAllowedToolNames(modelTools);
   }
 
   const attachment = createThreadAttachment({
@@ -2311,10 +2407,20 @@ async function runTurnInput(
   params: TurnStartParams | TurnSteerParams,
   acceptance: CanonicalTurnAcceptance,
   intent: "new-turn" | "steer",
+  bound: ThreadSession | null = null,
 ): Promise<void> {
   const promptText = buildPromptText(params.input);
   if (promptText === undefined) {
     sendError(id, BRIDGE_JSON_RPC_ERRORS.INVALID_PARAMS, "Missing input text");
+    return;
+  }
+
+  const preparation =
+    intent === "steer" && !bound
+      ? threadAttachments.get(params.threadId)?.residentSession?.turnPreparation
+      : null;
+  if (preparation && "expectedTurnId" in params) {
+    preparation.steers.push({ id, params, acceptance });
     return;
   }
 
@@ -2328,7 +2434,11 @@ async function runTurnInput(
     applySandboxSetting(attachment, params.sandboxEnabled);
   }
 
-  const threadSession = await getWritableThreadSession(params.threadId, intent);
+  const threadSession = bound
+    ? isCurrentSession(bound)
+      ? bound
+      : undefined
+    : await getWritableThreadSession(params.threadId, intent);
   if (!threadSession) {
     sendError(id, -32000, "No active session");
     return;
@@ -2354,6 +2464,17 @@ async function runTurnInput(
     return;
   }
 
+  if (intent === "new-turn" && threadSession.attachment.turnContext) {
+    await runTurnWithContext({
+      acceptance,
+      id,
+      params,
+      promptText,
+      threadSession,
+    });
+    return;
+  }
+
   try {
     await pushPromptInput(
       threadSession,
@@ -2365,6 +2486,242 @@ async function runTurnInput(
     sendResult(id, { threadId: params.threadId });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
+    sendError(id, -32000, message);
+  }
+}
+
+async function fetchTurnContext(args: {
+  preparation: TurnPreparation;
+  promptText: string;
+  reports: TurnContextReport[];
+  requestId: string;
+  threadId: string;
+  threadSession: ThreadSession;
+}): Promise<TurnContextAnswer> {
+  const { preparation, threadId, threadSession } = args;
+  const sessionId = currentSessionId(threadSession);
+  const timer = setTimeout(() => {
+    toolCallTracker.resolvePendingToolCalls(preparation, "timed out");
+  }, TURN_CONTEXT_TIMEOUT_MS);
+  const result = await forwardToolCall({
+    arguments: {
+      protocol: TURN_CONTEXT_PROTOCOL,
+      input: args.promptText,
+      requestId: args.requestId,
+      sessionId,
+      reports: args.reports,
+    },
+    providerThreadId: sessionId ?? threadId,
+    scope: preparation,
+    threadId,
+    toolName: TURN_CONTEXT_TOOL_NAME,
+  }).finally(() => clearTimeout(timer));
+  if (result.isError === true) {
+    logBridgeError(`turn context for ${threadId} failed: ${result.content}`);
+  }
+  return parseTurnContext(result);
+}
+
+function currentSessionId(threadSession: ThreadSession): string | null {
+  return (
+    threadSession.attachment.providerThreadId ??
+    threadSession.session.getSessionId() ??
+    null
+  );
+}
+
+function isCurrentSession(threadSession: ThreadSession): boolean {
+  const { attachment } = threadSession;
+  return (
+    !threadSession.closing &&
+    !attachment.closing &&
+    attachment.residentSession === threadSession
+  );
+}
+
+function isPreparedSessionOpen(threadSession: ThreadSession): boolean {
+  return (
+    isCurrentSession(threadSession) &&
+    threadSession.translator.hasOpenTurn(
+      threadSession.attachment.threadIdRef.current,
+    )
+  );
+}
+
+async function swapSdkSession(
+  threadSession: ThreadSession,
+  preparation: TurnPreparation,
+  next: {
+    resume: boolean;
+    sessionId: string;
+    systemPromptExtra: string | null;
+  },
+): Promise<void> {
+  const { attachment } = threadSession;
+  const state = attachment.turnContextState;
+  const previous = {
+    sessionId: attachment.sessionOptions.sessionId,
+    systemPromptExtra: state.systemPromptExtra,
+  };
+  const sessionSerial = nextSessionSerial();
+  state.systemPromptExtra = next.systemPromptExtra;
+  if (!next.resume) {
+    attachment.sessionOptions.sessionId = next.sessionId;
+  }
+  const session = createSdkSession(attachment, sessionSerial);
+  preparation.starting = session;
+  try {
+    session.start(next.resume ? next.sessionId : undefined);
+    await session.initialized(FRESH_SESSION_INIT_TIMEOUT_MS);
+    if (!isPreparedSessionOpen(threadSession)) {
+      throw new Error("Claude session closed before the turn started");
+    }
+  } catch (error) {
+    session.stop();
+    state.systemPromptExtra = previous.systemPromptExtra;
+    attachment.sessionOptions.sessionId = previous.sessionId;
+    throw error;
+  } finally {
+    preparation.starting = null;
+  }
+  const replaced = threadSession.session;
+  threadSession.sessionSerial = sessionSerial;
+  threadSession.session = session;
+  threadSession.contextUsageCollector = new ClaudeContextUsageCollector();
+  threadSession.streamEnded = false;
+  replaced.stop();
+  if (attachment.providerThreadId !== next.sessionId) {
+    attachment.providerThreadId = next.sessionId;
+    sendThreadIdentity(attachment.threadIdRef.current, next.sessionId);
+  }
+}
+
+async function prepareTurnSession(
+  threadSession: ThreadSession,
+  preparation: TurnPreparation,
+  context: TurnContext | null,
+  requestId: string,
+): Promise<TurnContextReport> {
+  const { attachment } = threadSession;
+  const threadId = attachment.threadIdRef.current;
+  if (!isPreparedSessionOpen(threadSession)) {
+    throw new Error("Claude session closed before the turn started");
+  }
+  let outcome: TurnContextReport["outcome"] = "resident";
+  if (context !== null) {
+    try {
+      await swapSdkSession(threadSession, preparation, {
+        resume: false,
+        sessionId: context.sessionId,
+        systemPromptExtra:
+          context.systemPrompt.length > 0 ? context.systemPrompt : null,
+      });
+      outcome = "fresh";
+    } catch (error) {
+      if (!isPreparedSessionOpen(threadSession)) throw error;
+      const message = error instanceof Error ? error.message : String(error);
+      logBridgeError(
+        `fresh session for ${threadId} failed to start: ${message}`,
+      );
+      outcome = "failed";
+    }
+  }
+  const sessionId = currentSessionId(threadSession);
+  if (outcome !== "fresh" && threadSession.streamEnded) {
+    if (!sessionId) {
+      throw new Error("Claude SDK stream ended before the turn started");
+    }
+    await swapSdkSession(threadSession, preparation, {
+      resume: true,
+      sessionId,
+      systemPromptExtra: attachment.turnContextState.systemPromptExtra,
+    });
+  }
+  return {
+    requestId,
+    offeredSessionId: context?.sessionId ?? null,
+    outcome,
+    sessionId: currentSessionId(threadSession),
+  };
+}
+
+async function deliverHeldSteers(
+  threadSession: ThreadSession,
+  preparation: TurnPreparation,
+  failure: string | null,
+): Promise<void> {
+  for (
+    let steer = preparation.steers.shift();
+    steer !== undefined;
+    steer = preparation.steers.shift()
+  ) {
+    if (failure !== null) {
+      sendError(steer.id, -32000, failure);
+      continue;
+    }
+    await runTurnInput(
+      steer.id,
+      steer.params,
+      steer.acceptance,
+      "steer",
+      threadSession,
+    );
+  }
+  if (threadSession.turnPreparation === preparation) {
+    threadSession.turnPreparation = null;
+  }
+}
+
+async function runTurnWithContext(args: {
+  acceptance: CanonicalTurnAcceptance;
+  id: string | number;
+  params: TurnStartParams | TurnSteerParams;
+  promptText: string;
+  threadSession: ThreadSession;
+}): Promise<void> {
+  const { acceptance, id, params, promptText, threadSession } = args;
+  const { attachment } = threadSession;
+  const preparation: TurnPreparation = { steers: [], starting: null };
+  threadSession.turnPreparation = preparation;
+  emitCanonicalTurnInputAccepted(threadSession, acceptance, params.threadId);
+  const state = attachment.turnContextState;
+  const answer = await fetchTurnContext({
+    preparation,
+    promptText,
+    reports: state.reports,
+    requestId: acceptance.clientRequestId,
+    threadId: params.threadId,
+    threadSession,
+  });
+  state.reports = acknowledgeReports(state.reports, answer.ack);
+  const { context } = answer;
+  let input: Promise<void>;
+  let failure: string | null = null;
+  try {
+    const report = await prepareTurnSession(
+      threadSession,
+      preparation,
+      context,
+      acceptance.clientRequestId,
+    );
+    state.reports = [...state.reports, report].slice(-MAX_TURN_CONTEXT_REPORTS);
+    input = pushPromptInput(
+      threadSession,
+      report.outcome === "fresh" && context ? context.input : promptText,
+      params.permissionEscalation,
+    );
+  } catch (error) {
+    failure = error instanceof Error ? error.message : String(error);
+    input = Promise.reject(error);
+  }
+  void deliverHeldSteers(threadSession, preparation, failure);
+  try {
+    await input;
+    attachment.permissionEscalation = params.permissionEscalation;
+    sendResult(id, { threadId: params.threadId });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    emitSessionError(threadSession, params.threadId, message);
     sendError(id, -32000, message);
   }
 }
