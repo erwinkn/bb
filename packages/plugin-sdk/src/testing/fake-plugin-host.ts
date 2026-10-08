@@ -223,6 +223,8 @@ export interface FakeAgentToolRecord {
    * rejects is rejected here with the same message.
    */
   presentation: PluginRowPresentation | null;
+  /** Whether providers load the tool upfront instead of behind tool search. */
+  alwaysLoad: boolean;
   /** JSON-schema object the host would send providers. */
   inputSchema: unknown;
   parse(
@@ -1049,6 +1051,7 @@ function createFakePluginHostInternal(
       description: string;
       instructions?: string;
       presentation?: PluginRowPresentation;
+      alwaysLoad?: boolean;
       parameters: unknown;
       execute(
         params: never,

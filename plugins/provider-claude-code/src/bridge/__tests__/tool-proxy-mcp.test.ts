@@ -66,6 +66,31 @@ describe("buildBridgeMcpServer", () => {
     await client.close();
   });
 
+  it("marks only always-loaded tools so Claude Code keeps the rest deferred", async () => {
+    const server = buildBridgeMcpServer(
+      [
+        {
+          name: "initiative_read",
+          description: "Read the Initiative.",
+          inputSchema: { type: "object" },
+          alwaysLoad: true,
+        },
+        {
+          name: "initiative_pr",
+          description: "Record a pull request.",
+          inputSchema: { type: "object" },
+        },
+      ],
+      async () => ({ content: "unused" }),
+    );
+    const client = await connect(server);
+
+    const listed = await client.listTools();
+    expect(listed.tools[0]?._meta).toEqual({ "anthropic/alwaysLoad": true });
+    expect(listed.tools[1]).not.toHaveProperty("_meta");
+    await client.close();
+  });
+
   it("forwards tool calls with raw arguments and reports errors", async () => {
     const calls: Array<{ toolName: string; args: Record<string, unknown> }> =
       [];

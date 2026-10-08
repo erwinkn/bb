@@ -807,6 +807,8 @@ const INTENTIONAL_OPTIONAL_HOST_DAEMON_FIELDS: Record<string, string> = {
     "a described submission carries a payload only when the plugin has something for its own timeline renderer; absence means the row renders from title and detail alone.",
   "hostDaemonCommandSchema.resolution.description.title":
     "a described submission overrides the row title only when the plugin returned one; absence means the presentation's completed label stands.",
+  "hostDaemonCommandSchema.dynamicTools.alwaysLoad":
+    "a dynamic tool asks to load upfront only when its plugin set alwaysLoad; absence means the tool stays deferred behind tool search, the same as false, and keeps older plugins and daemons compatible.",
   "hostDaemonCommandSchema.dynamicTools.presentation":
     "a dynamic tool declares a row presentation only when its plugin wrote one; absence means bb renders the call with the standard tool name and the plugin's branding glyph.",
   "hostDaemonCommandSchema.dynamicTools.presentation.badge":
@@ -843,6 +845,8 @@ const INTENTIONAL_OPTIONAL_HOST_DAEMON_FIELDS: Record<string, string> = {
     "a localFile prompt input carries a size only when the uploader measured one; absence means unknown, and no reader may read it as zero.",
   "hostDaemonCommandSchema.inputGroups.visibility":
     "a prompt input declares visibility only to hide itself from the person: the single value agent-only marks an input the transcript does not show, so absence is the ordinary visible input.",
+  "hostDaemonCommandSchema.resumeContext.dynamicTools.alwaysLoad":
+    "a dynamic tool asks to load upfront only when its plugin set alwaysLoad; absence means the tool stays deferred behind tool search, the same as false, and keeps older plugins and daemons compatible.",
   "hostDaemonCommandSchema.resumeContext.dynamicTools.presentation":
     "a dynamic tool declares a row presentation only when its plugin wrote one; absence means bb renders the call with the standard tool name and the plugin's branding glyph.",
   "hostDaemonCommandSchema.resumeContext.dynamicTools.presentation.badge":

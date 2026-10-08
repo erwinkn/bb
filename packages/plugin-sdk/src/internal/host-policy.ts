@@ -3087,6 +3087,7 @@ export function normalizeAgentToolRegistration(args: {
     description: string;
     instructions?: string;
     presentation?: PluginRowPresentation;
+    alwaysLoad?: boolean;
     parameters: unknown;
     execute(
       params: never,
@@ -3098,6 +3099,7 @@ export function normalizeAgentToolRegistration(args: {
   description: string;
   presentation: PluginRowPresentation | null;
   instructions: string | null;
+  alwaysLoad: boolean;
   inputSchema: unknown;
   parse: AgentToolParse;
   execute: AgentToolExecute;
@@ -3134,6 +3136,9 @@ export function normalizeAgentToolRegistration(args: {
     throw new Error(
       `tool "${name}" instructions exceed the ${PLUGIN_AGENT_STATIC_INSTRUCTIONS_MAX_CHARS}-character limit`,
     );
+  }
+  if (tool.alwaysLoad !== undefined && typeof tool.alwaysLoad !== "boolean") {
+    throw new Error(`tool "${name}" alwaysLoad must be a boolean`);
   }
   const presentation = parsePluginRowPresentation(
     `tool "${name}"`,
@@ -3202,6 +3207,7 @@ export function normalizeAgentToolRegistration(args: {
       tool.instructions !== undefined && tool.instructions.trim().length > 0
         ? tool.instructions
         : null,
+    alwaysLoad: tool.alwaysLoad === true,
     inputSchema,
     parse,
     execute: (tool.execute as AgentToolExecute).bind(tool),

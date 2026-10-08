@@ -1,9 +1,13 @@
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
 
-const { queryMock, sdk, trackers } = vi.hoisted(() => ({
+const { queryMock, seedQueryMock, sdk, trackers } = vi.hoisted(() => ({
   queryMock: vi.fn(),
+  seedQueryMock: vi.fn(),
   sdk: { query: null as unknown as (args: unknown) => unknown },
   trackers: [] as Array<{ handleToolCallResponse: (r: never) => boolean }>,
 }));
@@ -11,7 +15,10 @@ const { queryMock, sdk, trackers } = vi.hoisted(() => ({
 vi.mock("@anthropic-ai/claude-agent-sdk", async (importOriginal) => {
   sdk.query = (await importOriginal<{ query: typeof sdk.query }>()).query;
   return {
-    query: queryMock,
+    query: (args: { options?: { title?: string } }) =>
+      args.options?.title === "BB OptChat seed"
+        ? seedQueryMock(args)
+        : queryMock(args),
     forkSession: vi.fn(),
     createSdkMcpServer: vi.fn(() => ({})),
     tool: vi.fn((_name, _desc, _schema, handler) => handler),
@@ -33,6 +40,9 @@ vi.mock("@get-bb/plugin-sdk/provider-bridge", async (importOriginal) => {
   };
 });
 
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
+import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { handleLine } from "../bridge.js";
 import { extendSystemPrompt, parseTurnContext } from "../turn-context.js";
 import { experimental_createBridgeJsonRpcTestHarness as createBridgeJsonRpcTestHarness } from "@get-bb/plugin-sdk/provider-bridge/testing";
@@ -41,10 +51,15 @@ import type { BridgeJsonRpcOutputMessage } from "@get-bb/plugin-sdk/provider-bri
 interface QueryCall {
   prompt: AsyncIterable<SDKUserMessage>;
   options: {
+    allowDangerouslySkipPermissions?: boolean;
     allowedTools?: string[];
+    forkSession?: boolean;
+    mcpServers?: Record<string, { instance: McpServer }>;
+    permissionMode?: string;
     resume?: string;
     sessionId?: string;
     systemPrompt?: unknown;
+    title?: string;
   };
 }
 
@@ -81,8 +96,42 @@ function controlledQuery() {
   };
 }
 
+function failedInitQuery(message: string) {
+  const query = controlledQuery();
+  query.initializationResult = vi.fn().mockRejectedValue(new Error(message));
+  return query;
+}
+
+function seededQuery(call: QueryCall, subtype = "success") {
+  const query = controlledQuery();
+  const prompts = call.prompt[Symbol.asyncIterator]();
+  let replied = false;
+  return {
+    ...query,
+    [Symbol.asyncIterator]() {
+      const rest = query[Symbol.asyncIterator]();
+      return {
+        next: async () => {
+          if (replied) return rest.next();
+          replied = true;
+          await prompts.next();
+          return {
+            value: { type: "result", subtype, is_error: subtype !== "success" },
+            done: false as const,
+          };
+        },
+        return: rest.return,
+      };
+    },
+  };
+}
+
 function queryCalls(): QueryCall[] {
   return queryMock.mock.calls.map((call) => call[0] as QueryCall);
+}
+
+function seedCalls(): QueryCall[] {
+  return seedQueryMock.mock.calls.map((call) => call[0] as QueryCall);
 }
 
 async function nextPromptText(call: QueryCall): Promise<string> {
@@ -187,6 +236,7 @@ let bridge: Harness;
 beforeEach(() => {
   vi.clearAllMocks();
   queryMock.mockImplementation(() => controlledQuery());
+  seedQueryMock.mockImplementation((call: QueryCall) => seededQuery(call));
   bridge = createBridgeJsonRpcTestHarness(handleLine);
 });
 
@@ -237,8 +287,12 @@ it("runs a turn in a fresh session with the turn context's system prompt and fir
   const prompt = nextPromptText(fresh!);
   await bridge.waitForResponse("turn-1");
   expect(resident!.options.sessionId).toBe(first);
-  expect(fresh!.options.resume).toBeUndefined();
-  expect(fresh!.options.sessionId).not.toBe(first);
+  expect(fresh!.options).toMatchObject({
+    resume: seedCalls()[0]!.options.sessionId,
+    forkSession: true,
+    sessionId: FRESH_SESSION_ID,
+    title: "BB OptChat turn",
+  });
   expect(fresh!.options.systemPrompt).toEqual({
     type: "preset",
     preset: "claude_code",
@@ -282,19 +336,119 @@ it("runs a turn in a fresh session with the turn context's system prompt and fir
   expect(await handoverPrompt).toBe("handover");
 });
 
-it("lets the session go on when the turn context answers {} or fails", async () => {
+it("lets the session go on when the turn context answers {} or only acknowledges", async () => {
   await startThread(bridge);
   const resident = queryCalls()[0]!;
   sendTurn(bridge, "turn-1", "Hello");
   answerToolCall(await waitForToolCall(bridge), "{}");
   expect(await nextPromptText(resident)).toBe("Hello");
-  await bridge.waitForResponse("turn-1");
+  expect((await bridge.waitForResponse("turn-1")).error).toBeUndefined();
 
-  sendTurn(bridge, "turn-2", "Again");
-  answerToolCall(await waitForToolCall(bridge), "plugin threw", false);
+  sendTurn(bridge, "turn-2", "Again", "turn/start", SECOND_REQUEST);
+  answerToolCall(
+    await waitForToolCall(bridge),
+    JSON.stringify({ ack: "creq_abcdefghjk" }),
+  );
   expect(await nextPromptText(resident)).toBe("Again");
-  await bridge.waitForResponse("turn-2");
+  expect((await bridge.waitForResponse("turn-2")).error).toBeUndefined();
   expect(queryCalls()).toHaveLength(1);
+});
+
+it.each([
+  ["the plugin fails", "memory plugin unavailable", false],
+  ["the answer is not JSON", "not json", true],
+  [
+    "a fresh answer is malformed",
+    JSON.stringify({ session: "fresh", sessionId: FRESH_SESSION_ID }),
+    true,
+  ],
+  ["the answer is something else", JSON.stringify({ input: "x" }), true],
+])(
+  "fails the turn, its held steer and never runs them in the resident when %s",
+  async (_case, text, success) => {
+    const first = await startThread(bridge);
+    const resident = queryCalls()[0]!;
+    sendTurn(bridge, "turn-1", "Hello");
+    const call = await waitForToolCall(bridge);
+    sendTurn(bridge, "steer-1", "Correction", "turn/steer");
+    for (let tick = 0; tick < 20; tick++) await Promise.resolve();
+    answerToolCall(call, text, success);
+    expect((await bridge.waitForResponse("turn-1")).error?.message).toContain(
+      "Claude Code could not get the turn's memory context",
+    );
+    expect((await bridge.waitForResponse("steer-1")).error).toBeDefined();
+    expect(
+      bridge.messages.some(
+        (message) =>
+          message.method === "error" &&
+          JSON.stringify(message.params).includes("memory context"),
+      ),
+    ).toBe(true);
+
+    sendTurn(bridge, "turn-2", "Again", "turn/start", SECOND_REQUEST);
+    const second = await waitForToolCall(bridge);
+    expect(second.params).toMatchObject({
+      arguments: { sessionId: first, reports: [] },
+    });
+    answerToolCall(second, "{}");
+    expect(await nextPromptText(resident)).toBe("Again");
+    await bridge.waitForResponse("turn-2");
+    expect(queryCalls()).toHaveLength(1);
+    expect(seedCalls()).toHaveLength(0);
+  },
+);
+
+it.each([
+  ["queued behind the turn before its context was asked for", false],
+  ["arriving after the turn failed", true],
+])(
+  "fails a steer %s with the turn's memory context error, and never runs it in the resident",
+  async (_case, late) => {
+    await startThread(bridge);
+    const resident = queryCalls()[0]!;
+    sendTurn(bridge, "turn-1", "Hello");
+    if (!late) sendTurn(bridge, "steer-1", "Correction", "turn/steer");
+    answerToolCall(
+      await waitForToolCall(bridge),
+      "memory plugin unavailable",
+      false,
+    );
+    const failed = await bridge.waitForResponse("turn-1");
+    if (late) sendTurn(bridge, "steer-1", "Correction", "turn/steer");
+    expect((await bridge.waitForResponse("steer-1")).error).toEqual(
+      failed.error,
+    );
+
+    sendTurn(bridge, "turn-2", "Again", "turn/start", SECOND_REQUEST);
+    answerToolCall(await waitForToolCall(bridge), "{}");
+    expect(await nextPromptText(resident)).toBe("Again");
+    expect((await bridge.waitForResponse("turn-2")).error).toBeUndefined();
+  },
+);
+
+it("sends a steer that arrives after its turn finished back to BB as stale, so it starts a new turn with its own context", async () => {
+  queryMock.mockImplementationOnce((call: QueryCall) => seededQuery(call));
+  await startThread(bridge);
+  const resident = queryCalls()[0]!;
+  sendTurn(bridge, "turn-1", "Hello");
+  answerToolCall(await waitForToolCall(bridge), "{}");
+  expect((await bridge.waitForResponse("turn-1")).error).toBeUndefined();
+  await vi.waitFor(() =>
+    expect(
+      bridge.messages.some((message) =>
+        JSON.stringify(message.params ?? null).includes('"turn.boundary"'),
+      ),
+    ).toBe(true),
+  );
+
+  sendTurn(bridge, "steer-1", "Late correction", "turn/steer");
+  expect((await bridge.waitForResponse("steer-1")).error).toMatchObject({
+    code: -32001,
+    data: { recovery: { kind: "staleTurn", retryable: false } },
+  });
+  sendTurn(bridge, "turn-2", "Again", "turn/start", SECOND_REQUEST);
+  answerToolCall(await waitForToolCall(bridge), "{}");
+  expect(await nextPromptText(resident)).toBe("Again");
 });
 
 it("never asks for steered input or threads without the tool", async () => {
@@ -314,40 +468,45 @@ it("appends to every system prompt shape and parses a fresh session answer and i
     systemPrompt: "",
     input: "x",
   };
-  const none = { ack: null, context: null };
+  const resident = { ok: true, ack: null, context: null };
+  const failed = { ok: false, error: expect.any(String) };
   expect(
     extendSystemPrompt({ type: "preset", preset: "claude_code" }, "view"),
   ).toEqual({ type: "preset", preset: "claude_code", append: "view" });
   expect(extendSystemPrompt("base", "view")).toBe("base\n\nview");
   expect(extendSystemPrompt("base", "")).toBe("base");
-  expect(parseTurnContext({ content: "{}" })).toEqual(none);
-  expect(parseTurnContext({ content: "not json" })).toEqual(none);
+  expect(parseTurnContext({ content: "{}" })).toEqual(resident);
   expect(
-    parseTurnContext({
-      content: JSON.stringify({ ...fresh, ack: "creq_a" }),
-      isError: true,
-    }),
-  ).toEqual(none);
+    parseTurnContext({ content: JSON.stringify({ ack: "creq_a" }) }),
+  ).toEqual({ ok: true, ack: "creq_a", context: null });
   expect(parseTurnContext({ content: JSON.stringify(fresh) })).toEqual({
+    ok: true,
     ack: null,
     context: fresh,
   });
   expect(
     parseTurnContext({ content: JSON.stringify({ ...fresh, ack: "creq_a" }) }),
-  ).toEqual({ ack: "creq_a", context: fresh });
-  expect(
-    parseTurnContext({ content: JSON.stringify({ ack: "creq_a" }) }),
-  ).toEqual({ ack: "creq_a", context: null });
+  ).toEqual({ ok: true, ack: "creq_a", context: fresh });
   expect(
     parseTurnContext({
-      content: JSON.stringify({ ...fresh, sessionId: undefined }),
+      content: JSON.stringify({ ...fresh, ack: "creq_a" }),
+      isError: true,
     }),
-  ).toEqual(none);
-  expect(
-    parseTurnContext({
-      content: JSON.stringify({ ...fresh, sessionId: "../not-a-session" }),
-    }),
-  ).toEqual(none);
+  ).toEqual({ ok: false, error: JSON.stringify({ ...fresh, ack: "creq_a" }) });
+  for (const content of [
+    "not json",
+    "null",
+    "[]",
+    '"resident"',
+    JSON.stringify({ ack: "" }),
+    JSON.stringify({ ack: "creq_a", sessionId: FRESH_SESSION_ID }),
+    JSON.stringify({ ...fresh, session: "resident" }),
+    JSON.stringify({ ...fresh, sessionId: undefined }),
+    JSON.stringify({ ...fresh, sessionId: "../not-a-session" }),
+    JSON.stringify({ ...fresh, input: "" }),
+  ]) {
+    expect(parseTurnContext({ content })).toEqual(failed);
+  }
 });
 
 it("reports the session and request it asks for, and runs a fresh session under the id the answer names", async () => {
@@ -500,12 +659,14 @@ it("keeps every report the plugin has not acknowledged, and sends them again, ol
   await bridge.waitForResponse("turn-4");
 });
 
-it("keeps the resident session, with the turn's own text, when the fresh session fails to start", async () => {
+it("fails the turn, and keeps the resident without its input, when the fresh session fails to start forked and unforked", async () => {
   const first = await startThread(bridge);
   const resident = queryCalls()[0]!;
-  queryMock.mockImplementationOnce(() => {
-    throw new Error("spawn claude ENOENT");
-  });
+  queryMock
+    .mockImplementationOnce(() => failedInitQuery("No conversation found"))
+    .mockImplementationOnce(() => {
+      throw new Error("spawn claude ENOENT");
+    });
   sendTurn(bridge, "turn-1", "Hello");
   answerToolCall(
     await waitForToolCall(bridge),
@@ -516,13 +677,20 @@ it("keeps the resident session, with the turn's own text, when the fresh session
       input: "Framed",
     }),
   );
-  expect(await nextPromptText(resident)).toBe("Hello");
-  expect((await bridge.waitForResponse("turn-1")).error).toBeUndefined();
+  expect((await bridge.waitForResponse("turn-1")).error?.message).toContain(
+    "could not start the turn's fresh session: spawn claude ENOENT",
+  );
+  expect(seedCalls()).toHaveLength(1);
+  expect(queryCalls()).toHaveLength(3);
+  expect(queryCalls()[1]!.options).toMatchObject({ forkSession: true });
+  expect(queryCalls()[2]!.options.forkSession).toBeUndefined();
   expect(queryMock.mock.results[0]!.value.close).not.toHaveBeenCalled();
 
-  sendTurn(bridge, "turn-2", "Again");
+  sendTurn(bridge, "turn-2", "Again", "turn/start", SECOND_REQUEST);
   const second = await waitForToolCall(bridge);
-  expect(second.params).toMatchObject({ arguments: { sessionId: first } });
+  expect(second.params).toMatchObject({
+    arguments: { sessionId: first, reports: [] },
+  });
   answerToolCall(second, "{}");
   expect(await nextPromptText(resident)).toBe("Again");
   await bridge.waitForResponse("turn-2");
@@ -599,8 +767,8 @@ it("cancels the context fetch on interrupt: the turn and its held steer fail at 
   expect(queryCalls()).toHaveLength(1);
 });
 
-it("forgets a context request that timed out, and ignores its late answer", async () => {
-  await startThread(bridge);
+it("fails a turn whose context request timed out, without running it in the resident, and ignores the late answer", async () => {
+  const first = await startThread(bridge);
   const resident = queryCalls()[0]!;
   vi.useFakeTimers();
   try {
@@ -612,8 +780,9 @@ it("forgets a context request that timed out, and ignores its late answer", asyn
     )!;
     expect(call).toBeDefined();
     await vi.advanceTimersByTimeAsync(20_000);
-    expect(await nextPromptText(resident)).toBe("Original request");
-    await bridge.waitForResponse("turn-1");
+    expect((await bridge.waitForResponse("turn-1")).error?.message).toBe(
+      "Claude Code could not get the turn's memory context: no answer within 20 s",
+    );
     answered.add(call.id!);
     expect(
       trackers[0]!.handleToolCallResponse({
@@ -639,6 +808,14 @@ it("forgets a context request that timed out, and ignores its late answer", asyn
   } finally {
     vi.useRealTimers();
   }
+  sendTurn(bridge, "turn-2", "Again", "turn/start", SECOND_REQUEST);
+  const second = await waitForToolCall(bridge);
+  expect(second.params).toMatchObject({
+    arguments: { sessionId: first, reports: [] },
+  });
+  answerToolCall(second, "{}");
+  expect(await nextPromptText(resident)).toBe("Again");
+  await bridge.waitForResponse("turn-2");
 });
 
 function failingQuery() {
@@ -672,8 +849,10 @@ it("restarts a resident session whose stream ended during preparation, then deli
   sendTurn(bridge, "steer-1", "First correction", "turn/steer");
   sendTurn(bridge, "steer-2", "Second correction", "turn/steer");
   for (let tick = 0; tick < 20; tick++) await Promise.resolve();
-  answered.add(call.id!);
   queryMock.mock.results[0]!.value.close();
+  for (let tick = 0; tick < 20; tick++) await Promise.resolve();
+  expect(queryCalls()).toHaveLength(1);
+  answerToolCall(call, "{}");
   await vi.waitFor(() => expect(queryCalls()).toHaveLength(2));
   const restarted = queryCalls()[1]!;
   expect(restarted.options.resume).toBe(first);
@@ -713,22 +892,25 @@ it("fails the turn's input and its held steers together when the resident's stre
   const call = await waitForToolCall(bridge);
   sendTurn(bridge, "steer-1", "Correction", "turn/steer");
   for (let tick = 0; tick < 20; tick++) await Promise.resolve();
-  answered.add(call.id!);
   resident.fail(new Error("Claude Code process exited with code 1"));
+  for (let tick = 0; tick < 20; tick++) await Promise.resolve();
+  answerToolCall(call, "{}");
   expect((await bridge.waitForResponse("turn-1")).error).toBeDefined();
   expect((await bridge.waitForResponse("steer-1")).error).toBeDefined();
   expect(queryCalls()).toHaveLength(1);
 });
 
-it("keeps the resident session until the fresh one has initialized: a CLI that fails to start runs the turn there, and the next ask reports it failed", async () => {
+it("keeps the resident session until the fresh one has initialized: a CLI that fails to start fails the turn and its held steer", async () => {
   const first = await startThread(bridge);
   const resident = queryCalls()[0]!;
-  queryMock.mockImplementationOnce((args: QueryCall) =>
+  const failingCli = (args: QueryCall) =>
     sdk.query({
       ...args,
       options: { ...args.options, pathToClaudeCodeExecutable: "/bin/false" },
-    }),
-  );
+    });
+  queryMock
+    .mockImplementationOnce(failingCli)
+    .mockImplementationOnce(failingCli);
   sendTurn(bridge, "turn-1", "Original request");
   const call = await waitForToolCall(bridge);
   sendTurn(bridge, "steer-1", "Correction", "turn/steer");
@@ -742,13 +924,10 @@ it("keeps the resident session until the fresh one has initialized: a CLI that f
       input: "Framed",
     }),
   );
-  expect(await nextTexts(resident, 2)).toEqual([
-    "Original request",
-    "Correction",
-  ]);
   for (const id of ["turn-1", "steer-1"])
-    expect((await bridge.waitForResponse(id)).error).toBeUndefined();
+    expect((await bridge.waitForResponse(id)).error).toBeDefined();
   expect(queryMock.mock.results[1]!.type).toBe("return");
+  expect(queryMock.mock.results[2]!.type).toBe("return");
   expect(queryMock.mock.results[0]!.value.close).not.toHaveBeenCalled();
   expect(
     bridge.messages.filter(
@@ -761,17 +940,7 @@ it("keeps the resident session until the fresh one has initialized: a CLI that f
   sendTurn(bridge, "turn-2", "Again", "turn/start", SECOND_REQUEST);
   const second = await waitForToolCall(bridge);
   expect(second.params).toMatchObject({
-    arguments: {
-      sessionId: first,
-      reports: [
-        {
-          requestId: "creq_abcdefghjk",
-          offeredSessionId: FRESH_SESSION_ID,
-          outcome: "failed",
-          sessionId: first,
-        },
-      ],
-    },
+    arguments: { sessionId: first, reports: [] },
   });
   answerToolCall(second, "{}");
   expect(await nextPromptText(resident)).toBe("Again");
@@ -991,4 +1160,232 @@ it("keeps an unacknowledged report and the frozen system prompt across Stop and 
   });
   expect(await nextPromptText(handover)).toBe("Handover");
   await bridge.waitForResponse("turn-2");
+});
+
+async function freshTurn(
+  id: `turn-${number}`,
+  systemPrompt: string,
+  sessionId: string,
+  turnOptions = options(),
+): Promise<QueryCall> {
+  const before = queryCalls().length;
+  bridge.sendRequest(id, "turn/start", {
+    threadId: THREAD_ID,
+    providerThreadId: THREAD_ID,
+    clientRequestId: `creq_${id.at(-1)}bcdefghjk`,
+    input: [{ type: "text", text: id, mentions: [] }],
+    options: turnOptions,
+  });
+  answerToolCall(
+    await waitForToolCall(bridge),
+    JSON.stringify({ session: "fresh", sessionId, systemPrompt, input: id }),
+  );
+  const find = () =>
+    queryCalls()
+      .slice(before)
+      .find((call) => call.options.sessionId === sessionId);
+  await vi.waitFor(() => expect(find()).toBeDefined());
+  const fresh = find()!;
+  expect(await nextPromptText(fresh)).toBe(id);
+  expect((await bridge.waitForResponse(id)).error).toBeUndefined();
+  return fresh;
+}
+
+const THIRD_SESSION_ID = "2c3d4e5f-6a7b-4c8d-9e0f-1a2b3c4d5e6f";
+
+it("forks every fresh session from one seed while the setup stays the same, so the setup is read from the prompt cache", async () => {
+  await startThread(bridge);
+  const first = await freshTurn("turn-2", "memory v1", FRESH_SESSION_ID);
+  const second = await freshTurn("turn-3", "memory v1", HANDOVER_SESSION_ID);
+  expect(seedCalls()).toHaveLength(1);
+  const seed = seedCalls()[0]!;
+  expect(seed.options).toMatchObject({
+    title: "BB OptChat seed",
+    systemPrompt: {
+      type: "preset",
+      preset: "claude_code",
+      append: "BB instructions\n\nmemory v1",
+    },
+  });
+  expect(seed.options.resume).toBeUndefined();
+  for (const [fresh, sessionId] of [
+    [first, FRESH_SESSION_ID],
+    [second, HANDOVER_SESSION_ID],
+  ] as const) {
+    expect(fresh.options).toMatchObject({
+      resume: seed.options.sessionId,
+      forkSession: true,
+      sessionId,
+    });
+  }
+
+  const third = await freshTurn("turn-4", "memory v2", THIRD_SESSION_ID);
+  expect(seedCalls()).toHaveLength(2);
+  expect(seedCalls()[1]!.options.sessionId).not.toBe(seed.options.sessionId);
+  expect(third.options.resume).toBe(seedCalls()[1]!.options.sessionId);
+});
+
+it("starts an unforked fresh session when its seed fails", async () => {
+  seedQueryMock.mockImplementation((call: QueryCall) =>
+    seededQuery(call, "error_during_execution"),
+  );
+  await startThread(bridge);
+  const fresh = await freshTurn("turn-2", "memory", FRESH_SESSION_ID);
+  expect(seedCalls()).toHaveLength(1);
+  expect(fresh.options.resume).toBeUndefined();
+  expect(fresh.options.forkSession).toBeUndefined();
+  expect(fresh.options.sessionId).toBe(FRESH_SESSION_ID);
+});
+
+it("drops a seed whose fork fails and starts the same fresh session unforked, with its memory and input", async () => {
+  await startThread(bridge);
+  const forked = await freshTurn("turn-2", "memory", FRESH_SESSION_ID);
+  const seed = seedCalls()[0]!.options.sessionId!;
+  expect(forked.options.resume).toBe(seed);
+
+  queryMock.mockImplementationOnce(() =>
+    failedInitQuery(`No conversation found with session ID: ${seed}`),
+  );
+  const before = queryCalls().length;
+  bridge.sendRequest("turn-3", "turn/start", {
+    threadId: THREAD_ID,
+    providerThreadId: THREAD_ID,
+    clientRequestId: "creq_3bcdefghjk",
+    input: [{ type: "text", text: "turn-3", mentions: [] }],
+    options: options(),
+  });
+  answerToolCall(
+    await waitForToolCall(bridge),
+    JSON.stringify({
+      session: "fresh",
+      sessionId: HANDOVER_SESSION_ID,
+      systemPrompt: "memory",
+      input: "Framed turn-3",
+    }),
+  );
+  await vi.waitFor(() => expect(queryCalls()).toHaveLength(before + 2));
+  const [failedFork, unforked] = queryCalls().slice(before);
+  expect(await nextPromptText(unforked!)).toBe("Framed turn-3");
+  expect((await bridge.waitForResponse("turn-3")).error).toBeUndefined();
+  expect(failedFork!.options).toMatchObject({
+    resume: seed,
+    forkSession: true,
+    sessionId: HANDOVER_SESSION_ID,
+  });
+  expect(unforked!.options.resume).toBeUndefined();
+  expect(unforked!.options.forkSession).toBeUndefined();
+  for (const key of [
+    "sessionId",
+    "systemPrompt",
+    "permissionMode",
+    "allowDangerouslySkipPermissions",
+    "title",
+  ] as const) {
+    expect(unforked!.options[key]).toEqual(failedFork!.options[key]);
+  }
+  expect(unforked!.options.systemPrompt).toEqual({
+    type: "preset",
+    preset: "claude_code",
+    append: "BB instructions\n\nmemory",
+  });
+
+  const next = await freshTurn("turn-4", "memory", THIRD_SESSION_ID);
+  expect(seedCalls()).toHaveLength(2);
+  expect(next.options.resume).toBe(seedCalls()[1]!.options.sessionId);
+});
+
+it("makes a new seed when a skill is added, edited or removed", async () => {
+  const root = mkdtempSync(join(tmpdir(), "bb-seed-skills-"));
+  try {
+    const cwd = join(root, "workspace");
+    const skills = join(cwd, ".claude", "skills");
+    mkdirSync(join(skills, "review"), { recursive: true });
+    writeFileSync(join(skills, "review", "SKILL.md"), "description: v1\n");
+    const turnOptions = {
+      ...options(),
+      envVars: { CLAUDE_CONFIG_DIR: join(root, "config") },
+    };
+    bridge.sendRequest("start", "thread/start", {
+      cwd,
+      instructionMode: "append",
+      options: turnOptions,
+      threadId: THREAD_ID,
+      dynamicTools,
+    });
+    await bridge.waitForResponse("start");
+    const ids = [FRESH_SESSION_ID, HANDOVER_SESSION_ID];
+    let turn = 2;
+    const seedsAfterTurn = async () => {
+      await freshTurn(`turn-${turn}`, "memory", ids[turn % 2]!, turnOptions);
+      turn += 1;
+      return seedCalls().length;
+    };
+
+    expect(await seedsAfterTurn()).toBe(1);
+    expect(await seedsAfterTurn()).toBe(1);
+    writeFileSync(
+      join(skills, "review", "SKILL.md"),
+      "description: v2, longer\n",
+    );
+    expect(await seedsAfterTurn()).toBe(2);
+    mkdirSync(join(skills, "deploy"));
+    writeFileSync(join(skills, "deploy", "SKILL.md"), "description: deploy\n");
+    expect(await seedsAfterTurn()).toBe(3);
+    rmSync(join(skills, "review"), { recursive: true });
+    expect(await seedsAfterTurn()).toBe(4);
+    expect(await seedsAfterTurn()).toBe(4);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+it("runs a fresh session, and its seed, in the permission mode the turn asks for", async () => {
+  bridge.sendRequest("start", "thread/start", {
+    cwd: "/tmp/worktree",
+    instructionMode: "append",
+    options: {
+      ...options(),
+      permissionMode: "accept-edits",
+      permissionScope: "workspace",
+      approvalReviewer: "user",
+      permissionEscalation: "ask",
+    },
+    threadId: THREAD_ID,
+    dynamicTools,
+  });
+  await bridge.waitForResponse("start");
+  expect(queryCalls()[0]!.options.permissionMode).toBe("acceptEdits");
+
+  const fresh = await freshTurn("turn-2", "memory", FRESH_SESSION_ID, {
+    ...options(),
+    permissionMode: "full",
+    permissionScope: "full",
+  });
+  expect(seedCalls()[0]!.options.permissionMode).toBe("bypassPermissions");
+  expect(fresh.options.permissionMode).toBe("bypassPermissions");
+  expect(fresh.options.allowDangerouslySkipPermissions).toBe(true);
+});
+
+it("lists tools the plugin marks alwaysLoad with Claude Code's always-load flag", async () => {
+  await startThread(bridge, [
+    ...dynamicTools,
+    {
+      name: "initiative_zoom",
+      description: "zoom",
+      inputSchema: { type: "object" },
+      alwaysLoad: true,
+    },
+  ] as typeof dynamicTools);
+  const server = queryCalls()[0]!.options.mcpServers!["bb-bridge"]!;
+  const [clientTransport, serverTransport] =
+    InMemoryTransport.createLinkedPair();
+  await server.instance.connect(serverTransport);
+  const client = new Client({ name: "test", version: "1.0.0" });
+  await client.connect(clientTransport);
+  const { tools } = await client.listTools();
+  expect(tools.map((tool) => [tool.name, tool._meta ?? null])).toEqual([
+    ["initiative_read", null],
+    ["initiative_zoom", { "anthropic/alwaysLoad": true }],
+  ]);
+  await client.close();
 });

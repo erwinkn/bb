@@ -11,6 +11,8 @@ import {
 
 import { BB_BRIDGE_MCP_SERVER_NAME } from "../tool-classification.js";
 
+const ALWAYS_LOAD_META_KEY = "anthropic/alwaysLoad";
+
 type BridgeToolCallContent =
   | { type: "text"; text: string }
   | { type: "image"; data: string; mimeType: string };
@@ -38,6 +40,9 @@ export function buildBridgeMcpServer(
       name: def.name,
       description: def.description,
       inputSchema: normalizeInputSchema(def.inputSchema),
+      ...(def.alwaysLoad === true
+        ? { _meta: { [ALWAYS_LOAD_META_KEY]: true } }
+        : {}),
     })),
   }));
   instance.server.setRequestHandler(CallToolRequestSchema, async (request) => {
