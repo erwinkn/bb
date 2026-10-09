@@ -2156,11 +2156,15 @@ export function createPluginService(deps: PluginServiceDeps): PluginService {
       const configuringPluginIds = plugins
         .filter(({ provider }) => provider !== null)
         .map(({ pluginId }) => pluginId);
+      const originPluginId = context.origin.pluginId;
       const metadataByPluginId = new Map<string, JsonObject>();
       for (const row of listThreadPluginMetadataRows(
         deps.db,
         context.thread.id,
-        configuringPluginIds,
+        // FORK: and the origin plugin's, for origin.pluginMetadata.
+        originPluginId === null
+          ? configuringPluginIds
+          : [...new Set([...configuringPluginIds, originPluginId])],
       )) {
         const metadata = parsePersistedPluginMetadata(row.metadataJson);
         if (metadata === undefined) {
@@ -2170,6 +2174,15 @@ export function createPluginService(deps: PluginServiceDeps): PluginService {
         }
         metadataByPluginId.set(row.pluginId, metadata ?? {});
       }
+      const origin =
+        originPluginId === null
+          ? context.origin
+          : {
+              ...context.origin,
+              pluginMetadata: deepFreezePluginMetadata(
+                metadataByPluginId.get(originPluginId) ?? {},
+              ),
+            };
 
       for (const { pluginId, provider } of plugins) {
         const pluginTools = allTools.filter(
@@ -2195,6 +2208,7 @@ export function createPluginService(deps: PluginServiceDeps): PluginService {
             pluginId,
             value: provider({
               ...context,
+              origin,
               pluginMetadata: deepFreezePluginMetadata(
                 metadataByPluginId.get(pluginId) ?? {},
               ),

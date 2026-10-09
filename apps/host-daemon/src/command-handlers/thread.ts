@@ -338,6 +338,7 @@ async function runSubmittedTurn(
     options: command.options,
     contributedEnv: command.resumeContext.contributedEnv,
     instructions: command.resumeContext.instructions,
+    dynamicTools: command.resumeContext.dynamicTools,
   });
   return {};
 }

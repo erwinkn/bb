@@ -113,18 +113,15 @@ import {
   FRESH_SESSION_SEED_TITLE,
   FRESH_SESSION_TITLE,
   MAX_RETAINED_TURN_CONTEXTS,
-  MAX_TURN_CONTEXT_REPORTS,
   TURN_CONTEXT_PROTOCOL,
   TURN_CONTEXT_TIMEOUT_MS,
   TURN_CONTEXT_TOOL_NAME,
-  acknowledgeReports,
   extendSystemPrompt,
   hasTurnContextTool,
   parseTurnContext,
   withoutTurnContextTool,
   type TurnContext,
   type TurnContextAnswer,
-  type TurnContextReport,
 } from "./turn-context.js";
 import {
   type ClaudeInteractiveResponse,
@@ -299,7 +296,6 @@ interface ThreadAttachment {
 }
 
 interface TurnContextState {
-  reports: TurnContextReport[];
   systemPromptExtra: string | null;
   seed: FreshSessionSeed | null;
 }
@@ -327,6 +323,11 @@ type CanonicalTurnSteerParams = z.infer<typeof canonicalTurnSteerParamsSchema>;
 interface CanonicalTurnAcceptance {
   clientRequestId: CanonicalTurnStartParams["clientRequestId"];
   providerThreadId: string;
+  /**
+   * The thread's tools as BB resolved them for this new turn. They decide
+   * whether it asks for its turn context, whatever the session was built with.
+   */
+  turnTools?: CanonicalTurnStartParams["dynamicTools"];
 }
 
 interface SessionConstructionConfig {
@@ -1132,10 +1133,7 @@ function createThreadAttachment(
 function retainTurnContext(attachment: ThreadAttachment): void {
   const sessionId = attachment.providerThreadId;
   const state = attachment.turnContextState;
-  if (
-    !sessionId ||
-    (state.reports.length === 0 && state.systemPromptExtra === null)
-  ) {
+  if (!sessionId || state.systemPromptExtra === null) {
     return;
   }
   retainedTurnContexts.delete(sessionId);
@@ -1154,7 +1152,7 @@ function takeRetainedTurnContext(
       ? undefined
       : retainedTurnContexts.get(providerThreadId);
   if (providerThreadId === undefined || retained === undefined) {
-    return { reports: [], systemPromptExtra: null, seed: null };
+    return { systemPromptExtra: null, seed: null };
   }
   retainedTurnContexts.delete(providerThreadId);
   return retained;
@@ -1289,6 +1287,50 @@ async function freshSessionSeed(
   return sessionId;
 }
 
+function configureInjectedTools(
+  translator: ThreadSession["translator"],
+  dynamicTools: SessionConstructionConfig["dynamicTools"],
+): void {
+  translator.configureInjectedTools(
+    (dynamicTools ?? []).map((tool) => ({
+      name: tool.name,
+      ...(tool.presentation === undefined
+        ? {}
+        : { presentation: tool.presentation }),
+    })),
+  );
+}
+
+/**
+ * A session started for a new turn (a fresh OptChat session, or a resident
+ * restarted after its stream ended) serves the tools BB resolved for that
+ * turn, not the ones the thread's first session was built with (A473): a
+ * thread whose memory was enabled since gets its memory tools there, and its
+ * fresh-session seed changes with them. Returns the undo for a session that
+ * failed to start.
+ */
+function adoptTurnTools(
+  threadSession: ThreadSession,
+  tools: SessionConstructionConfig["dynamicTools"],
+): () => void {
+  const { attachment } = threadSession;
+  const config = attachment.sessionConstructionConfig;
+  if (tools === undefined || isDeepStrictEqual(config.dynamicTools, tools)) {
+    return () => {};
+  }
+  const use = (dynamicTools: SessionConstructionConfig["dynamicTools"]) => {
+    attachment.sessionConstructionConfig = { ...config, dynamicTools };
+    setSessionTools(
+      attachment.sessionOptions,
+      dynamicTools,
+      attachment.threadIdRef,
+    );
+    configureInjectedTools(threadSession.translator, dynamicTools);
+  };
+  use(tools);
+  return () => use(config.dynamicTools);
+}
+
 function createThreadSession(attachment: ThreadAttachment): ThreadSession {
   const sessionSerial = nextSessionSerial();
   const session = createSdkSession(attachment, sessionSerial);
@@ -1297,13 +1339,9 @@ function createThreadSession(attachment: ThreadAttachment): ThreadSession {
     cwd: attachment.sessionConstructionConfig.sessionOptions.cwd,
     sandboxEnabled: attachment.sessionOptions.sandbox?.enabled === true,
   });
-  translator.configureInjectedTools(
-    (attachment.sessionConstructionConfig.dynamicTools ?? []).map((tool) => ({
-      name: tool.name,
-      ...(tool.presentation === undefined
-        ? {}
-        : { presentation: tool.presentation }),
-    })),
+  configureInjectedTools(
+    translator,
+    attachment.sessionConstructionConfig.dynamicTools,
   );
   const threadSession: ThreadSession = {
     contextUsageCollector: new ClaudeContextUsageCollector(),
@@ -2355,6 +2393,8 @@ async function handleRequest(request: ClaudeCodeJsonRpcRequest): Promise<void> {
           grammarVersions: [THREAD_DELTA_GRAMMAR_V3, THREAD_DELTA_GRAMMAR_V3],
           steerMode: "inject",
           skills: { configure: true },
+          // FORK: a new turn whose tools include TURN_CONTEXT_TOOL_NAME asks it first.
+          turnContext: true,
         },
       };
       sendResult(request.id, result);
@@ -2443,6 +2483,26 @@ async function handleRequest(request: ClaudeCodeJsonRpcRequest): Promise<void> {
   }
 }
 
+// The tools a thread's sessions start with: its own bb-bridge MCP server,
+// serving every tool BB gave it but the hidden turn context tool.
+function setSessionTools(
+  sessionOptions: SdkSessionOptions,
+  dynamicTools: SessionConstructionConfig["dynamicTools"],
+  threadIdRef: ThreadIdRef,
+): void {
+  const modelTools = withoutTurnContextTool(dynamicTools ?? []);
+  if (modelTools.length === 0) {
+    delete sessionOptions.createMcpServers;
+    delete sessionOptions.allowedTools;
+    return;
+  }
+  const forward = createForwardToolCall(() => threadIdRef.current);
+  sessionOptions.createMcpServers = () => ({
+    [BB_BRIDGE_MCP_SERVER_NAME]: buildBridgeMcpServer(modelTools, forward),
+  });
+  sessionOptions.allowedTools = getAllowedToolNames(modelTools);
+}
+
 function attachThreadSession(
   id: string | number,
   params: SessionConstructionParams,
@@ -2456,14 +2516,7 @@ function attachThreadSession(
     sessionOptions.sessionId = providerThreadId;
   }
   sessionOptions.canUseTool = createCanUseTool(threadIdRef);
-  const modelTools = withoutTurnContextTool(params.dynamicTools ?? []);
-  if (modelTools.length > 0) {
-    const forward = createForwardToolCall(() => threadIdRef.current);
-    sessionOptions.createMcpServers = () => ({
-      [BB_BRIDGE_MCP_SERVER_NAME]: buildBridgeMcpServer(modelTools, forward),
-    });
-    sessionOptions.allowedTools = getAllowedToolNames(modelTools);
-  }
+  setSessionTools(sessionOptions, params.dynamicTools, threadIdRef);
 
   const attachment = createThreadAttachment({
     liveSettings: toInitialLiveSessionSettings(params),
@@ -2695,6 +2748,11 @@ async function deliverTurnInput(
     return;
   }
 
+  if (intent === "new-turn" && acceptance.turnTools !== undefined) {
+    threadSession.attachment.turnContext = hasTurnContextTool(
+      acceptance.turnTools,
+    );
+  }
   if (intent === "new-turn" && threadSession.attachment.turnContext) {
     await runTurnWithContext({
       acceptance,
@@ -2724,7 +2782,6 @@ async function deliverTurnInput(
 async function fetchTurnContext(args: {
   preparation: TurnPreparation;
   promptText: string;
-  reports: TurnContextReport[];
   requestId: string;
   threadId: string;
   threadSession: ThreadSession;
@@ -2743,7 +2800,6 @@ async function fetchTurnContext(args: {
       input: args.promptText,
       requestId: args.requestId,
       sessionId,
-      reports: args.reports,
     },
     providerThreadId: sessionId ?? threadId,
     scope: preparation,
@@ -2881,6 +2937,7 @@ async function swapSdkSession(
     resume: boolean;
     sessionId: string;
     systemPromptExtra: string | null;
+    tools: SessionConstructionConfig["dynamicTools"];
   },
 ): Promise<void> {
   const { attachment } = threadSession;
@@ -2893,6 +2950,7 @@ async function swapSdkSession(
   if (!next.resume) {
     attachment.sessionOptions.sessionId = next.sessionId;
   }
+  const undoTools = adoptTurnTools(threadSession, next.tools);
   let started: StartedSdkSession;
   try {
     started = next.resume
@@ -2903,6 +2961,7 @@ async function swapSdkSession(
   } catch (error) {
     state.systemPromptExtra = previous.systemPromptExtra;
     attachment.sessionOptions.sessionId = previous.sessionId;
+    undoTools();
     throw error;
   }
   const { session, sessionSerial } = started;
@@ -2922,14 +2981,13 @@ async function prepareTurnSession(
   threadSession: ThreadSession,
   preparation: TurnPreparation,
   context: TurnContext | null,
-  requestId: string,
-): Promise<TurnContextReport> {
+  tools: SessionConstructionConfig["dynamicTools"],
+): Promise<void> {
   const { attachment } = threadSession;
   const threadId = attachment.threadIdRef.current;
   if (!isPreparedSessionOpen(threadSession)) {
     throw new Error("Claude session closed before the turn started");
   }
-  let outcome: TurnContextReport["outcome"] = "resident";
   if (context !== null) {
     try {
       await swapSdkSession(threadSession, preparation, {
@@ -2937,8 +2995,9 @@ async function prepareTurnSession(
         sessionId: context.sessionId,
         systemPromptExtra:
           context.systemPrompt.length > 0 ? context.systemPrompt : null,
+        tools,
       });
-      outcome = "fresh";
+      return;
     } catch (error) {
       if (!isPreparedSessionOpen(threadSession)) throw error;
       const message = error instanceof Error ? error.message : String(error);
@@ -2951,7 +3010,7 @@ async function prepareTurnSession(
     }
   }
   const sessionId = currentSessionId(threadSession);
-  if (outcome !== "fresh" && threadSession.streamEnded) {
+  if (threadSession.streamEnded) {
     if (!sessionId) {
       throw new Error("Claude SDK stream ended before the turn started");
     }
@@ -2959,14 +3018,9 @@ async function prepareTurnSession(
       resume: true,
       sessionId,
       systemPromptExtra: attachment.turnContextState.systemPromptExtra,
+      tools,
     });
   }
-  return {
-    requestId,
-    offeredSessionId: context?.sessionId ?? null,
-    outcome,
-    sessionId: currentSessionId(threadSession),
-  };
 }
 
 async function deliverHeldSteers(
@@ -3009,11 +3063,9 @@ async function runTurnWithContext(args: {
   threadSession.turnPreparation = preparation;
   threadSession.turnPreparationFailure = null;
   emitCanonicalTurnInputAccepted(threadSession, acceptance, params.threadId);
-  const state = attachment.turnContextState;
   const answer = await fetchTurnContext({
     preparation,
     promptText,
-    reports: state.reports,
     requestId: acceptance.clientRequestId,
     threadId: params.threadId,
     threadSession,
@@ -3029,18 +3081,16 @@ async function runTurnWithContext(args: {
         `Claude Code could not get the turn's memory context: ${answer.error}`,
       );
     }
-    state.reports = acknowledgeReports(state.reports, answer.ack);
     const { context } = answer;
-    const report = await prepareTurnSession(
+    await prepareTurnSession(
       threadSession,
       preparation,
       context,
-      acceptance.clientRequestId,
+      acceptance.turnTools,
     );
-    state.reports = [...state.reports, report].slice(-MAX_TURN_CONTEXT_REPORTS);
     input = pushPromptInput(
       threadSession,
-      report.outcome === "fresh" && context ? context.input : promptText,
+      context ? context.input : promptText,
       params.permissionEscalation,
     );
   } catch (error) {
@@ -3078,6 +3128,9 @@ async function handleTurnStart(
     {
       clientRequestId: params.clientRequestId,
       providerThreadId: params.providerThreadId,
+      ...(params.dynamicTools !== undefined
+        ? { turnTools: params.dynamicTools }
+        : {}),
     },
     "new-turn",
   );

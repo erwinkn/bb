@@ -1102,6 +1102,58 @@ describe("thread command dispatch", () => {
     ).rejects.toThrow();
   });
 
+  // FORK (A471): the provider decides per turn from the tools BB resolved for it.
+  it("hands turn.submit's resolved tools to the runtime's turn", async () => {
+    const threadStorageRootPath = await makeTempDir("bb-turn-submit-tools-");
+    const harness = createHarness();
+    const seen: unknown[] = [];
+    harness.runtime.runTurn = async (args) => {
+      seen.push(args.dynamicTools);
+    };
+    const hook = {
+      name: "claude_code_turn_context",
+      description: "hidden",
+      inputSchema: { type: "object" },
+    };
+    await dispatchCommand(
+      {
+        bridgeLaunch: DISPATCH_TEST_BRIDGE_LAUNCH,
+        type: "turn.submit",
+        environmentId: "env-turn-submit-tools",
+        threadId: "thread-turn-submit-tools",
+        requestId: nextClientRequestId(),
+        input: [
+          { type: "text", text: "[bb system] Worker finished", mentions: [] },
+        ],
+        options: {
+          model: "gpt-5",
+          serviceTier: "default",
+          reasoningLevel: "medium",
+          providerOptions: {},
+          permissionMode: "full",
+          permissionScope: "full",
+          approvalReviewer: null,
+          permissionEscalation: null,
+        },
+        resumeContext: {
+          bridgeLaunch: DISPATCH_TEST_BRIDGE_LAUNCH,
+          workspaceContext: { workspacePath: "/tmp/env-turn-submit-tools" },
+          projectId: "project-turn-submit-tools",
+          providerId: "fake",
+          providerThreadId: "provider-turn-submit-tools",
+          instructions: "Be a helpful coding agent.",
+          dynamicTools: [hook],
+          contributedEnv: [],
+          injectedSkillSources: [],
+          instructionMode: "append",
+        },
+        target: { mode: "start" },
+      },
+      harness.dispatchOptions({ threadStorageRootPath }),
+    );
+    expect(seen).toEqual([[hook]]);
+  });
+
   it("cleans up staged turn.submit attachments when runtime turn fails", async () => {
     const threadStorageRootPath = await makeTempDir(
       "bb-runtime-failed-turn-attachments-",

@@ -1,7 +1,10 @@
 import type { ThreadEvent } from "@bb/domain";
 import { describe, expect, it } from "vitest";
 import { createBridgeProtocolAdapter } from "./bridge-protocol-adapter.js";
-import type { ProviderExecutionContext } from "./provider-adapter.js";
+import type {
+  AdapterCommand,
+  ProviderExecutionContext,
+} from "./provider-adapter.js";
 
 function makeAdapter(staticProviderOptions?: Record<string, unknown>) {
   return createBridgeProtocolAdapter({
@@ -675,5 +678,72 @@ describe("provider-native id translation", () => {
       },
     });
     expect(decoded).toMatchObject({ turnId: bbTurnId, callId: bbItemId });
+  });
+});
+
+// FORK (A471 findings 1 and 5): a turn whose tools include the turn-context
+// hook runs only on a bridge that serves it; every other bridge refuses it,
+// whatever path started it, and never shows the hook to its model.
+describe("turn-context hook", () => {
+  const hook = {
+    name: "claude_code_turn_context",
+    description: "hidden",
+    inputSchema: { type: "object" },
+  };
+  const read = {
+    name: "memory_read",
+    description: "read",
+    inputSchema: { type: "object" },
+  };
+  const turn = (dynamicTools: (typeof hook)[]): AdapterCommand => ({
+    type: "turn/start",
+    threadId: "thr_1",
+    providerThreadId: "p_1",
+    input: [],
+    clientRequestId: "creq_abcdefghjk",
+    options: fullModeOptions,
+    dynamicTools,
+  });
+
+  it("refuses a turn that requires the hook on a bridge that does not serve it", () => {
+    const adapter = makeAdapter();
+    completeHandshake(adapter, {});
+    expect(() => adapter.buildCommandPlan(turn([read, hook]))).toThrowError(
+      /OptChat.*Claude Code.*fake-bridge.*Switch the thread's memory mode/s,
+    );
+    expect(adapter.buildCommandPlan(turn([read]))).toMatchObject({
+      method: "turn/start",
+      params: { dynamicTools: [read] },
+    });
+  });
+
+  it("passes the turn's tools, hook included, to a bridge that serves it", () => {
+    const adapter = makeAdapter();
+    completeHandshake(adapter, { turnContext: true });
+    expect(adapter.buildCommandPlan(turn([read, hook]))).toMatchObject({
+      method: "turn/start",
+      params: { dynamicTools: [read, hook] },
+    });
+  });
+
+  it("never gives the hook to the session of a bridge that does not serve it", () => {
+    const start: AdapterCommand = {
+      type: "thread/start",
+      threadId: "thr_1",
+      cwd: "/tmp",
+      options: fullModeOptions,
+      dynamicTools: [read, hook],
+      instructionMode: "append",
+    };
+    const plain = makeAdapter();
+    completeHandshake(plain, {});
+    expect(plain.buildCommandPlan(start)).toMatchObject({
+      params: { dynamicTools: [read] },
+    });
+    const serving = makeAdapter();
+    completeHandshake(serving, { turnContext: true });
+    expect(serving.buildCommandPlan(start)).toMatchObject({
+      params: { dynamicTools: [read, hook] },
+    });
   });
 });

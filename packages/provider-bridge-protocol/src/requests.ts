@@ -100,7 +100,15 @@ const turnInputFields = {
   options: bridgeExecutionOptionsSchema,
 };
 
-export const turnStartParamsSchema = z.object(turnInputFields).passthrough();
+export const turnStartParamsSchema = z
+  .object({
+    ...turnInputFields,
+    // FORK: the thread's tools as BB resolved them for this turn. A bridge
+    // whose session was built earlier may hold an older list; per-turn
+    // behaviour (the Claude Code turn-context hook) follows this one.
+    dynamicTools: z.array(dynamicToolSchema).optional(),
+  })
+  .passthrough();
 
 export const turnSteerParamsSchema = z
   .object({

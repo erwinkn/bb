@@ -1,5 +1,6 @@
 import type {
   AvailableModel,
+  DynamicTool,
   ProviderCapabilities,
   ProviderFork,
   ThreadEvent,
@@ -136,6 +137,19 @@ function toBridgeWireOptions(
   };
 }
 
+/**
+ * FORK: the hidden tool Erwin's Claude Code bridge calls before each new turn
+ * (FORK.md, "per-turn context from a hidden tool"). A plugin selects it for a
+ * thread whose turns must get their context from it (chat memory). Only a
+ * bridge that advertises the `turnContext` capability serves it: every other
+ * one never shows it to its model and refuses a turn that requires it, so no
+ * turn runs without the context its thread requires, on any path.
+ */
+export const TURN_CONTEXT_TOOL_NAME = "claude_code_turn_context";
+
+const requiresTurnContext = (tools: readonly DynamicTool[] | undefined) =>
+  (tools ?? []).some((tool) => tool.name === TURN_CONTEXT_TOOL_NAME);
+
 export function createBridgeProtocolAdapter(
   options: BridgeProtocolAdapterOptions,
 ): BridgeProtocolAdapter {
@@ -163,6 +177,18 @@ export function createBridgeProtocolAdapter(
     return { kind: "noop", reason: `${capability} not advertised` };
   }
 
+  function servesTurnContext(): boolean {
+    return (handshake as { turnContext?: unknown }).turnContext === true;
+  }
+
+  /** The tools a session or turn gets: the turn-context hook only where it is served. */
+  function bridgeTools(
+    tools: DynamicTool[] | undefined,
+  ): DynamicTool[] | undefined {
+    if (tools === undefined || servesTurnContext()) return tools;
+    return tools.filter((tool) => tool.name !== TURN_CONTEXT_TOOL_NAME);
+  }
+
   function cwdAndStaticProviderOptions(cwd: string | undefined) {
     return {
       ...(cwd !== undefined ? { cwd } : {}),
@@ -184,7 +210,7 @@ export function createBridgeProtocolAdapter(
         options.staticProviderOptions,
       ),
       ...(command.dynamicTools !== undefined
-        ? { dynamicTools: command.dynamicTools }
+        ? { dynamicTools: bridgeTools(command.dynamicTools) }
         : {}),
       instructionMode: command.instructionMode,
     };
@@ -310,6 +336,14 @@ export function createBridgeProtocolAdapter(
           };
         }
         case "turn/start":
+          if (
+            requiresTurnContext(command.dynamicTools) &&
+            !servesTurnContext()
+          ) {
+            throw new Error(
+              `This turn was not started: its thread's memory runs in OptChat mode, which needs the per-turn context only Claude Code provides, and this thread runs on ${options.id}. Switch the thread's memory mode to send it here.`,
+            );
+          }
           return {
             kind: "request",
             method: BRIDGE_REQUEST_METHODS.turnStart,
@@ -322,6 +356,9 @@ export function createBridgeProtocolAdapter(
                 command.options,
                 options.staticProviderOptions,
               ),
+              ...(command.dynamicTools !== undefined
+                ? { dynamicTools: bridgeTools(command.dynamicTools) }
+                : {}),
             },
           };
         case "turn/steer":

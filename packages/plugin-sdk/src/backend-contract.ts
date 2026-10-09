@@ -1197,6 +1197,14 @@ export interface PluginAgentConfigurationContext {
   origin: {
     kind: "fork" | null;
     pluginId: string | null;
+    /**
+     * The metadata the plugin that spawned the thread keeps on it, as a
+     * deep-frozen snapshot, `{}` when it keeps none; absent when no plugin
+     * spawned it. As untrusted as `pluginMetadata`. It lets a plugin act on a
+     * thread another plugin spawned for it before that plugin's own call
+     * reaches it. Fork-only (FORK.md).
+     */
+    pluginMetadata?: { readonly [key: string]: ReadonlyJsonValue };
   };
 }
 
