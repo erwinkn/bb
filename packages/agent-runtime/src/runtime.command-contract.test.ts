@@ -732,4 +732,43 @@ describe("createAgentRuntime command contracts", () => {
 
     await runtime.shutdown();
   });
+
+  // FORK (A471 finding 1): every turn carries the tools BB resolved for it, and
+  // a bridge that does not serve the turn-context hook refuses a turn needing it.
+  it("sends each turn its tools and refuses one that needs an unserved turn-context hook", async () => {
+    const { record, runtime } = createContractRuntime();
+    await runtime.startThread({
+      environmentId: "env-1",
+      threadId: "t1",
+      projectId: "p1",
+      providerId: "fake",
+      options: fullRuntimeOptions,
+    });
+    const tool = (name: string) => ({
+      name,
+      description: name,
+      inputSchema: { type: "object" },
+    });
+    await expect(
+      runtime.runTurn({
+        clientRequestId: "creq_222222224v",
+        threadId: "t1",
+        input: [promptTextInput({ text: "hi" })],
+        options: fullRuntimeOptions,
+        dynamicTools: [tool("memory_read"), tool("claude_code_turn_context")],
+      }),
+    ).rejects.toThrow(/OptChat.*Claude Code/s);
+    expect(record.last("turn/start")).toBeUndefined();
+    await runtime.runTurn({
+      clientRequestId: "creq_222222225v",
+      threadId: "t1",
+      input: [promptTextInput({ text: "hi" })],
+      options: fullRuntimeOptions,
+      dynamicTools: [tool("memory_read")],
+    });
+    expect(record.last("turn/start")?.params).toMatchObject({
+      dynamicTools: [tool("memory_read")],
+    });
+    await runtime.shutdown();
+  });
 });

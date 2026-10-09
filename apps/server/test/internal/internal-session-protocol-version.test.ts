@@ -99,6 +99,45 @@ describe("internal session protocol version", () => {
     }
   });
 
+  // T145 (A473): a 227 daemon drops each turn's tools, which enforce a
+  // thread's memory mode, so it never runs a turn here: it updates first.
+  it("rejects a protocol 227 daemon, so it updates before it runs a turn", async () => {
+    const server = await startTestServer();
+    try {
+      const hostId = "host-227";
+      const hostKey = createTestDaemonHostKey({ hostId });
+      upsertHost(server.db, server.hub, { id: hostId, name: "Old Host" });
+      const response = await fetch(`${server.baseUrl}/internal/session/open`, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${hostKey}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          hostId,
+          instanceId: "instance-227",
+          hostName: "Old Host",
+          hostType: "persistent",
+          hasMachineCredential: false,
+          platform: "darwin",
+          dataDir: "/tmp/host-227-data",
+          localApiPort: 38_888,
+          protocolVersion: 227,
+          activeThreads: [],
+          undeliveredEventThreadIds: [],
+          loadedEnvironments: [],
+        }),
+      });
+      expect(response.status).toBe(400);
+      expect(await response.json()).toMatchObject({
+        code: "protocol_version_mismatch",
+      });
+      expect(getHost(server.db, hostId)?.lastRejectedProtocolVersion).toBe(227);
+    } finally {
+      await server.close();
+    }
+  });
+
   it("rejects a session open whose protocol version does not match the server", async () => {
     const server = await startTestServer();
     try {

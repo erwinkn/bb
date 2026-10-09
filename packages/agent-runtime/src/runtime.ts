@@ -1657,6 +1657,7 @@ export function createAgentRuntime(options: AgentRuntimeOptions): AgentRuntime {
               options: execOpts,
               contributedEnv,
               instructions,
+              ...(dynamicTools !== undefined ? { dynamicTools } : {}),
             });
           }
 
@@ -1986,6 +1987,7 @@ export function createAgentRuntime(options: AgentRuntimeOptions): AgentRuntime {
       options: execOpts,
       contributedEnv,
       instructions,
+      dynamicTools,
     }) {
       return runThreadOperation({
         threadId,
@@ -2037,6 +2039,7 @@ export function createAgentRuntime(options: AgentRuntimeOptions): AgentRuntime {
               execOpts,
               instructions,
             }),
+            ...(dynamicTools !== undefined ? { dynamicTools } : {}),
           };
           const cmd = requireProviderRequestPlan({
             commandType: adapterCommand.type,
@@ -2063,6 +2066,7 @@ export function createAgentRuntime(options: AgentRuntimeOptions): AgentRuntime {
             setThreadRuntimeConfig(threadId, {
               ...currentConfig,
               contributedEnv: resolvedContributedEnv,
+              ...(dynamicTools !== undefined ? { dynamicTools } : {}),
               envVars: resolvedEnvironment.envVars,
               options: execOpts,
             });

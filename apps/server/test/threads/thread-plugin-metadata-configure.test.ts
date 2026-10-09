@@ -295,6 +295,123 @@ describe("thread plugin metadata in agent configuration", () => {
     });
   });
 
+  // FORK (T145, A473): Chat memory reads which memory a thread Initiatives
+  // spawned will join, before Initiatives' own registration reaches it.
+  it("gives every plugin the origin plugin's metadata on the thread", async () => {
+    await withIssueLauncher(async ({ server }) => {
+      const pluginsDir = await mkdtemp(join(tmpdir(), "bb-origin-reader-"));
+      const observationsPath = join(pluginsDir, "origins.jsonl");
+      const rootDir = join(pluginsDir, "bb-plugin-origin-reader");
+      await mkdir(rootDir, { recursive: true });
+      await writeFile(observationsPath, "");
+      await writeFile(
+        join(rootDir, "package.json"),
+        JSON.stringify({
+          name: "bb-plugin-origin-reader",
+          version: "0.1.0",
+          bb: {
+            name: "Origin reader fixture",
+            description: "Reads the origin plugin's metadata.",
+            branding: { icon: "Zap" },
+            server: "./server.ts",
+          },
+        }),
+      );
+      await writeFile(
+        join(rootDir, "server.ts"),
+        `
+          import { appendFileSync } from "node:fs";
+          export default function plugin(bb: any) {
+            bb.agents.configure((context: any) => {
+              const metadata = context.origin.pluginMetadata;
+              appendFileSync(
+                ${JSON.stringify(observationsPath)},
+                JSON.stringify({
+                  threadId: context.thread.id,
+                  origin: context.origin,
+                  own: context.pluginMetadata,
+                  frozen: metadata === undefined ? null : Object.isFrozen(metadata),
+                }) + "\\n",
+              );
+              return { tools: [], skills: [] };
+            });
+          }
+        `,
+      );
+      try {
+        expect((await server.pluginService.installPath(rootDir)).status).toBe(
+          "running",
+        );
+        const { host } = seedHostSession(server.deps, {
+          id: "host-plugin-metadata-origin",
+        });
+        const { project } = seedProjectWithSource(server.deps, {
+          hostId: host.id,
+        });
+        const environment = seedEnvironment(server.deps, {
+          hostId: host.id,
+          projectId: project.id,
+          path: join(server.config.dataDir, "plugin-metadata-origin"),
+        });
+        const seed = launchSeed("BB-45");
+        const spawned = createThread(server.db, server.hub, {
+          projectId: project.id,
+          environmentId: environment.id,
+          providerId: "codex",
+          originPluginId: "issue-launcher",
+          pluginMetadata: { pluginId: "issue-launcher", metadata: seed },
+        });
+        const plain = createThread(server.db, server.hub, {
+          projectId: project.id,
+          environmentId: environment.id,
+          providerId: "codex",
+        });
+        for (const thread of [spawned, plain]) {
+          await buildThreadStartCommand(server.deps, {
+            environment,
+            execution: await buildExecutionOptions(
+              server.deps,
+              { model: "gpt-5" },
+              { threadId: thread.id },
+            ),
+            fork: null,
+            permissionEscalation: "ask",
+            input: textInput("hello"),
+            projectId: project.id,
+            providerId: "codex",
+            requestId: encodeClientTurnRequestIdNumber({ value: 1 }),
+            syncGeneratedTitle: false,
+            thread,
+          });
+        }
+        const observations = (await readFile(observationsPath, "utf8"))
+          .split("\n")
+          .filter((line) => line.length > 0)
+          .map((line) => JSON.parse(line));
+        expect(observations).toEqual([
+          {
+            threadId: spawned.id,
+            origin: {
+              kind: null,
+              pluginId: "issue-launcher",
+              pluginMetadata: seed,
+            },
+            own: {},
+            frozen: true,
+          },
+          {
+            threadId: plain.id,
+            origin: { kind: null, pluginId: null },
+            own: {},
+            frozen: null,
+          },
+        ]);
+      } finally {
+        await rm(pluginsDir, { recursive: true, force: true });
+      }
+    });
+  });
+
   it("rejects pluginMetadata without a plugin origin before creating a thread", async () => {
     await withTestHarness(async (harness) => {
       const workspacePath = "/tmp/plugin-metadata-orphan-project";

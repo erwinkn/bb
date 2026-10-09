@@ -44,7 +44,11 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { handleLine } from "../bridge.js";
-import { extendSystemPrompt, parseTurnContext } from "../turn-context.js";
+import {
+  TURN_CONTEXT_TIMEOUT_MS,
+  extendSystemPrompt,
+  parseTurnContext,
+} from "../turn-context.js";
 import { experimental_createBridgeJsonRpcTestHarness as createBridgeJsonRpcTestHarness } from "@get-bb/plugin-sdk/provider-bridge/testing";
 import type { BridgeJsonRpcOutputMessage } from "@get-bb/plugin-sdk/provider-bridge/testing";
 
@@ -189,6 +193,7 @@ function sendTurn(
   text: string,
   method = "turn/start",
   clientRequestId = "creq_abcdefghjk",
+  turnTools?: typeof dynamicTools,
 ): void {
   bridge.sendRequest(id, method, {
     threadId: THREAD_ID,
@@ -197,6 +202,7 @@ function sendTurn(
     ...(method === "turn/steer" ? { expectedTurnId: "turn-test" } : {}),
     input: [{ type: "text", text, mentions: [] }],
     options: options(),
+    ...(turnTools ? { dynamicTools: turnTools } : {}),
   });
 }
 
@@ -336,7 +342,7 @@ it("runs a turn in a fresh session with the turn context's system prompt and fir
   expect(await handoverPrompt).toBe("handover");
 });
 
-it("lets the session go on when the turn context answers {} or only acknowledges", async () => {
+it("lets the session go on when the turn context answers {}", async () => {
   await startThread(bridge);
   const resident = queryCalls()[0]!;
   sendTurn(bridge, "turn-1", "Hello");
@@ -345,10 +351,7 @@ it("lets the session go on when the turn context answers {} or only acknowledges
   expect((await bridge.waitForResponse("turn-1")).error).toBeUndefined();
 
   sendTurn(bridge, "turn-2", "Again", "turn/start", SECOND_REQUEST);
-  answerToolCall(
-    await waitForToolCall(bridge),
-    JSON.stringify({ ack: "creq_abcdefghjk" }),
-  );
+  answerToolCall(await waitForToolCall(bridge), "{}");
   expect(await nextPromptText(resident)).toBe("Again");
   expect((await bridge.waitForResponse("turn-2")).error).toBeUndefined();
   expect(queryCalls()).toHaveLength(1);
@@ -363,6 +366,11 @@ it.each([
     true,
   ],
   ["the answer is something else", JSON.stringify({ input: "x" }), true],
+  [
+    "the answer is a protocol 3 acknowledgement",
+    JSON.stringify({ ack: "creq_abcdefghjk" }),
+    true,
+  ],
 ])(
   "fails the turn, its held steer and never runs them in the resident when %s",
   async (_case, text, success) => {
@@ -388,7 +396,7 @@ it.each([
     sendTurn(bridge, "turn-2", "Again", "turn/start", SECOND_REQUEST);
     const second = await waitForToolCall(bridge);
     expect(second.params).toMatchObject({
-      arguments: { sessionId: first, reports: [] },
+      arguments: { sessionId: first },
     });
     answerToolCall(second, "{}");
     expect(await nextPromptText(resident)).toBe("Again");
@@ -461,14 +469,14 @@ it("never asks for steered input or threads without the tool", async () => {
   ).toBe(false);
 });
 
-it("appends to every system prompt shape and parses a fresh session answer and its acknowledgement", () => {
+it("appends to every system prompt shape and parses a fresh session answer", () => {
   const fresh = {
     session: "fresh",
     sessionId: FRESH_SESSION_ID,
     systemPrompt: "",
     input: "x",
   };
-  const resident = { ok: true, ack: null, context: null };
+  const resident = { ok: true, context: null };
   const failed = { ok: false, error: expect.any(String) };
   expect(
     extendSystemPrompt({ type: "preset", preset: "claude_code" }, "view"),
@@ -476,29 +484,20 @@ it("appends to every system prompt shape and parses a fresh session answer and i
   expect(extendSystemPrompt("base", "view")).toBe("base\n\nview");
   expect(extendSystemPrompt("base", "")).toBe("base");
   expect(parseTurnContext({ content: "{}" })).toEqual(resident);
-  expect(
-    parseTurnContext({ content: JSON.stringify({ ack: "creq_a" }) }),
-  ).toEqual({ ok: true, ack: "creq_a", context: null });
   expect(parseTurnContext({ content: JSON.stringify(fresh) })).toEqual({
     ok: true,
-    ack: null,
     context: fresh,
   });
   expect(
-    parseTurnContext({ content: JSON.stringify({ ...fresh, ack: "creq_a" }) }),
-  ).toEqual({ ok: true, ack: "creq_a", context: fresh });
-  expect(
-    parseTurnContext({
-      content: JSON.stringify({ ...fresh, ack: "creq_a" }),
-      isError: true,
-    }),
-  ).toEqual({ ok: false, error: JSON.stringify({ ...fresh, ack: "creq_a" }) });
+    parseTurnContext({ content: JSON.stringify(fresh), isError: true }),
+  ).toEqual({ ok: false, error: JSON.stringify(fresh) });
   for (const content of [
     "not json",
     "null",
     "[]",
     '"resident"',
-    JSON.stringify({ ack: "" }),
+    JSON.stringify({ ack: "creq_a" }),
+    JSON.stringify({ ...fresh, ack: "creq_a" }),
     JSON.stringify({ ack: "creq_a", sessionId: FRESH_SESSION_ID }),
     JSON.stringify({ ...fresh, session: "resident" }),
     JSON.stringify({ ...fresh, sessionId: undefined }),
@@ -509,18 +508,15 @@ it("appends to every system prompt shape and parses a fresh session answer and i
   }
 });
 
-it("reports the session and request it asks for, and runs a fresh session under the id the answer names", async () => {
+it("asks with the turn's text, request and session, and runs a fresh session under the id the answer names", async () => {
   const first = await startThread(bridge);
   sendTurn(bridge, "turn-1", "Hello");
   const call = await waitForToolCall(bridge);
-  expect(call.params).toMatchObject({
-    arguments: {
-      protocol: 3,
-      input: "Hello",
-      requestId: "creq_abcdefghjk",
-      sessionId: first,
-      reports: [],
-    },
+  expect((call.params as { arguments: unknown }).arguments).toEqual({
+    protocol: 4,
+    input: "Hello",
+    requestId: "creq_abcdefghjk",
+    sessionId: first,
   });
   answerToolCall(
     call,
@@ -545,118 +541,16 @@ it("reports the session and request it asks for, and runs a fresh session under 
 
   sendTurn(bridge, "turn-2", "Again", "turn/start", SECOND_REQUEST);
   const second = await waitForToolCall(bridge);
-  expect(second.params).toMatchObject({
-    arguments: {
-      sessionId: FRESH_SESSION_ID,
-      reports: [
-        {
-          requestId: "creq_abcdefghjk",
-          offeredSessionId: FRESH_SESSION_ID,
-          outcome: "fresh",
-          sessionId: FRESH_SESSION_ID,
-        },
-      ],
-    },
-  });
-  answerToolCall(second, JSON.stringify({ ack: "creq_abcdefghjk" }));
-  await prompts.next();
-  await bridge.waitForResponse("turn-2");
-
-  sendTurn(bridge, "turn-3", "Third", "turn/start", "creq_cdefghjkmn");
-  const third = await waitForToolCall(bridge);
-  expect(third.params).toMatchObject({
-    arguments: {
-      sessionId: FRESH_SESSION_ID,
-      reports: [
-        {
-          requestId: SECOND_REQUEST,
-          offeredSessionId: null,
-          outcome: "resident",
-          sessionId: FRESH_SESSION_ID,
-        },
-      ],
-    },
-  });
-  answerToolCall(third, "{}");
-  await prompts.next();
-  await bridge.waitForResponse("turn-3");
-});
-
-it("keeps every report the plugin has not acknowledged, and sends them again, oldest first", async () => {
-  await startThread(bridge);
-  sendTurn(bridge, "turn-1", "Hello");
-  answerToolCall(
-    await waitForToolCall(bridge),
-    JSON.stringify({
-      session: "fresh",
-      sessionId: FRESH_SESSION_ID,
-      systemPrompt: "memory",
-      input: "Framed",
-    }),
-  );
-  await vi.waitFor(() => expect(queryCalls()).toHaveLength(2));
-  const prompts = queryCalls()[1]!.prompt[Symbol.asyncIterator]();
-  await prompts.next();
-  await bridge.waitForResponse("turn-1");
-  const freshReport = {
-    requestId: "creq_abcdefghjk",
-    offeredSessionId: FRESH_SESSION_ID,
-    outcome: "fresh",
+  expect((second.params as { arguments: unknown }).arguments).toEqual({
+    protocol: 4,
+    input: "Again",
+    requestId: SECOND_REQUEST,
     sessionId: FRESH_SESSION_ID,
-  };
-
-  sendTurn(bridge, "turn-2", "Leave OptChat", "turn/start", SECOND_REQUEST);
-  const second = await waitForToolCall(bridge);
-  expect(
-    (second.params as { arguments: { reports: unknown } }).arguments.reports,
-  ).toEqual([freshReport]);
+  });
   answerToolCall(second, "{}");
   await prompts.next();
   await bridge.waitForResponse("turn-2");
-
-  sendTurn(bridge, "turn-3", "Leave OptChat", "turn/start", "creq_cdefghjkmn");
-  const third = await waitForToolCall(bridge);
-  expect(
-    (third.params as { arguments: { reports: unknown } }).arguments.reports,
-  ).toEqual([
-    freshReport,
-    {
-      requestId: SECOND_REQUEST,
-      offeredSessionId: null,
-      outcome: "resident",
-      sessionId: FRESH_SESSION_ID,
-    },
-  ]);
-  answerToolCall(
-    third,
-    JSON.stringify({
-      ack: SECOND_REQUEST,
-      session: "fresh",
-      sessionId: HANDOVER_SESSION_ID,
-      systemPrompt: "",
-      input: "handover",
-    }),
-  );
-  await vi.waitFor(() => expect(queryCalls()).toHaveLength(3));
-  const handover = queryCalls()[2]!.prompt[Symbol.asyncIterator]();
-  await handover.next();
-  await bridge.waitForResponse("turn-3");
-
-  sendTurn(bridge, "turn-4", "Next", "turn/start", "creq_defghjkmnp");
-  const fourth = await waitForToolCall(bridge);
-  expect(
-    (fourth.params as { arguments: { reports: unknown } }).arguments.reports,
-  ).toEqual([
-    {
-      requestId: "creq_cdefghjkmn",
-      offeredSessionId: HANDOVER_SESSION_ID,
-      outcome: "fresh",
-      sessionId: HANDOVER_SESSION_ID,
-    },
-  ]);
-  answerToolCall(fourth, "{}");
-  await handover.next();
-  await bridge.waitForResponse("turn-4");
+  expect(queryCalls()).toHaveLength(2);
 });
 
 it("fails the turn, and keeps the resident without its input, when the fresh session fails to start forked and unforked", async () => {
@@ -689,7 +583,7 @@ it("fails the turn, and keeps the resident without its input, when the fresh ses
   sendTurn(bridge, "turn-2", "Again", "turn/start", SECOND_REQUEST);
   const second = await waitForToolCall(bridge);
   expect(second.params).toMatchObject({
-    arguments: { sessionId: first, reports: [] },
+    arguments: { sessionId: first },
   });
   answerToolCall(second, "{}");
   expect(await nextPromptText(resident)).toBe("Again");
@@ -779,9 +673,15 @@ it("fails a turn whose context request timed out, without running it in the resi
         message.method === "item/tool/call" && !answered.has(message.id!),
     )!;
     expect(call).toBeDefined();
-    await vi.advanceTimersByTimeAsync(20_000);
+    await vi.advanceTimersByTimeAsync(TURN_CONTEXT_TIMEOUT_MS - 1_000);
+    expect(
+      bridge.messages.some(
+        (message) => message.id === "turn-1" && message.method === undefined,
+      ),
+    ).toBe(false);
+    await vi.advanceTimersByTimeAsync(1_000);
     expect((await bridge.waitForResponse("turn-1")).error?.message).toBe(
-      "Claude Code could not get the turn's memory context: no answer within 20 s",
+      "Claude Code could not get the turn's memory context: no answer within 120 s",
     );
     answered.add(call.id!);
     expect(
@@ -811,7 +711,7 @@ it("fails a turn whose context request timed out, without running it in the resi
   sendTurn(bridge, "turn-2", "Again", "turn/start", SECOND_REQUEST);
   const second = await waitForToolCall(bridge);
   expect(second.params).toMatchObject({
-    arguments: { sessionId: first, reports: [] },
+    arguments: { sessionId: first },
   });
   answerToolCall(second, "{}");
   expect(await nextPromptText(resident)).toBe("Again");
@@ -866,19 +766,7 @@ it("restarts a resident session whose stream ended during preparation, then deli
 
   sendTurn(bridge, "turn-2", "Next", "turn/start", SECOND_REQUEST);
   const second = await waitForToolCall(bridge);
-  expect(second.params).toMatchObject({
-    arguments: {
-      sessionId: first,
-      reports: [
-        {
-          requestId: "creq_abcdefghjk",
-          offeredSessionId: null,
-          outcome: "resident",
-          sessionId: first,
-        },
-      ],
-    },
-  });
+  expect(second.params).toMatchObject({ arguments: { sessionId: first } });
   answerToolCall(second, "{}");
   expect(await nextPromptText(restarted)).toBe("Next");
   await bridge.waitForResponse("turn-2");
@@ -940,7 +828,7 @@ it("keeps the resident session until the fresh one has initialized: a CLI that f
   sendTurn(bridge, "turn-2", "Again", "turn/start", SECOND_REQUEST);
   const second = await waitForToolCall(bridge);
   expect(second.params).toMatchObject({
-    arguments: { sessionId: first, reports: [] },
+    arguments: { sessionId: first },
   });
   answerToolCall(second, "{}");
   expect(await nextPromptText(resident)).toBe("Again");
@@ -1085,7 +973,7 @@ it("gives a fresh session its own MCP server, so it lists and calls the thread's
   ).toMatchObject({ providerThreadId: FRESH_SESSION_ID });
 }, 20_000);
 
-it("keeps an unacknowledged report and the frozen system prompt across Stop and resume, so the resumed session can leave OptChat", async () => {
+it("keeps the frozen system prompt across Stop and resume, so the resumed session goes on with its memory and can start fresh again", async () => {
   await startThread(bridge);
   sendTurn(bridge, "turn-1", "Hello");
   answerToolCall(
@@ -1125,25 +1013,14 @@ it("keeps an unacknowledged report and the frozen system prompt across Stop and 
     append: "BB instructions\n\nfrozen memory",
   });
 
-  sendTurn(bridge, "turn-2", "Leave OptChat", "turn/start", SECOND_REQUEST);
+  sendTurn(bridge, "turn-2", "Next", "turn/start", SECOND_REQUEST);
   const second = await waitForToolCall(bridge);
   expect(second.params).toMatchObject({
-    arguments: {
-      sessionId: FRESH_SESSION_ID,
-      reports: [
-        {
-          requestId: "creq_abcdefghjk",
-          offeredSessionId: FRESH_SESSION_ID,
-          outcome: "fresh",
-          sessionId: FRESH_SESSION_ID,
-        },
-      ],
-    },
+    arguments: { sessionId: FRESH_SESSION_ID },
   });
   answerToolCall(
     second,
     JSON.stringify({
-      ack: "creq_abcdefghjk",
       session: "fresh",
       sessionId: HANDOVER_SESSION_ID,
       systemPrompt: "",
@@ -1388,4 +1265,213 @@ it("lists tools the plugin marks alwaysLoad with Claude Code's always-load flag"
     ["initiative_zoom", { "anthropic/alwaysLoad": true }],
   ]);
   await client.close();
+});
+
+it("advertises that it serves the turn context", async () => {
+  bridge.sendRequest("init", "initialize", {
+    protocolVersion: 1,
+    client: { name: "test", version: "0" },
+  });
+  const response = await bridge.waitForResponse("init");
+  expect(
+    (response.result as { capabilities: { turnContext?: boolean } })
+      .capabilities.turnContext,
+  ).toBe(true);
+});
+
+// A471 findings 1-3: whether a turn asks follows the tools BB resolved for
+// that turn, on every path that starts one (a queued message, a parent
+// notice, Send now), not the tools its session was built with.
+it("asks for the turn context when the turn's tools have the hook, though its session was built without it", async () => {
+  await startThread(bridge, dynamicTools.slice(1));
+  sendTurn(
+    bridge,
+    "notice",
+    "[bb system] Worker finished",
+    "turn/start",
+    "creq_abcdefghjk",
+    dynamicTools,
+  );
+  const call = await waitForToolCall(bridge);
+  expect(call.params).toMatchObject({
+    tool: TURN_CONTEXT_TOOL,
+    arguments: { protocol: 4, input: "[bb system] Worker finished" },
+  });
+  answerToolCall(
+    call,
+    JSON.stringify({
+      session: "fresh",
+      sessionId: FRESH_SESSION_ID,
+      systemPrompt: "# Memory",
+      input: "New message:\n[bb system] Worker finished",
+    }),
+  );
+  await vi.waitFor(() => expect(queryCalls()).toHaveLength(2));
+  const fresh = queryCalls()[1]!;
+  expect(fresh.options.sessionId).toBe(FRESH_SESSION_ID);
+  expect(await nextPromptText(fresh)).toBe(
+    "New message:\n[bb system] Worker finished",
+  );
+  expect((await bridge.waitForResponse("notice")).error).toBeUndefined();
+});
+
+it("fails a turn whose tools have the hook when the hook fails, though its session was built without it", async () => {
+  await startThread(bridge, dynamicTools.slice(1));
+  sendTurn(
+    bridge,
+    "notice",
+    "[bb system] Worker finished",
+    "turn/start",
+    "creq_abcdefghjk",
+    dynamicTools,
+  );
+  answerToolCall(await waitForToolCall(bridge), "no memory", false);
+  const response = await bridge.waitForResponse("notice");
+  expect(response.error?.message).toContain("no memory");
+  expect(queryCalls()).toHaveLength(1);
+});
+
+it("runs a turn in its session when the turn's tools no longer have the hook", async () => {
+  await startThread(bridge);
+  sendTurn(
+    bridge,
+    "turn-1",
+    "Memory is off now",
+    "turn/start",
+    "creq_abcdefghjk",
+    dynamicTools.slice(1),
+  );
+  expect(await nextPromptText(queryCalls()[0]!)).toBe("Memory is off now");
+  expect((await bridge.waitForResponse("turn-1")).error).toBeUndefined();
+  expect(bridge.messages.some((m) => m.method === "item/tool/call")).toBe(
+    false,
+  );
+});
+
+// A473 finding 3: a session started for a turn serves that turn's tools.
+const memoryTools = [
+  dynamicTools[0]!,
+  ...["memory_read", "memory_zoom"].map((name) => ({
+    name,
+    description: name,
+    inputSchema: { type: "object" },
+    alwaysLoad: true,
+  })),
+] as typeof dynamicTools;
+
+async function listedTools(call: QueryCall) {
+  const server = call.options.mcpServers?.["bb-bridge"];
+  if (!server) return null;
+  const [clientTransport, serverTransport] =
+    InMemoryTransport.createLinkedPair();
+  await server.instance.connect(serverTransport);
+  const client = new Client({ name: "test", version: "1.0.0" });
+  await client.connect(clientTransport);
+  const { tools } = await client.listTools();
+  await client.close();
+  return tools.map((tool) => [tool.name, tool._meta ?? null]);
+}
+
+async function freshTurnWithTools(
+  id: string,
+  clientRequestId: string,
+  sessionId: string,
+  tools: typeof dynamicTools,
+): Promise<QueryCall> {
+  sendTurn(bridge, id, id, "turn/start", clientRequestId, tools);
+  answerToolCall(
+    await waitForToolCall(bridge),
+    JSON.stringify({
+      session: "fresh",
+      sessionId,
+      systemPrompt: "m",
+      input: id,
+    }),
+  );
+  const find = () =>
+    queryCalls().find((call) => call.options.sessionId === sessionId);
+  await vi.waitFor(() => expect(find()).toBeDefined());
+  expect(await nextPromptText(find()!)).toBe(id);
+  expect((await bridge.waitForResponse(id)).error).toBeUndefined();
+  return find()!;
+}
+
+it("gives a fresh session, and its seed, the memory tools of a thread whose memory was enabled after its session was built", async () => {
+  await startThread(bridge, []);
+  expect(queryCalls()[0]!.options.mcpServers).toBeUndefined();
+  const fresh = await freshTurnWithTools(
+    "turn-1",
+    "creq_abcdefghjk",
+    FRESH_SESSION_ID,
+    memoryTools,
+  );
+  const listed = [
+    ["memory_read", { "anthropic/alwaysLoad": true }],
+    ["memory_zoom", { "anthropic/alwaysLoad": true }],
+  ];
+  for (const call of [seedCalls()[0]!, fresh]) {
+    expect(await listedTools(call)).toEqual(listed);
+    expect(call.options.allowedTools).toEqual([
+      "mcp__bb-bridge__memory_read",
+      "mcp__bb-bridge__memory_zoom",
+    ]);
+  }
+  expect(fresh.options.resume).toBe(seedCalls()[0]!.options.sessionId);
+
+  // Another tool list is another setup: a new seed, with that list.
+  const next = await freshTurnWithTools(
+    "turn-2",
+    SECOND_REQUEST,
+    HANDOVER_SESSION_ID,
+    [...memoryTools, dynamicTools[1]!],
+  );
+  expect(seedCalls()).toHaveLength(2);
+  expect(next.options.resume).toBe(seedCalls()[1]!.options.sessionId);
+  expect(await listedTools(next)).toEqual([
+    ...listed,
+    ["initiative_read", null],
+  ]);
+});
+
+it("keeps the thread's tools when the fresh session with the turn's tools fails to start", async () => {
+  const providerThreadId = await startThread(bridge, []);
+  seedQueryMock.mockImplementationOnce(() => {
+    throw new Error("spawn claude ENOENT");
+  });
+  queryMock.mockImplementationOnce(() => {
+    throw new Error("spawn claude ENOENT");
+  });
+  sendTurn(
+    bridge,
+    "turn-1",
+    "Hello",
+    "turn/start",
+    "creq_abcdefghjk",
+    memoryTools,
+  );
+  answerToolCall(
+    await waitForToolCall(bridge),
+    JSON.stringify({
+      session: "fresh",
+      sessionId: FRESH_SESSION_ID,
+      systemPrompt: "m",
+      input: "Hello",
+    }),
+  );
+  expect((await bridge.waitForResponse("turn-1")).error?.message).toContain(
+    "spawn claude ENOENT",
+  );
+  // The resident still serves the tools it was built with, so BB resuming
+  // the thread with those tools keeps it.
+  const started = queryCalls().length;
+  bridge.sendRequest("resume", "thread/resume", {
+    cwd: "/tmp/worktree",
+    instructionMode: "append",
+    options: options(),
+    threadId: THREAD_ID,
+    providerThreadId,
+    dynamicTools: [],
+  });
+  expect((await bridge.waitForResponse("resume")).error).toBeUndefined();
+  expect(queryCalls()).toHaveLength(started);
 });

@@ -3,10 +3,9 @@ import type { DynamicTool } from "@get-bb/plugin-sdk/provider-bridge";
 import { z } from "zod";
 
 export const TURN_CONTEXT_TOOL_NAME = "claude_code_turn_context";
-export const TURN_CONTEXT_PROTOCOL = 3;
-export const TURN_CONTEXT_TIMEOUT_MS = 20_000;
+export const TURN_CONTEXT_PROTOCOL = 4;
+export const TURN_CONTEXT_TIMEOUT_MS = 120_000;
 export const FRESH_SESSION_INIT_TIMEOUT_MS = 30_000;
-export const MAX_TURN_CONTEXT_REPORTS = 16;
 export const MAX_RETAINED_TURN_CONTEXTS = 64;
 export const FRESH_SESSION_TITLE = "BB OptChat turn";
 export const FRESH_SESSION_SEED_TITLE = "BB OptChat seed";
@@ -15,31 +14,22 @@ export const FRESH_SESSION_SEED_PROMPT =
 export const FRESH_SESSION_SEED_TIMEOUT_MS = 60_000;
 export const FRESH_SESSION_SEED_MAX_AGE_MS = 60 * 60_000;
 
-const turnContextSchema = z.object({
-  session: z.literal("fresh"),
-  sessionId: z.string().uuid(),
-  systemPrompt: z.string(),
-  input: z.string().min(1),
-});
+const turnContextSchema = z
+  .object({
+    session: z.literal("fresh"),
+    sessionId: z.string().uuid(),
+    systemPrompt: z.string(),
+    input: z.string().min(1),
+  })
+  .strict();
 
-const ackSchema = z.string().min(1).optional();
-
-const freshAnswerSchema = turnContextSchema.extend({ ack: ackSchema });
-
-const residentAnswerSchema = z.object({ ack: ackSchema }).strict();
+const residentAnswerSchema = z.object({}).strict();
 
 export type TurnContext = z.infer<typeof turnContextSchema>;
 
 export type TurnContextAnswer =
-  | { ok: true; ack: string | null; context: TurnContext | null }
+  | { ok: true; context: TurnContext | null }
   | { ok: false; error: string };
-
-export interface TurnContextReport {
-  requestId: string;
-  offeredSessionId: string | null;
-  outcome: "fresh" | "resident";
-  sessionId: string | null;
-}
 
 export type SystemPrompt = Exclude<Options["systemPrompt"], undefined>;
 
@@ -71,26 +61,16 @@ export function parseTurnContext(result: {
     return { ok: false, error: "the answer is not JSON" };
   }
   if (typeof value === "object" && value !== null && "session" in value) {
-    const fresh = freshAnswerSchema.safeParse(value);
+    const fresh = turnContextSchema.safeParse(value);
     if (!fresh.success) {
       return { ok: false, error: "the fresh session answer is malformed" };
     }
-    const { ack, ...context } = fresh.data;
-    return { ok: true, ack: ack ?? null, context };
+    return { ok: true, context: fresh.data };
   }
-  const resident = residentAnswerSchema.safeParse(value);
-  if (!resident.success) {
+  if (!residentAnswerSchema.safeParse(value).success) {
     return { ok: false, error: "the answer is malformed" };
   }
-  return { ok: true, ack: resident.data.ack ?? null, context: null };
-}
-
-export function acknowledgeReports(
-  reports: readonly TurnContextReport[],
-  ack: string | null,
-): TurnContextReport[] {
-  const acknowledged = reports.findIndex((report) => report.requestId === ack);
-  return acknowledged === -1 ? [...reports] : reports.slice(acknowledged + 1);
+  return { ok: true, context: null };
 }
 
 export function extendSystemPrompt(
