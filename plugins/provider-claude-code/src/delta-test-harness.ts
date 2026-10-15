@@ -1,7 +1,10 @@
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { ClientTurnRequestId } from "@get-bb/plugin-sdk/provider-bridge";
+import type {
+  ClientTurnRequestId,
+  ThreadDelta,
+} from "@get-bb/plugin-sdk/provider-bridge";
 import {
   experimental_createDeltaAssembler as createDeltaAssembler,
   type ThreadEvent,
@@ -128,6 +131,7 @@ interface ClaudeDeltaHarness {
   ): ThreadEvent[];
   acceptInput(clientRequestId: string, threadId?: string): ThreadEvent[];
   settleSession(threadId?: string): ThreadEvent[];
+  assemble(deltas: ThreadDelta[], threadId?: string): ThreadEvent[];
   itemId(providerItemId: string, threadId?: string): string;
 }
 
@@ -165,6 +169,9 @@ export function createClaudeDeltaHarness(
         threadId,
         deltas: translator.buildSessionSettlementDeltas(threadId),
       });
+    },
+    assemble(deltas, threadId = "") {
+      return assembler.assemble({ threadId, deltas });
     },
     itemId(providerItemId, threadId = "") {
       return assembler.getBbItemId(threadId, providerItemId) ?? "";

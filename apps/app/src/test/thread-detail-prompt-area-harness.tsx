@@ -694,6 +694,10 @@ vi.mock("@/hooks/mutations/thread-runtime-mutations", () => ({
     isPending: false,
     mutateAsync: promptAreaMocks.sendQueuedMessageMutateAsync,
   }),
+  useStopThreadBackgroundTask: () => ({
+    isPending: false,
+    mutateAsync: vi.fn(),
+  }),
   useStopThread: () => ({
     isPending: false,
     mutate: promptAreaMocks.stopThreadMutate,

@@ -522,6 +522,37 @@ describe("background task timeline projection", () => {
     expect(row.completedAt).not.toBeNull();
   });
 
+  it("shows a running background command's command even without its Bash call in the window", () => {
+    const timeline = buildTimeline([
+      turnStarted("turn-1", 1),
+      withMeta(
+        {
+          type: "item/started",
+          threadId: "thread-1",
+          providerThreadId: "provider-1",
+          scope: turnScope("turn-1"),
+          item: {
+            ...bashTaskItem({
+              status: "pending",
+              taskStatus: "running",
+              description: "Collect unused slots",
+              parentToolCallId: "toolu-bash-outside-window",
+            }),
+            command: "pnpm -s slot gc 2>&1 | tail -60",
+          },
+        },
+        2,
+      ),
+    ]);
+
+    expect(timeline.activeBackgroundCommands).toMatchObject([
+      {
+        description: "Collect unused slots",
+        command: "pnpm -s slot gc 2>&1 | tail -60",
+      },
+    ]);
+  });
+
   it("keeps backgrounded shell commands out of the active-workflow banner", () => {
     const timeline = buildTimeline(
       [

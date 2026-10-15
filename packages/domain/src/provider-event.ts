@@ -365,6 +365,7 @@ export const threadEventBackgroundTaskItemSchema = z.object({
   familyId: z.string().optional(),
   taskType: z.string(),
   description: z.string(),
+  command: z.string().optional(),
   status: threadEventItemStatusSchema,
   taskStatus: backgroundTaskStatusSchema,
   skipTranscript: z.boolean(),

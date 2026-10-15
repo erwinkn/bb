@@ -43,6 +43,7 @@ import {
   isActivePruneTriggerThreadEventType,
   maybePruneActiveThreadEventHistory,
 } from "../services/system/event-pruning.js";
+import { settleBackgroundTasksOfEndedProviderSessions } from "../services/threads/background-task-reconciliation.js";
 import { queueChildThreadTurnNotificationBestEffort } from "../services/threads/child-thread-notifications.js";
 import { isParentNotifiableChildThread } from "../services/threads/thread-parent.js";
 import {
@@ -1177,6 +1178,14 @@ export function registerInternalEventRoutes(app: Hono, deps: AppDeps): void {
       };
       observeTurnTraceEventBatch(turnTraceBatch);
       observeStreamTraceEventBatch(deps, turnTraceBatch);
+      settleBackgroundTasksOfEndedProviderSessions(deps, {
+        events: appendResult.acceptedEvents.flatMap((accepted, index) => {
+          const inputIndex = appendResult.insertedInputIndexes[index];
+          const entry =
+            inputIndex === undefined ? undefined : postableEvents[inputIndex];
+          return entry ? [{ ...accepted, event: entry.event }] : [];
+        }),
+      });
 
       const followUps = await applyEventEffects(
         deps,

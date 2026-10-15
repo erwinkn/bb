@@ -458,6 +458,28 @@ export function createBridgeProtocolAdapter(
               providerThreadId: command.providerThreadId,
             },
           });
+        case "thread/backgroundTask/stop": {
+          const providerItemId = deltaAssembler.getProviderItemId(
+            command.threadId,
+            command.itemId,
+          );
+          if (providerItemId === undefined) {
+            return {
+              kind: "noop",
+              reason: `the provider item of background task ${command.itemId} is no longer known`,
+            };
+          }
+          return gate("backgroundTaskStop", {
+            kind: "request",
+            method: BRIDGE_REQUEST_METHODS.threadBackgroundTaskStop,
+            params: {
+              threadId: command.threadId,
+              providerThreadId: command.providerThreadId,
+              taskId: command.taskId,
+              providerItemId,
+            },
+          });
+        }
       }
     },
 

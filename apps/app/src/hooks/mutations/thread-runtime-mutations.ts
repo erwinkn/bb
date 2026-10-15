@@ -580,6 +580,18 @@ export function cancelThreadPlanMutationOptions(queryClient: QueryClient) {
   });
 }
 
+export function useStopThreadBackgroundTask() {
+  return useMutation({
+    meta: {
+      errorMessage: "Failed to stop the background task.",
+      showErrorToast: false,
+    },
+    mutationFn: async (args: { threadId: string; itemId: string }) => {
+      await sdk.threads.stopBackgroundTask(args);
+    },
+  });
+}
+
 export function useCancelThreadPlan() {
   const queryClient = useQueryClient();
   return useMutation(cancelThreadPlanMutationOptions(queryClient));

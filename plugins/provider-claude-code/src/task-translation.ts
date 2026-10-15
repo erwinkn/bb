@@ -33,6 +33,8 @@ interface ClaudeTrackedTask {
   generation: number;
   workflowName: string | undefined;
   description: string;
+  command: string | undefined;
+  backgrounded: boolean;
   taskStatus: BackgroundTaskStatus;
   skipTranscript: boolean;
   phasesByIndex: Map<number, WorkflowPhaseSnapshot>;
@@ -51,6 +53,7 @@ interface TranslateClaudeTaskMessageArgs {
   tasks: ClaudeTaskMap;
   turnStartSuppressed: boolean;
   hasForwardedToolUse: (toolUseId: string) => boolean;
+  commandOfToolUse: (toolUseId: string) => string | undefined;
 }
 
 export function hasCompletionBlockingClaudeTasks(
@@ -194,6 +197,7 @@ function buildClaudeTaskShape(
     familyId: task.taskId,
     taskType: task.taskType,
     description: task.description,
+    ...(task.command !== undefined ? { command: task.command } : {}),
     status: backgroundTaskItemStatus(task.taskStatus),
     taskStatus: task.taskStatus,
     skipTranscript: task.skipTranscript,
@@ -290,6 +294,11 @@ export function translateClaudeTaskMessage(
       generation,
       workflowName: message.workflow_name,
       description: message.description,
+      command:
+        taskType === LOCAL_BASH_TASK_TYPE && message.tool_use_id !== undefined
+          ? args.commandOfToolUse(message.tool_use_id)
+          : undefined,
+      backgrounded: message.is_backgrounded === true,
       taskStatus: "running",
       skipTranscript: message.skip_transcript ?? false,
       phasesByIndex: new Map(),
@@ -342,6 +351,9 @@ export function translateClaudeTaskMessage(
     if (patch.description !== undefined) {
       task.description = patch.description;
     }
+    if (patch.is_backgrounded !== undefined) {
+      task.backgrounded = patch.is_backgrounded;
+    }
     if (patch.error !== undefined) {
       task.error = patch.error;
     }
@@ -372,12 +384,42 @@ export function translateClaudeTaskMessage(
   return null;
 }
 
+export function runningClaudeTaskGeneration(
+  tasks: ClaudeTaskMap,
+  taskId: string,
+  providerItemId?: string,
+): number | null {
+  const task = tasks.get(taskId);
+  if (
+    task === undefined ||
+    task.terminal ||
+    (providerItemId !== undefined && task.providerItemKey !== providerItemId)
+  ) {
+    return null;
+  }
+  return task.generation;
+}
+
+export function listRunningClaudeTaskKeysAbsentFrom(
+  tasks: ClaudeTaskMap,
+  liveTaskIds: ReadonlySet<string>,
+): string[] {
+  const absent: string[] = [];
+  for (const task of tasks.values()) {
+    if (task.backgrounded && !task.terminal && !liveTaskIds.has(task.taskId)) {
+      absent.push(task.providerItemKey);
+    }
+  }
+  return absent;
+}
+
 export function buildInterruptedClaudeTaskDeltas(args: {
   tasks: ClaudeTaskMap;
+  taskIds?: ReadonlySet<string>;
 }): ThreadDelta[] {
   const deltas: ThreadDelta[] = [];
   for (const task of args.tasks.values()) {
-    if (task.terminal) {
+    if (task.terminal || (args.taskIds && !args.taskIds.has(task.taskId))) {
       continue;
     }
     if (!isSettledBackgroundTaskStatus(task.taskStatus)) {

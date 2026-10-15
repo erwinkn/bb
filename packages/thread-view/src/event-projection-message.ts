@@ -472,6 +472,7 @@ export interface EventProjectionWorkflowMessage
   workflowName: string | null;
   description: string;
   model: string | null;
+  command: string | null;
   status: Extract<
     EventProjectionMessageStatus,
     "pending" | "completed" | "error" | "interrupted"

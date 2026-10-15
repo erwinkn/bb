@@ -418,6 +418,7 @@ type ExpectedThreadsKey =
   | "childSummary"
   | "clearContext"
   | "clearGoal"
+  | "stopBackgroundTask"
   | "compact"
   | "conversationOutline"
   | "count"

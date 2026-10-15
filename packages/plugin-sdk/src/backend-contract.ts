@@ -1325,6 +1325,11 @@ export interface PluginProviderCapabilities {
   /** The provider stores a thread name of its own, so BB forwards renames to
    * it. */
   supportsThreadRename: boolean;
+  /** The provider can stop one of a session's running background tasks (a
+   * backgrounded command or agent) — shows Stop on background task rows. The
+   * bridge must also report `backgroundTaskStop` at `initialize`. Absent means
+   * unsupported. */
+  supportsBackgroundTaskStop?: boolean;
   /** Permission modes the provider can actually run in. Non-empty, no
    * duplicates. */
   permissionModes: readonly PluginProviderPermissionMode[];

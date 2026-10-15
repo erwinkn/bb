@@ -222,6 +222,7 @@ interface WorkflowRowArgs extends RowBaseOverrideArgs {
   error?: string | null;
   id?: string;
   itemId?: string;
+  command?: string | null;
   model?: string | null;
   seq?: number;
   sourceSeqEnd?: number;
@@ -942,6 +943,7 @@ export function workflowRow({
   error = null,
   id = DEFAULT_WORKFLOW_ID,
   itemId,
+  command = null,
   model = null,
   seq,
   sourceSeqEnd,
@@ -977,6 +979,7 @@ export function workflowRow({
     workflowName,
     description,
     model,
+    command,
     taskStatus,
     workflow,
     usage,

@@ -67,6 +67,7 @@ import {
 } from "../../services/threads/thread-commands.js";
 import { getLastProviderThreadId } from "../../services/threads/thread-events.js";
 import { stopThreadForCurrentState } from "../../services/threads/thread-lifecycle.js";
+import { stopThreadBackgroundTask } from "../../services/threads/background-task-stop.js";
 import {
   buildThreadStatusChangeMetadata,
   getThreadPromptBannerActivity,
@@ -465,6 +466,15 @@ export function registerThreadActionRoutes(app: Hono, deps: AppDeps): void {
         "The provider did not confirm that Plan mode exited",
       );
     }
+    return context.json({ ok: true });
+  });
+
+  post(routes.stopBackgroundTask, async (context) => {
+    const thread = requirePublicThread(deps.db, context.req.param("id"));
+    await stopThreadBackgroundTask(deps, {
+      thread,
+      itemId: context.req.param("itemId"),
+    });
     return context.json({ ok: true });
   });
 

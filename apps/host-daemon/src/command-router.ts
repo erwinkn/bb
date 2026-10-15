@@ -453,6 +453,7 @@ export class CommandRouter {
       case "thread.stop":
       case "thread.storage.delete":
       case "thread.plan.cancel":
+      case "thread.backgroundTask.stop":
       case "thread.goal.clear":
         return `${command.environmentId}\0thread:${command.threadId}`;
       default:

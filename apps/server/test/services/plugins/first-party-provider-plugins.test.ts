@@ -294,6 +294,7 @@ describe("first-party provider plugins", () => {
             permissionModes: ["accept-edits", "auto", "full"],
             supportsFork: true,
             supportsSessionRewind: true,
+            supportsBackgroundTaskStop: true,
             modelCatalogScope: "host",
           },
           composerActions: [skills, explicitSkills, plan],

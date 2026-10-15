@@ -89,6 +89,7 @@ import type {
   PathId,
   PathProjectId,
   PathIdAndFilePath,
+  PathThreadAndItem,
   PathIdHostAndFilePath,
   PathIdRefAndFilePath,
   PathThreadAndQueuedMessage,
@@ -1602,6 +1603,12 @@ export const publicApiRoutes = {
       path: "/threads/:id/goal/clear",
       method: "post",
       request: noRequest<PathId>(),
+      response: jsonResponse<{ ok: true }>(),
+    }),
+    stopBackgroundTask: defineRoute({
+      path: "/threads/:id/background-tasks/:itemId/stop",
+      method: "post",
+      request: noRequest<PathThreadAndItem>(),
       response: jsonResponse<{ ok: true }>(),
     }),
     open: defineRoute({

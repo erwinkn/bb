@@ -580,6 +580,7 @@ const SETTLED_RESPONSE_RESULT_FIXTURES: SettledResponseResultFixtures = {
   "thread.storage.delete": { providerCheckpointId: null },
   "thread.goal.clear": { cleared: true },
   "thread.plan.cancel": { cancelled: true },
+  "thread.backgroundTask.stop": { stopped: true },
   "thread.rename": {},
   "thread.archive": {},
   "thread.unarchive": {},

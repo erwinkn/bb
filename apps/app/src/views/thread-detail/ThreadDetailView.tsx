@@ -2469,6 +2469,9 @@ function ThreadDetailViewInternal(
       modelFallback={modelFallback}
       activeWorkflows={activeWorkflows}
       activeBackgroundCommands={activeBackgroundCommands}
+      canStopBackgroundTasks={
+        threadProviderInfo?.capabilities.supportsBackgroundTaskStop === true
+      }
       parentThreadSection={parentThreadSection}
       childThreadsSection={childThreadsBannerSection}
       pullRequest={pullRequest}

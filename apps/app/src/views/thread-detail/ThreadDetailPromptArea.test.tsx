@@ -173,6 +173,7 @@ function buildPromptAreaElement({
         showGitChanges={true}
         activeBackgroundAgentCount={0}
         activeBackgroundCommands={[]}
+        canStopBackgroundTasks={false}
         activePromptMode={activePromptMode}
         activeWorkflows={activeWorkflows}
         canUseGitUi={false}

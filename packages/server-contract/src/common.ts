@@ -5,6 +5,9 @@ export type PathProjectId = { param: { id: string } };
 export type PathThreadAndQueuedMessage = {
   param: { id: string; queuedMessageId: string };
 };
+export type PathThreadAndItem = {
+  param: { id: string; itemId: string };
+};
 export type PathIdAndFilePath = {
   param: { id: string; filePath: string };
 };

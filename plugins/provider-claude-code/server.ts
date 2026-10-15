@@ -70,6 +70,7 @@ export default function plugin(bb: BbPluginApi) {
       supportsManualCompaction: true,
       supportsThreadArchive: false,
       supportsThreadRename: false,
+      supportsBackgroundTaskStop: true,
       permissionModes: ["accept-edits", "auto", "full"],
       reasoningLevels: ["low", "medium", "high", "xhigh", "ultracode", "max"],
     },
