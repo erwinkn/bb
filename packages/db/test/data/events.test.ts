@@ -3836,6 +3836,26 @@ describe("events", () => {
         itemIds: [],
       }),
     ).toEqual([]);
+
+    const manyItemIds = [
+      "task:wf-1",
+      "task:wf-2",
+      ...Array.from({ length: 20_000 }, (_, index) => `missing-${index}`),
+      "delegation-1",
+    ];
+    expect(
+      listLatestBackgroundTaskStateRowsByItemIds(db, {
+        threadId: thread.id,
+        itemIds: manyItemIds,
+      }).map((row) => row.sequence),
+    ).toEqual([3, 4, 6]);
+    expect(
+      listLatestBackgroundTaskStateRowsByItemIds(db, {
+        threadId: thread.id,
+        itemIds: manyItemIds,
+        beforeSequence: 6,
+      }).map((row) => row.sequence),
+    ).toEqual([3, 4]);
   });
 
   it("returns latest non-terminal open backgroundTask state rows for a thread", () => {

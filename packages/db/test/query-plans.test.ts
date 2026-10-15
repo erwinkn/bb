@@ -30,8 +30,10 @@ import {
   listItemEventSpansByItems,
   listOpenTurnInputAcceptedRowsByThreadIds,
   listLatestThreadStateEventRowsByThreadIds,
+  listLatestBackgroundTaskStateRowsByItemIds,
   listLatestOpenBackgroundTaskStateRowsForThread,
   listStoredConversationOutlineEventRows,
+  listStoredDelegatingItemRowsByItemIds,
   listStoredEventRows,
   listStoredEventRowsByParentToolCallIds,
   listStoredTurnCompletedKeys,
@@ -644,7 +646,7 @@ describe("slow query index plans", () => {
     db.$client.close();
   });
 
-  it("resolves root turn starts for the parented boundary through the turn index", () => {
+  it("finds parented boundary spans from the child rows instead of every tool call", () => {
     const { db, thread } = setup();
 
     const captured = captureStatements(db, () => {
@@ -671,12 +673,12 @@ describe("slow query index plans", () => {
     expect(details).toMatch(
       /SEARCH events USING COVERING INDEX events_parent_tool_call_thread_parent_sequence_idx \(thread_id=\? AND parent_tool_call_id>\?\)/u,
     );
-    expect(details.indexOf("SCAN nested_history")).toBeGreaterThanOrEqual(0);
-    expect(details.indexOf("SCAN nested_history")).toBeLessThan(
-      details.indexOf("INDEX events_delegating_item_lookup_idx"),
+    expect(details).toContain("SCAN parent_ends");
+    expect(details).toMatch(
+      /SEARCH events USING (?:COVERING )?INDEX events_delegating_item_lookup_idx \(thread_id=\? AND item_id=\?/u,
     );
     expect(details).toMatch(
-      /SEARCH events USING (?:COVERING )?INDEX events_delegating_item_lookup_idx/u,
+      /SEARCH events USING (?:COVERING )?INDEX events_thread_type_sequence_idx \(thread_id=\? AND type=\? AND sequence>\? AND sequence<\?\)/u,
     );
 
     db.$client.close();
@@ -736,6 +738,73 @@ describe("slow query index plans", () => {
       queryPlanDetails({ db, params: query.params, sql: query.sql }),
     ).toMatch(
       /SEARCH events USING INDEX events_parent_tool_call_thread_parent_sequence_idx/u,
+    );
+
+    db.$client.close();
+  });
+
+  it("seeks delegating parent rows by item instead of scanning the thread", () => {
+    const { db, thread } = setup();
+
+    const [query] = captureStatements(db, () => {
+      expect(
+        listStoredDelegatingItemRowsByItemIds(db, {
+          itemIds: ["tool-a", "tool-b"],
+          maxInlineOutputChars: 32_000,
+          threadId: thread.id,
+        }),
+      ).toEqual([]);
+    });
+    if (!query) {
+      throw new Error("Expected the delegating item row lookup SQL");
+    }
+    expect(queryPlanDetails({ db, ...query })).toMatch(
+      /^SEARCH events USING INDEX events_delegating_item_lookup_idx \(thread_id=\? AND item_id=\?\)/u,
+    );
+
+    db.$client.close();
+  });
+
+  it("seeks the latest background-task and delegation state per item", () => {
+    const { db, thread } = setup();
+
+    const [query] = captureStatements(db, () => {
+      expect(
+        listLatestBackgroundTaskStateRowsByItemIds(db, {
+          beforeSequence: 100,
+          itemIds: ["task-a", "delegation-b"],
+          threadId: thread.id,
+        }),
+      ).toEqual([]);
+    });
+    if (!query) {
+      throw new Error("Expected the latest background-task state SQL");
+    }
+    const details = queryPlanDetails({ db, ...query });
+    expect(details).toContain(
+      "SEARCH events USING COVERING INDEX events_background_task_thread_type_item_sequence_idx (thread_id=? AND type=? AND item_id=? AND sequence<?)",
+    );
+    expect(details).toContain(
+      "SEARCH events USING INDEX events_delegating_item_lookup_idx (thread_id=? AND item_id=? AND sequence<?)",
+    );
+    expect(details).not.toMatch(/\(thread_id=\?\)/u);
+
+    db.$client.close();
+  });
+
+  it("reads completed background tasks through the background-task index", () => {
+    const { db, thread } = setup();
+
+    const [query] = captureStatements(db, () => {
+      listLatestOpenBackgroundTaskStateRowsForThread(db, {
+        threadId: thread.id,
+      });
+    });
+    if (!query) {
+      throw new Error("Expected the open background-task state SQL");
+    }
+    expect(queryPlanDetails({ db, ...query })).toMatch(
+      /SEARCH completed_background_task_state USING COVERING INDEX events_background_task_thread_type_item_sequence_idx \(thread_id=\? AND type=\?/u,
     );
 
     db.$client.close();
