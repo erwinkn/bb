@@ -31,7 +31,9 @@ import {
   releaseStaleQueuedMessageDispatchClaims,
   sendNextQueuedMessageIfPresent,
   sendQueuedMessage,
+  type QueuedMessageDispatchMode,
 } from "./queued-messages.js";
+import { getActiveTurnId } from "./thread-events.js";
 
 export interface QueueWaitPluginDirectory {
   isPluginExpectedToRun(pluginId: string): boolean;
@@ -62,10 +64,17 @@ interface QueuedMessageDispatchRef {
   threadId: string;
 }
 
-type PreparedQueuedMessageDispatchWake = Exclude<
-  QueuedMessageDispatchWake,
-  { kind: "provisioning-ended" }
->;
+type PreparedQueuedMessageDispatchWake =
+  | Exclude<
+      QueuedMessageDispatchWake,
+      { kind: "provisioning-ended" | "interaction-settled" }
+    >
+  | {
+      kind: "interaction-settled";
+      threadId: string;
+      /** The turn running when the interaction settled, read before the wake is deferred. */
+      turnId: string | null;
+    };
 
 const pendingPluginRechecks = new WeakSet<
   QueueDispatchDeps["lifecycleDedupers"]
@@ -102,6 +111,8 @@ function prepareQueuedMessageDispatchWake(
       if (isMachineWaitingForExecution(deps, wake.hostId)) return [];
       return [wake];
     }
+    case "interaction-settled":
+      return [{ ...wake, turnId: getActiveTurnId(deps, wake.threadId) }];
     default:
       return [wake];
   }
@@ -239,6 +250,7 @@ async function executePreparedQueuedMessageDispatch(
           threadId,
         })) {
           await attemptAutomaticQueuedMessage(deps, row, {
+            mode: "queue-if-active",
             now: Date.now(),
             respectRequeuePacing: false,
             retryingFailure: false,
@@ -256,7 +268,7 @@ async function executePreparedQueuedMessageDispatch(
       await runTurnStartedDispatch(deps, wake.threadId);
       return;
     case "interaction-settled":
-      await runInteractionSettledDispatch(deps, wake.threadId);
+      await runInteractionSettledDispatch(deps, wake);
       return;
     case "edit-released":
       await runEditReleasedDispatch(deps, {
@@ -337,6 +349,7 @@ async function runTurnStartedDispatch(
   );
   for (const row of rows) {
     await attemptAutomaticQueuedMessage(deps, row, {
+      mode: "auto",
       now: Date.now(),
       respectRequeuePacing: false,
       retryingFailure: false,
@@ -362,6 +375,7 @@ async function runWorkspaceReadyDispatch(
   }
   for (const row of rows) {
     await attemptAutomaticQueuedMessage(deps, row, {
+      mode: "queue-if-active",
       now: Date.now(),
       respectRequeuePacing: false,
       retryingFailure: false,
@@ -371,16 +385,36 @@ async function runWorkspaceReadyDispatch(
 
 async function runInteractionSettledDispatch(
   deps: QueueDispatchDeps,
-  threadId: string,
+  { threadId, turnId }: { threadId: string; turnId: string | null },
 ): Promise<void> {
-  if (deps.pendingInteractions.hasTurnBoundPendingThreadInteraction(threadId))
-    return;
-  const cleared = clearThreadQueueWaitsOfKind(deps, {
-    threadId,
+  if (deps.pendingInteractions.hasTurnBoundPendingThreadInteraction(threadId)) return;
+  const rows = listQueuedThreadMessagesWaitingOnKind(deps.db, {
     kind: "interaction",
+    threadId,
   });
-  if (cleared > 0) {
+  if (rows.length === 0) return;
+  for (const row of rows) {
+    clearQueuedMessageWait(deps, { queuedMessageId: row.id, threadId });
+  }
+  if (
+    turnId === null ||
+    getThread(deps.db, threadId)?.status !== "active" ||
+    getActiveTurnId(deps, threadId) !== turnId
+  ) {
     await runThreadReadyDispatch(deps, threadId);
+    return;
+  }
+  // These rows were held while this turn waited for an answer, so they still
+  // join it, and only it: once it ends, even before this deferred wake runs,
+  // they wait for a turn of their own.
+  for (const row of rows) {
+    await attemptAutomaticQueuedMessage(deps, row, {
+      mode: "auto",
+      joinTurnId: turnId,
+      now: Date.now(),
+      respectRequeuePacing: false,
+      retryingFailure: false,
+    });
   }
 }
 
@@ -389,6 +423,7 @@ async function runEditReleasedDispatch(
   row: QueuedMessageDispatchRef,
 ): Promise<void> {
   await attemptAutomaticQueuedMessage(deps, row, {
+    mode: "queue-if-active",
     now: Date.now(),
     respectRequeuePacing: false,
     retryingFailure: false,
@@ -400,6 +435,9 @@ async function attemptAutomaticQueuedMessage(
   deps: QueueDispatchDeps,
   row: QueuedMessageDispatchRef,
   args: {
+    /** `auto` only for rows held for a running turn; see the type. */
+    mode: QueuedMessageDispatchMode;
+    joinTurnId?: string;
     now: number;
     respectRequeuePacing: boolean;
     retryingFailure: boolean;
@@ -421,7 +459,8 @@ async function attemptAutomaticQueuedMessage(
         }),
         retryingFailure: args.retryingFailure,
       },
-      mode: "auto",
+      mode: args.mode,
+      ...(args.joinTurnId !== undefined ? { joinTurnId: args.joinTurnId } : {}),
       queuedMessageId: row.id,
       threadId: row.threadId,
     });
@@ -460,6 +499,7 @@ async function runPluginRecheckDispatch(
   const now = Date.now();
   for (const row of listQueuedThreadMessagePluginWaitRefs(deps.db)) {
     await attemptAutomaticQueuedMessage(deps, row, {
+      mode: "queue-if-active",
       now,
       respectRequeuePacing: true,
       retryingFailure: false,
@@ -494,6 +534,7 @@ async function runDueScheduledDispatch(
 ): Promise<void> {
   for (const row of listDueScheduledQueuedThreadMessages(deps.db, now)) {
     await attemptAutomaticQueuedMessage(deps, row, {
+      mode: "queue-if-active",
       now,
       respectRequeuePacing: true,
       retryingFailure: false,
@@ -527,6 +568,7 @@ async function runFailedRetryDispatch(
       "Retrying a queued message whose dispatch failed",
     );
     await attemptAutomaticQueuedMessage(deps, row, {
+      mode: "queue-if-active",
       now,
       respectRequeuePacing: true,
       retryingFailure: true,

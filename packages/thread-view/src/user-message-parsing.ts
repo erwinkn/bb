@@ -280,6 +280,31 @@ interface BuildClientUserMessageArgs {
   requestStatus: EventProjectionTurnRequest["status"];
 }
 
+/**
+ * The sender BB names in a later input group's header, when one turn carries
+ * several queued agent messages. BB writes each group's header at the start of
+ * its first text block, whatever that block's visibility, so the header is read
+ * from the original block, never from the visible text. The first group is the
+ * request's own sender.
+ */
+function inputGroupSenderThreadId(
+  decoded: ClientTurnRequestedEvent,
+  groupIndex: number,
+  input: ReadonlyArray<PromptInput>,
+): string | null {
+  if (
+    groupIndex === 0 ||
+    decoded.initiator !== "agent" ||
+    decoded.senderThreadId === null
+  ) {
+    return null;
+  }
+  const firstText = input.find((item) => item.type === "text");
+  return firstText?.type === "text"
+    ? (parseAgentMessageEnvelope(firstText.text)?.senderThreadId ?? null)
+    : null;
+}
+
 function buildClientUserMessage({
   acceptedClientRequest,
   decoded,
@@ -313,6 +338,7 @@ function buildClientUserMessage({
       ? "agent"
       : decoded.initiator;
   const senderThreadId =
+    inputGroupSenderThreadId(decoded, inputGroupIndex, input) ??
     decoded.senderThreadId ??
     (initiator === "agent" ? (agentEnvelope?.senderThreadId ?? null) : null);
 

@@ -25,7 +25,6 @@ import {
   queuedMessageSystemNoticeSchema,
 } from "@bb/domain";
 import type {
-  PromptInput,
   QueuedMessageWaitingOn,
   Thread,
   ThreadQueuedMessage,
@@ -81,15 +80,16 @@ import {
   createQueuedMessageClaimLostError,
   QUEUED_MESSAGE_AUTO_SEND_PAUSED_CODE,
   QUEUED_MESSAGE_CLAIM_LOST_CODE,
-  settleQueueRowDispatched,
+  settleQueueRowsDispatched,
 } from "./queue-waits.js";
 import { recordQueuedMessageDrainFailure } from "./queue-drain-failure.js";
 import {
   appendPluginMentionContext,
   captureUserMessageSentTelemetry,
   ensureThreadQueueIsWritable,
-  formatAgentThreadInput,
+  formatAgentThreadInputGroups,
   resolveMessageSenderThreadId,
+  type InputGroupSender,
 } from "./thread-send.js";
 import { recordAcceptedPromptHistoryEntry } from "../prompt-history.js";
 import { requireThreadCommandEnvironment } from "./thread-command-environment.js";
@@ -108,9 +108,22 @@ import {
   withThreadSendGuard,
 } from "./thread-context-mutation-guard.js";
 
+/**
+ * How a claimed queued row is sent. Automatic drains use `queue-if-active`: a
+ * queued row runs as its own turn, and if a turn is running when it goes, it
+ * queues again behind that turn instead of joining it. `auto` joins a running
+ * turn, for the rows that were held for one (a starting turn, an interaction
+ * being answered) and for "Send now", which also allows `steer`.
+ */
+export type QueuedMessageDispatchMode =
+  | SendQueuedMessageMode
+  | "queue-if-active";
+
 interface SendQueuedMessageArgs {
   claimPolicy: QueuedThreadMessageGroupClaimPolicy;
-  mode: SendQueuedMessageMode;
+  mode: QueuedMessageDispatchMode;
+  /** See `DispatchAttemptArgs.joinTurnId`. */
+  joinTurnId?: string;
   queuedMessageId: string;
   threadId: string;
 }
@@ -121,7 +134,8 @@ type ClaimedQueuedMessage = Exclude<
 >[number];
 
 interface SendClaimedQueuedMessageArgs {
-  mode: SendQueuedMessageMode;
+  mode: QueuedMessageDispatchMode;
+  joinTurnId?: string;
   queuedMessages: ClaimedQueuedMessage[];
   /** True for an explicit "send now"; false for an ordinary drain. */
   sendNow: boolean;
@@ -129,7 +143,8 @@ interface SendClaimedQueuedMessageArgs {
 }
 
 interface SendClaimedQueuedMessageForThreadArgs {
-  mode: SendQueuedMessageMode;
+  mode: QueuedMessageDispatchMode;
+  joinTurnId?: string;
   queuedMessages: ClaimedQueuedMessage[];
   sendNow: boolean;
   thread: Thread;
@@ -317,11 +332,6 @@ function isQueuedMessageAutoSendCandidate(
   );
 }
 
-interface FormatQueuedMessageInputForSenderArgs {
-  input: PromptInput[];
-  senderThreadId: string | null;
-}
-
 const STALE_QUEUED_MESSAGE_CLAIM_MS = 5 * 60 * 1000;
 const QUEUED_MESSAGE_EDIT_HOLD_LEASE_MS = 2 * 60 * 1000;
 const activeQueuedMessageClaimTokens = new Set<string>();
@@ -330,7 +340,7 @@ function respectsManualStopPause(
   args: SendClaimedQueuedMessageForThreadArgs,
 ): boolean {
   return (
-    args.mode === "auto" &&
+    args.mode !== "steer" &&
     !args.sendNow &&
     args.queuedMessages.some(isOrdinaryTurnEndQueuedMessage)
   );
@@ -338,7 +348,7 @@ function respectsManualStopPause(
 
 function sendQueuedMessagePayload(
   queuedMessage: ThreadQueuedMessage,
-  mode: SendQueuedMessageMode,
+  mode: QueuedMessageDispatchMode,
   senderThreadId: string | null,
 ): SendMessageRequest {
   return {
@@ -352,16 +362,24 @@ function sendQueuedMessagePayload(
   };
 }
 
-function formatQueuedMessageInputForSender(
-  args: FormatQueuedMessageInputForSenderArgs,
-): PromptInput[] {
-  if (args.senderThreadId === null) {
-    return args.input;
+/**
+ * Each claimed row's own sender and send time, when the claim is a batch of
+ * agent messages run as one turn; undefined for a single message or a group
+ * that is not all agent messages, whose rows share one sender.
+ */
+function queuedInputGroupSenders(
+  queuedMessages: readonly ClaimedQueuedMessage[],
+): InputGroupSender[] | undefined {
+  if (queuedMessages.length < 2) return undefined;
+  const senders: InputGroupSender[] = [];
+  for (const queuedMessage of queuedMessages) {
+    if (queuedMessage.senderThreadId === null) return undefined;
+    senders.push({
+      senderThreadId: queuedMessage.senderThreadId,
+      sentAt: queuedMessage.createdAt,
+    });
   }
-  return formatAgentThreadInput({
-    input: args.input,
-    senderThreadId: args.senderThreadId,
-  });
+  return senders;
 }
 
 function releaseQueuedMessageClaims(
@@ -456,6 +474,7 @@ async function sendClaimedQueuedMessage(
   }
   return sendClaimedQueuedMessageForThread(deps, {
     mode: args.mode,
+    ...(args.joinTurnId !== undefined ? { joinTurnId: args.joinTurnId } : {}),
     queuedMessages: args.queuedMessages,
     sendNow: args.sendNow,
     thread,
@@ -466,7 +485,7 @@ async function sendClaimedQueuedMessageForIdleProviderThread(
   deps: LoggedPendingInteractionWorkSessionDeps,
   args: SendClaimedQueuedMessageForThreadArgs,
 ): Promise<ThreadQueuedMessage | null> {
-  if (args.mode !== "auto") {
+  if (args.mode === "steer") {
     return null;
   }
   // This fast path dispatches straight to the daemon, bypassing the dispatch
@@ -494,12 +513,11 @@ async function sendClaimedQueuedMessageForIdleProviderThread(
   const queuedMessage = queuedMessages[0]!;
 
   const senderThreadId = args.queuedMessages[0]!.senderThreadId;
-  let inputGroups = args.queuedMessages.map((claimedQueuedMessage) =>
-    formatQueuedMessageInputForSender({
-      input: toThreadQueuedMessage(claimedQueuedMessage).content,
-      senderThreadId: claimedQueuedMessage.senderThreadId,
-    }),
-  );
+  let inputGroups = formatAgentThreadInputGroups({
+    inputGroups: queuedMessages.map((message) => message.content),
+    inputGroupSenders: queuedInputGroupSenders(args.queuedMessages),
+    senderThreadId,
+  });
   let input = flattenPromptInputGroups(inputGroups);
   ({ input, inputGroups } = await appendPluginMentionContext({
     input,
@@ -633,7 +651,7 @@ async function sendClaimedQueuedMessageForIdleProviderThread(
       );
     },
   });
-  settleQueueRowDispatched({ row: args.queuedMessages[0]! });
+  settleQueueRowsDispatched({ rows: args.queuedMessages });
   return queuedMessage;
 }
 
@@ -679,7 +697,7 @@ async function sendClaimedSystemNotice(
   if (!consumed) {
     throw createQueuedMessageClaimLostError();
   }
-  settleQueueRowDispatched({ row: lead });
+  settleQueueRowsDispatched({ rows: args.queuedMessages });
   return queuedMessage;
 }
 
@@ -714,6 +732,7 @@ async function sendClaimedQueuedMessageForThread(
   );
   const input = flattenPromptInputGroups(inputGroups);
   const lead = args.queuedMessages[0]!;
+  const inputGroupSenders = queuedInputGroupSenders(args.queuedMessages);
   const outcome = await attemptDispatch(deps, {
     thread: args.thread,
     payload: {
@@ -723,6 +742,7 @@ async function sendClaimedQueuedMessageForThread(
         lead.senderThreadId,
       ),
       ...(inputGroups.length > 1 ? { inputGroups } : {}),
+      ...(inputGroupSenders !== undefined ? { inputGroupSenders } : {}),
     },
     source: {
       kind: "drain",
@@ -744,6 +764,7 @@ async function sendClaimedQueuedMessageForThread(
     originPluginId: lead.originPluginId,
     startedOnBehalfOf: storedQueuedThreadMessageRequestedBy(lead),
     trigger: "auto-dispatch",
+    ...(args.joinTurnId !== undefined ? { joinTurnId: args.joinTurnId } : {}),
   });
   if (
     args.sendNow &&
@@ -807,7 +828,7 @@ export async function sendQueuedMessage(
   if (
     thread &&
     (isManualCompactionActive(deps, thread) ||
-      (args.mode === "auto" &&
+      (args.mode !== "steer" &&
         !sendNow &&
         queuedMessages.some(isOrdinaryTurnEndQueuedMessage) &&
         isThreadQueueAutoSendPaused(deps.db, thread.id)))
@@ -819,6 +840,9 @@ export async function sendQueuedMessage(
     return await withActiveQueuedMessageClaims(queuedMessages, () =>
       sendClaimedQueuedMessage(deps, {
         mode: args.mode,
+        ...(args.joinTurnId !== undefined
+          ? { joinTurnId: args.joinTurnId }
+          : {}),
         queuedMessages,
         sendNow,
         threadId: args.threadId,
@@ -870,7 +894,12 @@ export async function sendNextQueuedMessageIfPresent(
   args: { threadId: string },
 ): Promise<boolean> {
   const initialThread = getThread(deps.db, args.threadId);
-  if (!isQueuedMessageAutoSendCandidate(initialThread)) {
+  // This drain starts the next turn. A running turn drains the queue when it
+  // ends; its queued rows do not join it.
+  if (
+    !isQueuedMessageAutoSendCandidate(initialThread) ||
+    initialThread.status === "active"
+  ) {
     return false;
   }
 
@@ -883,6 +912,13 @@ export async function sendNextQueuedMessageIfPresent(
       retryingFailure: false,
       thread: initialThread,
     }),
+    {
+      // Only a turn that starts now carries a batch: a pending thread's first
+      // dispatch provisions flat input without sender headers.
+      batchAgentMessages:
+        (initialThread.status === "idle" || initialThread.status === "error") &&
+        initialThread.environmentId !== null,
+    },
   );
   if (!nextQueuedMessages) {
     return false;
@@ -900,7 +936,7 @@ export async function sendNextQueuedMessageIfPresent(
   try {
     await withActiveQueuedMessageClaims(nextQueuedMessages, () =>
       sendClaimedQueuedMessageForThread(deps, {
-        mode: "auto",
+        mode: "queue-if-active",
         queuedMessages: nextQueuedMessages,
         sendNow: false,
         thread,

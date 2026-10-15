@@ -472,6 +472,15 @@ export function isOrdinaryTurnEndQueuedMessage(
  * deciding whole-group eligibility over rows already in hand. Kept next to a
  * pointer at the SQL so the two cannot drift silently.
  */
+function isClockScheduledQueuedMessage(row: QueuedThreadMessageRow): boolean {
+  if (row.state !== "scheduled" || row.waitingOn === null) return false;
+  try {
+    return (JSON.parse(row.waitingOn) as { kind?: unknown }).kind === "time";
+  } catch {
+    return false;
+  }
+}
+
 function isIdleDrainableQueuedMessage(row: QueuedThreadMessageRow): boolean {
   if (isQueuedMessageFailedState(row.state)) return false;
   if (row.waitingOn === null) return true;
@@ -495,6 +504,18 @@ function stringArraysEqual(
   );
 }
 
+function queuedMessageExecutionMatches(
+  firstQueuedMessage: QueuedThreadMessageRow,
+  queuedMessage: QueuedThreadMessageRow,
+): boolean {
+  return (
+    queuedMessage.model === firstQueuedMessage.model &&
+    queuedMessage.reasoningLevel === firstQueuedMessage.reasoningLevel &&
+    queuedMessage.permissionMode === firstQueuedMessage.permissionMode &&
+    queuedMessage.serviceTier === firstQueuedMessage.serviceTier
+  );
+}
+
 function queuedMessageGroupingEnvelopeMatches(
   firstQueuedMessage: QueuedThreadMessageRow | null,
   queuedMessage: QueuedThreadMessageRow,
@@ -502,11 +523,65 @@ function queuedMessageGroupingEnvelopeMatches(
   return (
     firstQueuedMessage !== null &&
     queuedMessage.senderThreadId === firstQueuedMessage.senderThreadId &&
-    queuedMessage.model === firstQueuedMessage.model &&
-    queuedMessage.reasoningLevel === firstQueuedMessage.reasoningLevel &&
-    queuedMessage.permissionMode === firstQueuedMessage.permissionMode &&
-    queuedMessage.serviceTier === firstQueuedMessage.serviceTier
+    queuedMessageExecutionMatches(firstQueuedMessage, queuedMessage)
   );
+}
+
+/**
+ * The most rows one idle drain hands a thread as a single turn. Bounds the
+ * prompt a burst of agent messages can build; the rest run in the next turn.
+ */
+export const MAX_BATCHED_QUEUED_MESSAGES = 16;
+
+/**
+ * An ordinary message from another agent thread: the only kind of row the
+ * idle drain merges with its neighbours. A user's row keeps its own turn,
+ * because the turn's initiator decides permission escalation and the sticky
+ * model override; system notices and retries have their own dispatch shapes.
+ */
+function isBatchableAgentQueuedMessage(row: QueuedThreadMessageRow): boolean {
+  return (
+    row.senderThreadId !== null &&
+    row.systemNotice === null &&
+    row.payloadKind === "inline" &&
+    row.origin === null &&
+    row.originPluginId === null &&
+    row.requestedByInitiator === null
+  );
+}
+
+/**
+ * The lead group plus every later ready group of agent messages that can run
+ * in the same turn, in queue order. Groups that are not ready are passed over,
+ * as the drain passes over them anyway; the first ready group that cannot join
+ * (a user's message, a notice, other execution options, or the row limit)
+ * ends the batch, so nothing ready is overtaken. The limit bounds only this
+ * extension: a lead group the user composed is claimed whole, as it always was.
+ */
+function extendWithReadyAgentGroups(
+  groups: readonly QueuedThreadMessageRow[][],
+  leadIndex: number,
+  isGroupReady: (rows: readonly QueuedThreadMessageRow[]) => boolean,
+): QueuedThreadMessageRow[] {
+  const lead = groups[leadIndex]!;
+  const leadRow = lead[0]!;
+  const batch = [...lead];
+  if (!lead.every(isBatchableAgentQueuedMessage)) return batch;
+  for (const group of groups.slice(leadIndex + 1)) {
+    if (!isGroupReady(group)) continue;
+    if (
+      !group.every(
+        (row) =>
+          isBatchableAgentQueuedMessage(row) &&
+          queuedMessageExecutionMatches(leadRow, row),
+      ) ||
+      batch.length + group.length > MAX_BATCHED_QUEUED_MESSAGES
+    ) {
+      break;
+    }
+    batch.push(...group);
+  }
+  return batch;
 }
 
 function isQueuedThreadMessageClaimed(row: QueuedThreadMessageRow): boolean {
@@ -1271,11 +1346,20 @@ export function claimQueuedThreadMessageGroup(
   return claimedQueuedMessages;
 }
 
+export interface ClaimNextQueuedThreadMessageGroupOptions {
+  /**
+   * Also claim the ready agent messages behind a leading agent message, so
+   * they run as one turn ({@link extendWithReadyAgentGroups}).
+   */
+  batchAgentMessages: boolean;
+}
+
 export function claimNextQueuedThreadMessageGroup(
   db: DbConnection,
   notifier: DbNotifier,
   threadId: string,
   isGroupEligible: QueuedThreadMessageGroupEligibility,
+  options: ClaimNextQueuedThreadMessageGroupOptions,
 ): ClaimedQueuedThreadMessageRow[] | null {
   const claimedQueuedMessages = db.transaction(
     (tx) => {
@@ -1289,29 +1373,50 @@ export function claimNextQueuedThreadMessageGroup(
       const queuedMessages = listQueuedThreadMessages(tx, threadId);
       const pauseOrdinaryMessages = isThreadQueueAutoSendPaused(tx, threadId);
       const now = Date.now();
-      const drainableGroups = partitionQueuedMessageGroups(
-        queuedMessages,
-      ).filter((rows) => rows.some(isIdleDrainableQueuedMessage));
-      const editHeldIndex = drainableGroups.findIndex((rows) =>
-        isQueuedThreadMessageGroupEditHeld(rows, now),
+      const canDispatch = (rows: readonly QueuedThreadMessageRow[]) =>
+        isGroupEligible(rows) &&
+        isAutomaticQueuedThreadMessageGroupClaimAllowed(
+          rows,
+          pauseOrdinaryMessages,
+          false,
+          now,
+        );
+      const isReadyShape = (rows: readonly QueuedThreadMessageRow[]) =>
+        rows.some(
+          (row) =>
+            isIdleDrainableQueuedMessage(row) ||
+            isClockScheduledQueuedMessage(row),
+        );
+      // A group someone is editing goes first once saved or cancelled: nothing
+      // behind it leads a turn or joins a batch.
+      const allGroups = partitionQueuedMessageGroups(queuedMessages);
+      const editHeldIndex = allGroups.findIndex(
+        (rows) =>
+          isQueuedThreadMessageGroupEditHeld(rows, now) &&
+          rows.some(
+            (row) =>
+              isIdleDrainableQueuedMessage(row) ||
+              (isClockScheduledQueuedMessage(row) &&
+                row.sendAt !== null &&
+                row.sendAt <= now),
+          ),
       );
-      const group =
-        drainableGroups
-          .slice(0, editHeldIndex === -1 ? undefined : editHeldIndex)
-          .find(
-            (rows) =>
-              isGroupEligible(rows) &&
-              isAutomaticQueuedThreadMessageGroupClaimAllowed(
-                rows,
-                pauseOrdinaryMessages,
-                false,
-                now,
-              ),
-          ) ?? null;
-      if (group === null) {
+      const groups =
+        editHeldIndex === -1 ? allGroups : allGroups.slice(0, editHeldIndex);
+      // The drain leads only with a row it drains, but a due scheduled row is
+      // just as ready, so a batch must stop at it rather than overtake it.
+      const isGroupReady = (rows: readonly QueuedThreadMessageRow[]) =>
+        isReadyShape(rows) && canDispatch(rows);
+      const leadIndex = groups.findIndex(
+        (rows) => rows.some(isIdleDrainableQueuedMessage) && canDispatch(rows),
+      );
+      if (leadIndex === -1) {
         return null;
       }
-      return claimQueuedThreadMessagesInTransaction(tx, group);
+      const rows = options.batchAgentMessages
+        ? extendWithReadyAgentGroups(groups, leadIndex, isGroupReady)
+        : groups[leadIndex]!;
+      return claimQueuedThreadMessagesInTransaction(tx, rows);
     },
     { behavior: "immediate" },
   );
