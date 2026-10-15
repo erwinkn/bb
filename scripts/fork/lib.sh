@@ -68,7 +68,9 @@ require_safe_pnpm() {
     "$(cd "$REPO" && pwd -P)/"*) die "HOME ($HOME) is inside the checkout. pnpm would install pnpm@$wanted under it and, before $PNPM_SAFE_SWITCH_VERSION, recurse without end (pnpm/pnpm#11337). Use your real HOME." ;;
   esac
   bin=$(command -v pnpm) || die "pnpm is not on PATH"
-  manifest="$(dirname "$(readlink -f "$bin")")/../package.json"
+  # A JS pnpm keeps package.json one level above bin/pnpm; the native binary sits beside it.
+  manifest="$(dirname "$(readlink -f "$bin")")/package.json"
+  [ -f "$manifest" ] || manifest="$(dirname "$(readlink -f "$bin")")/../package.json"
   version=$(node -p "require('$manifest').version" 2>/dev/null) \
     || die "cannot read the version of $bin without running it; expected $manifest"
   [ "$version" = "$wanted" ] && return 0
