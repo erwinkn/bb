@@ -19,7 +19,7 @@ function resolveThreadOpenCacheMaxThreads(): number {
     : THREAD_OPEN_CACHE_MAX_THREADS;
 }
 
-function isThreadOpenCacheActive(
+export function isThreadOpenCacheActive(
   queryClient: QueryClient,
   threadId: string,
 ): boolean {
@@ -62,7 +62,7 @@ function evictThreadOpenCache(
 export function touchThreadOpenCache(
   queryClient: QueryClient,
   threadId: string,
-): void {
+): boolean {
   let touched = threadOpenCacheTouchesByClient.get(queryClient);
   if (touched === undefined) {
     touched = new Set();
@@ -71,6 +71,35 @@ export function touchThreadOpenCache(
   touched.delete(threadId);
   touched.add(threadId);
   evictThreadOpenCache(queryClient, touched);
+  return touched.has(threadId);
+}
+
+export function listRecentThreadOpenCacheIds(
+  queryClient: QueryClient,
+  limit: number,
+): string[] {
+  const touched = threadOpenCacheTouchesByClient.get(queryClient);
+  return touched === undefined ? [] : [...touched].slice(-limit);
+}
+
+export function invalidatePrefetchedThreadTimeline(
+  queryClient: QueryClient,
+  threadId: string,
+): Promise<void> {
+  return queryClient.invalidateQueries(
+    { queryKey: threadTimelineQueryKey(threadId), exact: true },
+    { cancelRefetch: false },
+  );
+}
+
+export function invalidatePrefetchedThreadDetail(
+  queryClient: QueryClient,
+  threadId: string,
+): Promise<void> {
+  return queryClient.invalidateQueries(
+    { queryKey: threadDetailBootstrapQueryKey(threadId), exact: true },
+    { cancelRefetch: false },
+  );
 }
 
 export function forgetThreadOpenCache(

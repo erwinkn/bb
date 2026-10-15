@@ -2115,6 +2115,10 @@ export function renderSlot<
         ...(openOptions ? { options: { ...openOptions } } : {}),
       });
     },
+    experimental_prefetch(threadId) {
+      sidebarActionCalls.push({ method: "experimental_prefetch", threadId });
+      return () => {};
+    },
     openNewThread(newThreadOptions) {
       sidebarActionCalls.push({
         method: "openNewThread",

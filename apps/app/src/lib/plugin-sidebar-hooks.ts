@@ -42,6 +42,7 @@ import {
 } from "@/hooks/queries/environment-queries";
 import { useHosts } from "@/hooks/queries/host-queries";
 import { useArchivedThreads } from "@/hooks/queries/thread-queries";
+import { useThreadHoverPrefetch } from "@/hooks/queries/thread-prefetch";
 import { useSidebarNavigation } from "@/hooks/queries/sidebar-navigation-query";
 import {
   archivedThreadsListQueryKey,
@@ -305,6 +306,7 @@ export function useSidebarThreadEntry(
 
 export function useSidebarThreadActions(): PluginSidebarThreadActions {
   const navigate = useRouteNavigate();
+  const prefetchThread = useThreadHoverPrefetch();
   const store = useStore();
   const isCompact = useIsCompactViewport();
   const setRootComposeProjectId = useSetRootComposeProjectId();
@@ -344,6 +346,10 @@ export function useSidebarThreadActions(): PluginSidebarThreadActions {
         }
         store.set(getThreadConversationCollapsedAtom(threadId), false);
         navigate(getThreadRoutePath({ projectId, threadId }));
+      },
+      experimental_prefetch(threadId) {
+        if (!entriesById.has(threadId)) return () => {};
+        return prefetchThread(threadId);
       },
       openNewThread(options) {
         const projectId = options?.projectId;
@@ -406,6 +412,7 @@ export function useSidebarThreadActions(): PluginSidebarThreadActions {
       isCompact,
       navigate,
       pinThreadAsync,
+      prefetchThread,
       requireEntry,
       setRootComposeProjectId,
       store,

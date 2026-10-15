@@ -1386,6 +1386,16 @@ export interface PluginSidebarThreadActions {
    */
   open(threadId: string, options?: { split?: boolean }): void;
   /**
+   * Warm a thread so opening it renders its latest messages at once. Call it
+   * when the pointer enters a row or the row takes focus, and call the
+   * returned function when the pointer leaves or focus moves on. bb waits a
+   * short hover-intent delay before fetching, so a pointer sweeping across
+   * the list fetches nothing, and it skips threads that are already open or
+   * fresh. Unknown thread ids are ignored. Experimental: see
+   * docs/api_to_audit.md.
+   */
+  experimental_prefetch(threadId: string): () => void;
+  /**
    * Go to the new-thread screen. Passing `projectId` also makes that project
    * the composer's selection, so the thread is created where you asked.
    * `sectionId` files the new thread under that section, and

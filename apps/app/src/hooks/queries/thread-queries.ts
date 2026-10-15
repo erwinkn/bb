@@ -110,6 +110,8 @@ import {
 import { systemConfigQueryOptions } from "./system-queries";
 import { markStreamTrace } from "@/lib/stream-trace";
 import {
+  invalidatePrefetchedThreadDetail,
+  invalidatePrefetchedThreadTimeline,
   THREAD_OPEN_CACHE_GC_MS,
   touchThreadOpenCache,
 } from "../cache-owners/thread-open-cache-owner";
@@ -122,7 +124,7 @@ interface QueryOptions {
 
 export const THREAD_LIST_STALE_TIME_MS = 10_000;
 const THREAD_SEARCH_STALE_TIME_MS = 10_000;
-const THREAD_DETAIL_STALE_TIME_MS = 5_000;
+export const THREAD_DETAIL_STALE_TIME_MS = 5_000;
 const THREAD_MENTION_CANDIDATE_LIMIT = 200;
 const THREAD_SEARCH_DEBOUNCE_MS = 150;
 export const THREAD_SEARCH_LIMIT_PER_GROUP = 20;
@@ -817,6 +819,51 @@ export function useThreadDetailBootstrap(
   const enabled = (options?.enabled ?? true) && Boolean(id);
   useThreadDetailRealtimeSubscription(id, { enabled });
   return useQuery(threadDetailBootstrapQueryOptions(queryClient, id, options));
+}
+
+interface PrefetchThreadOpenArgs {
+  queryClient: QueryClient;
+  threadId: string;
+  timelineStaleTime: number;
+}
+
+async function prefetchThreadTimeline({
+  queryClient,
+  threadId,
+  timelineStaleTime,
+}: PrefetchThreadOpenArgs): Promise<void> {
+  const updatedAt =
+    queryClient.getQueryState(threadTimelineQueryKey(threadId))
+      ?.dataUpdatedAt ?? 0;
+  if (Date.now() - updatedAt < timelineStaleTime) {
+    return;
+  }
+  await queryClient.prefetchQuery({
+    ...threadTimelineQueryOptions(queryClient, threadId),
+    staleTime: 0,
+  });
+  await invalidatePrefetchedThreadTimeline(queryClient, threadId);
+}
+
+async function prefetchThreadDetailBootstrap(
+  queryClient: QueryClient,
+  threadId: string,
+): Promise<void> {
+  const options = threadDetailBootstrapQueryOptions(queryClient, threadId);
+  if (queryClient.getQueryData(options.queryKey) !== undefined) {
+    return;
+  }
+  await queryClient.prefetchQuery(options);
+  await invalidatePrefetchedThreadDetail(queryClient, threadId);
+}
+
+export async function prefetchThreadOpen(
+  args: PrefetchThreadOpenArgs,
+): Promise<void> {
+  await Promise.all([
+    prefetchThreadDetailBootstrap(args.queryClient, args.threadId),
+    prefetchThreadTimeline(args),
+  ]);
 }
 
 export function threadQueuedMessagesQueryOptions(

@@ -2126,6 +2126,13 @@ doc covers three September 2026 additions:
 - `openNewThread({ hostId })`, unprefixed by request, preselects a machine for
   a new environment. `environmentId` takes priority.
 
+Fork addition (Oct 2026): `PluginSidebarThreadActions.experimental_prefetch`
+schedules a fetch of a thread's detail and latest timeline page after a 150 ms
+hover-intent delay and returns a cancel function. Call it on pointer enter or
+focus and cancel on leave or blur. It skips open threads, keeps a timeline
+fetched in the last 5 s, and shares the thread view's cache and its
+open-thread LRU. It lives on the `@internal` action hook, so it goes with it.
+
 Docs: `frontend-registration.md`.
 
 **Audit before stabilizing.**
