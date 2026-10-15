@@ -241,6 +241,8 @@ function collectLeadGroupIds(
     const nextQueuedMessage = queuedMessages[index + 1];
     if (
       !nextQueuedMessage ||
+      queuedMessage.payloadKind === "retry" ||
+      nextQueuedMessage.payloadKind === "retry" ||
       !queuedMessageGroupingEnvelopeMatches(
         firstQueuedMessage,
         nextQueuedMessage,
@@ -610,7 +612,8 @@ function applyQueuedThreadMessageGroupBoundary(
     const groupedMessages = queuedMessages.slice(0, boundaryIndex + 1);
     const hasMixedSender = groupedMessages.some(
       (queuedMessage) =>
-        queuedMessage.senderThreadId !== firstQueuedMessage?.senderThreadId,
+        queuedMessage.senderThreadId !== firstQueuedMessage?.senderThreadId ||
+        queuedMessage.payloadKind === "retry",
     );
     if (hasMixedSender) {
       return { kind: "invalid_sender" };

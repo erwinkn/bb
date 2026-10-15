@@ -173,7 +173,8 @@ export function createAutomaticQueuedMessageGroupEligibility(
           return (
             args.thread.status === "idle" ||
             args.thread.status === "pending" ||
-            settledError
+            settledError ||
+            (args.thread.status === "error" && member.payloadKind === "retry")
           );
         case "turn-starting":
           return (
@@ -345,7 +346,7 @@ function sendQueuedMessagePayload(
 ): SendMessageRequest {
   return {
     input: queuedMessage.content,
-    mode,
+    mode: queuedMessage.payload.kind === "retry" ? "queue-if-active" : mode,
     model: queuedMessage.model,
     permissionMode: queuedMessage.permissionMode,
     reasoningLevel: queuedMessage.reasoningLevel,
@@ -488,6 +489,9 @@ async function sendClaimedQueuedMessageForIdleProviderThread(
   // known drainable, so every core wait it could hit has been answered by the
   // claim query itself.
   if (hasMessageDispatchHooks()) {
+    return null;
+  }
+  if (args.queuedMessages[0]!.payloadKind === "retry") {
     return null;
   }
 

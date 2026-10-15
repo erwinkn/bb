@@ -77,6 +77,7 @@ import {
   applyLoggedThreadLifecycleEventInTransaction,
 } from "./lifecycle-outcome.js";
 import { buildThreadStatusChangeMetadata } from "./thread-runtime-display.js";
+import { queueRetryBehindCompetingTurn } from "./competing-turn-retry.js";
 import {
   addRequestIdToTurnSubmitCommandPayload,
   buildThreadStartCommand,
@@ -845,6 +846,12 @@ function settleThreadCommandFailure(
       args.report.errorCode === COMPETING_TURN_ERROR_CODE &&
       getActiveTurnId(args.deps, thread.id) !== null
     ) {
+      if (args.command.target.mode === "start") {
+        queueRetryBehindCompetingTurn(args.deps, {
+          thread,
+          requestId: args.command.requestId,
+        });
+      }
       return emptyCommandResultSideEffects();
     }
   }
