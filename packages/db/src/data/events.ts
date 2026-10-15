@@ -1673,10 +1673,8 @@ export function listStoredDelegatingItemRowsByItemIds(
   }
 
   return db
-    .select(
-      storedEventRowFieldsWithInlineOutputLimit(args.maxInlineOutputChars),
-    )
-    .from(events)
+    .select(storedEventRowSqlFields(args.maxInlineOutputChars))
+    .from(sql`${events} INDEXED BY events_delegating_item_lookup_idx`)
     .where(
       and(
         eq(events.threadId, args.threadId),
@@ -2218,45 +2216,55 @@ export function listLatestBackgroundTaskStateRowsByItemIds(
   db: DbConnection,
   args: ListLatestBackgroundTaskStateRowsByItemIdsArgs,
 ): StoredEventRow[] {
-  if (args.itemIds.length === 0) {
-    return [];
-  }
+  const beforeSequence =
+    args.beforeSequence === undefined
+      ? sql``
+      : sql`AND sequence < ${args.beforeSequence}`;
 
-  const stateTypes = [
-    "item/backgroundTask/progress",
-    "item/backgroundTask/completed",
-    "item/delegation/progress",
-    "item/delegation/completed",
-  ] satisfies ThreadEventType[];
-  const latest = alias(events, "latest_background_task_state");
-
-  return db
-    .select(storedEventRowFields)
-    .from(events)
-    .where(
-      and(
-        eq(events.threadId, args.threadId),
-        inArray(
-          events.sequence,
-          db
-            .select({ sequence: max(latest.sequence) })
-            .from(latest)
-            .where(
-              and(
-                eq(latest.threadId, args.threadId),
-                args.beforeSequence === undefined
-                  ? undefined
-                  : lt(latest.sequence, args.beforeSequence),
-                inArray(latest.itemId, [...args.itemIds]),
-                inArray(latest.type, stateTypes),
-              ),
-            )
-            .groupBy(latest.itemId),
-        ),
-      ),
-    )
-    .orderBy(events.sequence)
-    .all();
+  return queryInSqliteVariableBatches({
+    values: args.itemIds,
+    variableCountPerValue: 2,
+    dedupeKey: (itemId) => itemId,
+    fixedVariableCount: 5,
+    queryBatch: (batch) => {
+      const itemIds = sql.join(
+        batch.map((itemId) => sql`${itemId}`),
+        sql`, `,
+      );
+      return db
+        .select(storedEventRowFields)
+        .from(events)
+        .where(
+          and(
+            eq(events.threadId, args.threadId),
+            inArray(
+              events.sequence,
+              sql`(
+                SELECT max(sequence) FROM (
+                  SELECT item_id, sequence
+                  FROM events INDEXED BY events_background_task_thread_type_item_sequence_idx
+                  WHERE thread_id = ${args.threadId}
+                    AND item_kind = 'backgroundTask'
+                    AND type IN ('item/backgroundTask/progress', 'item/backgroundTask/completed')
+                    AND item_id IN (${itemIds})
+                    ${beforeSequence}
+                  UNION ALL
+                  SELECT item_id, sequence
+                  FROM events INDEXED BY events_delegating_item_lookup_idx
+                  WHERE thread_id = ${args.threadId}
+                    AND item_kind IN ('toolCall', 'delegation')
+                    AND type IN ('item/delegation/progress', 'item/delegation/completed')
+                    AND item_id IN (${itemIds})
+                    ${beforeSequence}
+                )
+                GROUP BY item_id
+              )`,
+            ),
+          ),
+        )
+        .all();
+    },
+  }).sort((left, right) => left.sequence - right.sequence);
 }
 
 export function listLatestOpenBackgroundTaskStateRowsForThread(
@@ -2288,6 +2296,7 @@ export function listLatestOpenBackgroundTaskStateRowsForThread(
     .where(
       and(
         eq(completed.threadId, args.threadId),
+        sql`${completed.itemKind} = 'backgroundTask'`,
         eq(completed.type, completedType),
         isNotNull(completed.itemId),
       ),
@@ -3076,18 +3085,22 @@ export function getFirstParentedTimelineBoundarySequence(
   args: { threadId: string; sequenceStart: number; maxSeq: number },
 ): number | null {
   const result = db.get<{ sequence: number | null }>(sql`
-    WITH nested_history AS MATERIALIZED (
-      SELECT 1
+    WITH parent_ends AS MATERIALIZED (
+      SELECT parent_tool_call_id AS item_id, max(sequence) AS end
       FROM events INDEXED BY events_parent_tool_call_thread_parent_sequence_idx
-      WHERE thread_id = ${args.threadId} AND parent_tool_call_id IS NOT NULL
-      LIMIT 1
-    ), parents AS MATERIALIZED (
-      SELECT item_id, turn_id, min(sequence) AS start
-      FROM nested_history CROSS JOIN events INDEXED BY events_delegating_item_lookup_idx
       WHERE thread_id = ${args.threadId}
-        AND item_kind IN ('toolCall', 'delegation')
-        AND parent_tool_call_id IS NULL
-        AND sequence >= ${args.sequenceStart} AND sequence <= ${args.maxSeq}
+        AND parent_tool_call_id IS NOT NULL
+        AND sequence <= ${args.maxSeq}
+      GROUP BY parent_tool_call_id
+    ), spans AS MATERIALIZED (
+      SELECT min(events.sequence) AS start, parent_ends.end AS end
+      FROM parent_ends CROSS JOIN events INDEXED BY events_delegating_item_lookup_idx
+      WHERE events.thread_id = ${args.threadId}
+        AND events.item_id = parent_ends.item_id
+        AND events.item_kind IN ('toolCall', 'delegation')
+        AND events.parent_tool_call_id IS NULL
+        AND events.sequence >= ${args.sequenceStart}
+        AND events.sequence <= ${args.maxSeq}
         AND EXISTS (
           SELECT 1 FROM events AS root_start INDEXED BY events_thread_turn_type_item_sequence_idx
           WHERE root_start.thread_id = events.thread_id
@@ -3096,21 +3109,12 @@ export function getFirstParentedTimelineBoundarySequence(
             AND root_start.parent_tool_call_id IS NULL
             AND root_start.sequence <= ${args.maxSeq}
         )
-      GROUP BY item_id, turn_id
-    ), spans AS MATERIALIZED (
-      SELECT start, (
-        SELECT max(child.sequence)
-        FROM events AS child INDEXED BY events_parent_tool_call_thread_parent_sequence_idx
-        WHERE child.thread_id = ${args.threadId}
-          AND child.parent_tool_call_id IS NOT NULL
-          AND child.parent_tool_call_id = parents.item_id
-          AND child.sequence <= ${args.maxSeq}
-      ) AS end FROM parents
+      GROUP BY events.item_id, events.turn_id
     )
     SELECT min(${events.sequence}) AS sequence
-    FROM events INNER JOIN spans
-      ON ${events.sequence} > spans.start AND ${events.sequence} < spans.end
-    WHERE ${events.type} = 'client/turn/requested'
+    FROM spans CROSS JOIN events INDEXED BY events_thread_type_sequence_idx
+    WHERE ${events.sequence} > spans.start AND ${events.sequence} < spans.end
+      AND ${events.type} = 'client/turn/requested'
       AND ${events.threadId} = ${args.threadId}
       AND ${visibleTimelineRequestInputSql}
       AND (
