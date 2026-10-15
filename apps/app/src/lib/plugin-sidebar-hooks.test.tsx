@@ -64,6 +64,10 @@ const archiveQuery = vi.hoisted(() => ({
   fetchNextPage: vi.fn(async () => undefined),
 }));
 const archiveEnabled = vi.hoisted(() => vi.fn());
+vi.mock("@/hooks/queries/thread-prefetch", () => ({
+  useThreadHoverPrefetch: () => () => () => {},
+}));
+
 vi.mock("@/hooks/queries/thread-queries", () => ({
   useArchivedThreads: (_filters: object, options: { enabled: boolean }) => {
     archiveEnabled(options.enabled);

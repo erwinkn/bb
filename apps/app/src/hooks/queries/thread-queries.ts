@@ -92,6 +92,8 @@ import {
 import { ARCHIVED_THREADS_PAGE_SIZE } from "./archived-threads-page-size";
 import { ingestThreadDetailBootstrap } from "../cache-owners/thread-detail-cache-owner";
 import {
+  invalidatePrefetchedThreadDetail,
+  invalidatePrefetchedThreadTimeline,
   THREAD_OPEN_CACHE_GC_MS,
   touchThreadOpenCache,
 } from "../cache-owners/thread-open-cache-owner";
@@ -725,6 +727,80 @@ function liftThreadListPlaceholder(
   };
 }
 
+async function fetchThreadDetailBootstrap({
+  queryClient,
+  signal,
+  threadId,
+}: ThreadFetchArgs): Promise<ThreadWithIncludesResponse> {
+  const thread = await sdk.threads.get({
+    include: "environment,host",
+    threadId,
+    signal,
+  });
+  ingestThreadDetailBootstrap({
+    queryClient,
+    thread,
+  });
+  return thread;
+}
+
+interface PrefetchThreadOpenArgs {
+  queryClient: QueryClient;
+  threadId: string;
+  timelineStaleTime: number;
+}
+
+async function prefetchThreadTimeline({
+  queryClient,
+  threadId,
+  timelineStaleTime,
+}: PrefetchThreadOpenArgs): Promise<void> {
+  const queryKey = threadTimelineQueryKey(threadId);
+  const updatedAt = queryClient.getQueryState(queryKey)?.dataUpdatedAt ?? 0;
+  if (Date.now() - updatedAt < timelineStaleTime) {
+    return;
+  }
+  await queryClient.prefetchQuery({
+    queryKey,
+    queryFn: ({ signal }) =>
+      fetchThreadTimeline({ queryClient, signal, threadId }),
+    staleTime: 0,
+    gcTime: THREAD_OPEN_CACHE_GC_MS,
+    retry: shouldRetryTransientReadQuery,
+    retryDelay: TRANSIENT_READ_RETRY_DELAY_MS,
+  });
+  await invalidatePrefetchedThreadTimeline(queryClient, threadId);
+}
+
+async function prefetchThreadDetailBootstrap(
+  queryClient: QueryClient,
+  threadId: string,
+): Promise<void> {
+  const queryKey = threadDetailBootstrapQueryKey(threadId);
+  if (queryClient.getQueryData(queryKey) !== undefined) {
+    return;
+  }
+  await queryClient.prefetchQuery({
+    queryKey,
+    queryFn: ({ signal }) =>
+      fetchThreadDetailBootstrap({ queryClient, signal, threadId }),
+    staleTime: Infinity,
+    gcTime: THREAD_OPEN_CACHE_GC_MS,
+    retry: shouldRetryTransientReadQuery,
+    retryDelay: TRANSIENT_READ_RETRY_DELAY_MS,
+  });
+  await invalidatePrefetchedThreadDetail(queryClient, threadId);
+}
+
+export async function prefetchThreadOpen(
+  args: PrefetchThreadOpenArgs,
+): Promise<void> {
+  await Promise.all([
+    prefetchThreadDetailBootstrap(args.queryClient, args.threadId),
+    prefetchThreadTimeline(args),
+  ]);
+}
+
 export function useThreadDetailBootstrap(
   id: string,
   options?: ThreadDetailBootstrapQueryOptions,
@@ -751,16 +827,7 @@ export function useThreadDetailBootstrap(
         });
       }
 
-      const thread = await sdk.threads.get({
-        include: "environment,host",
-        threadId,
-        signal,
-      });
-      ingestThreadDetailBootstrap({
-        queryClient,
-        thread,
-      });
-      return thread;
+      return fetchThreadDetailBootstrap({ queryClient, signal, threadId });
     },
     enabled,
     staleTime: Infinity,
@@ -969,7 +1036,7 @@ async function mergeThreadTimelineDelta(
   return fetchFull();
 }
 
-interface FetchThreadTimelineArgs {
+interface ThreadFetchArgs {
   queryClient: QueryClient;
   signal: AbortSignal;
   threadId: string;
@@ -987,7 +1054,7 @@ async function fetchThreadTimeline({
   queryClient,
   signal,
   threadId,
-}: FetchThreadTimelineArgs): Promise<ThreadTimelineResponse> {
+}: ThreadFetchArgs): Promise<ThreadTimelineResponse> {
   const queryKey = threadTimelineQueryKey(threadId);
   const previous = queryClient.getQueryData<ThreadTimelineResponse>(queryKey);
   const segmentLimit = resolveThreadTimelineSegmentLimit();

@@ -2757,6 +2757,15 @@ audit the selection semantics and router-state transport as the API evolves.
 
 **Kept experimental (2026-08-22).** zero consumers; items 4 (a paged/windowed read at 10k threads) and 5 (the draft indicator gap) are unresolvable without one and both change the contract.
 
+**Row prefetch (Oct 2026).** `PluginSidebarThreadActions.experimental_prefetch`
+schedules a fetch of a thread's detail and latest timeline page after a
+150 ms hover-intent delay and returns a cancel function. Call it on pointer
+enter or focus and cancel on leave or blur. It skips open threads, keeps a
+timeline fetched in the last 5 s, and shares the thread view's cache and its
+open-thread LRU. Prefetched data is marked stale, so opening the thread renders
+it at once and then fetches what changed after the view subscribes. Audit touch and keyboard behavior, the delay, and whether a
+declarative row prop should replace the imperative call before stabilizing.
+
 **Archive selection (Sep 2026).** `experimental_useSidebarThreads` accepts
 `experimental_lifecycles` (active, archived, or both; active by default).
 `PluginSidebarThreadsState.experimental_archived` is null for active-only reads;

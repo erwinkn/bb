@@ -46,6 +46,7 @@ import {
   useThreadDetailBootstrap,
   useThreadPendingInteractions,
 } from "@/hooks/queries/thread-queries";
+import { useThreadActivityPrefetch } from "@/hooks/queries/thread-prefetch";
 import { useRouteState } from "@/hooks/useRouteState";
 import { getThreadDisplayTitle } from "@/lib/thread-title";
 import { cn } from "@bb/shared-ui/lib/utils";
@@ -525,6 +526,7 @@ export function AppLayout({ children }: AppLayoutProps) {
   const titleMentionResources = useSidebarThreadTitleMentionResources(
     sidebarNavigationQuery.data,
   );
+  useThreadActivityPrefetch(sidebarThreads);
   const threadDetailBootstrapQuery = useThreadDetailBootstrap(threadId ?? "", {
     enabled: isThreadView && Boolean(threadId),
     timelinePrefetch: isThreadView && Boolean(threadId),
