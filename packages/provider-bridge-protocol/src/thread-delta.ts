@@ -59,6 +59,7 @@ export const deltaBackgroundTaskShapeSchema = z.object({
   familyId: z.string().min(1),
   taskType: z.string(),
   description: z.string(),
+  command: z.string().optional(),
   status: threadEventItemStatusSchema,
   taskStatus: backgroundTaskStatusSchema,
   skipTranscript: z.boolean(),

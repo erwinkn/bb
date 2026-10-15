@@ -46,3 +46,6 @@ sendAt?, reason? })`.
 - Use `bb thread cancel-plan <id>` to exit an active Plan turn without
   optimistically clearing its banner. Use `bb thread clear-goal <id>` to clear
   a thread's durable active Goal when supported by its provider. Both wait for provider confirmation.
+- Use `bb thread tasks <id>` to list a thread's running background commands
+  and agents, and `bb thread stop-task <item-id> <id>` to stop one that hangs
+  (Claude Code threads). It waits until the task is settled.

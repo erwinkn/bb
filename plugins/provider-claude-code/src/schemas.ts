@@ -237,6 +237,7 @@ export const claudeTaskStartedMessageSchema = claudeSystemMessageSchema
     workflow_name: z.string().optional(),
     prompt: z.string().optional(),
     skip_transcript: z.boolean().optional(),
+    is_backgrounded: z.boolean().optional(),
   })
   .passthrough();
 
@@ -292,6 +293,14 @@ export const claudeTaskNotificationMessageSchema = claudeSystemMessageSchema
     skip_transcript: z.boolean().optional(),
   })
   .passthrough();
+
+export const claudeBackgroundTasksChangedMessageSchema =
+  claudeSystemMessageSchema
+    .extend({
+      subtype: z.literal("background_tasks_changed"),
+      tasks: z.array(z.object({ task_id: z.string() }).passthrough()),
+    })
+    .passthrough();
 
 export const claudeWorkflowAgentRecordSchema = z
   .object({

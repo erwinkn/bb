@@ -302,7 +302,15 @@ Messaging:
   bb thread clear [id]                     Clear model context for an idle or failed thread
   bb thread cancel-plan [id]               Exit the provider's active Plan mode
   bb thread clear-goal [id]                Clear the provider's active Goal
+  bb thread tasks [id]                     List running background commands and agents
+  bb thread stop-task <item-id> [id]       Stop one running background task
     --self                                 Target current thread
+
+  `thread tasks` prints each running background task's item id, start time,
+  description and command. `thread stop-task` asks the provider to stop that
+  task (Claude Code only; other providers answer 409) and waits until it is
+  settled. A task its provider no longer runs (its session ended or restarted)
+  is marked stopped without asking the provider.
 
   `thread compact` enqueues the same structured /compact turn used by the
   composer. Follow the thread timeline for the eventual compaction result.

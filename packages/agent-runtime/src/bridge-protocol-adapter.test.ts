@@ -540,6 +540,62 @@ function feedDeltas(
 }
 
 describe("provider-native id translation", () => {
+  it("names the provider item of the background task a Stop selects", () => {
+    const adapter = makeAdapter();
+    const events = feedDeltas(adapter, "t_1", [
+      { kind: "turn.open" },
+      {
+        kind: "item.open",
+        key: { providerItemId: "task:b1#2" },
+        item: {
+          type: "backgroundTask",
+          familyId: "b1",
+          taskType: "local_bash",
+          description: "sleep",
+          status: "pending",
+          taskStatus: "running",
+          skipTranscript: false,
+        },
+        presentation: {
+          label: { pending: "Running", completed: "Finished" },
+          icon: { glyph: "Terminal" },
+        },
+      },
+    ]);
+    const started = events.find((event) => event.type === "item/started");
+    const itemId =
+      started?.type === "item/started" ? started.item.id : "missing";
+    completeHandshake(adapter, { backgroundTaskStop: true });
+
+    expect(
+      adapter.buildCommandPlan({
+        type: "thread/backgroundTask/stop",
+        threadId: "t_1",
+        providerThreadId: "p_1",
+        itemId,
+        taskId: "b1",
+      }),
+    ).toEqual({
+      kind: "request",
+      method: "thread/backgroundTask/stop",
+      params: {
+        threadId: "t_1",
+        providerThreadId: "p_1",
+        taskId: "b1",
+        providerItemId: "task:b1#2",
+      },
+    });
+    expect(
+      adapter.buildCommandPlan({
+        type: "thread/backgroundTask/stop",
+        threadId: "t_1",
+        providerThreadId: "p_1",
+        itemId: "an-item-whose-mapping-was-trimmed",
+        taskId: "b1",
+      }),
+    ).toMatchObject({ kind: "noop" });
+  });
+
   it("reverse-maps steer/interrupt turn ids to provider-native ids", () => {
     const adapter = makeAdapter();
     const [started] = feedDeltas(adapter, "t_1", [

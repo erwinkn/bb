@@ -151,20 +151,159 @@ function BackgroundActivitySummary({
   );
 }
 
+type BackgroundTaskStopState =
+  | { kind: "stopping" }
+  | { kind: "failed"; message: string };
+
+function stopFailureMessage(error: unknown): string {
+  return error instanceof Error && error.message.length > 0
+    ? error.message
+    : "Request failed.";
+}
+
+function formatStartedAt(startedAt: number): string {
+  return new Date(startedAt).toLocaleString(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    second: "2-digit",
+  });
+}
+
+function BackgroundActivityRow({
+  row,
+  isCardExpanded,
+  isCompact,
+  stopState,
+  onStop,
+}: {
+  row: TimelineWorkflowWorkRow;
+  isCardExpanded: boolean;
+  isCompact: boolean;
+  stopState: BackgroundTaskStopState | undefined;
+  onStop: (() => void) | undefined;
+}) {
+  const [isDetailsOpen, setIsDetailsOpen] = useState(false);
+  const display = backgroundActivityDisplay(row);
+  const model = backgroundActivityModel(row);
+  const detailsId = `${BODY_ID}-${row.id}-details`;
+  return (
+    <li className="flex min-w-0 flex-col">
+      <div
+        className={cn(
+          "flex min-w-0 gap-1.5 px-3 py-0.5 text-xs",
+          isCompact ? "items-start" : "items-center",
+        )}
+      >
+        <button
+          type="button"
+          aria-expanded={isDetailsOpen}
+          aria-controls={detailsId}
+          aria-label={backgroundActivityAriaLabel(row)}
+          onClick={() => setIsDetailsOpen((value) => !value)}
+          className={cn(
+            "flex min-w-0 flex-1 cursor-pointer gap-1.5 rounded-sm text-left hover:text-foreground",
+            isCompact ? "items-start" : "items-center",
+          )}
+        >
+          <Icon
+            name={display.icon}
+            className="size-3.5 shrink-0 text-muted-foreground/60"
+            aria-hidden="true"
+          />
+          <span
+            className={cn(
+              "min-w-0 flex-1 text-muted-foreground",
+              isCompact
+                ? "whitespace-normal [overflow-wrap:anywhere]"
+                : "truncate",
+            )}
+            title={row.description}
+          >
+            {row.description}
+          </span>
+          {model ? (
+            <span
+              className="shrink-0 whitespace-nowrap font-mono text-2xs text-subtle-foreground"
+              title={`Model: ${model}`}
+            >
+              {model}
+            </span>
+          ) : null}
+          <span className="shrink-0 whitespace-nowrap tabular-nums text-subtle-foreground">
+            {isCardExpanded ? (
+              <LiveDurationText startedAt={row.startedAt} />
+            ) : null}
+          </span>
+        </button>
+        {onStop ? (
+          <button
+            type="button"
+            onClick={onStop}
+            disabled={stopState?.kind === "stopping"}
+            aria-label={`Stop ${display.label.toLowerCase()}: ${row.description}`}
+            className="flex shrink-0 cursor-pointer items-center gap-1 rounded-sm px-1 text-2xs text-muted-foreground transition-colors hover:text-foreground disabled:cursor-wait disabled:text-muted-foreground/60"
+          >
+            <Icon
+              name={stopState?.kind === "stopping" ? "Loading" : "Square"}
+              className={cn(
+                "size-3",
+                stopState?.kind === "stopping" && "animate-spin",
+              )}
+              aria-hidden="true"
+            />
+            {stopState?.kind === "stopping" ? "Stopping…" : "Stop"}
+          </button>
+        ) : null}
+      </div>
+      {stopState?.kind === "failed" ? (
+        <p role="alert" className="px-3 pl-8 text-2xs text-destructive">
+          Could not stop: {stopState.message}
+        </p>
+      ) : null}
+      {isDetailsOpen ? (
+        <div
+          id={detailsId}
+          className="mx-3 mb-1 ml-8 flex min-w-0 flex-col gap-1 text-2xs text-muted-foreground"
+        >
+          {row.command ? (
+            <pre className="max-h-40 overflow-auto whitespace-pre-wrap rounded-sm bg-muted/60 px-2 py-1 font-mono text-2xs text-foreground [overflow-wrap:anywhere]">
+              {row.command}
+            </pre>
+          ) : (
+            <p className="whitespace-pre-wrap text-foreground/90 [overflow-wrap:anywhere]">
+              {row.description}
+            </p>
+          )}
+          <span className="tabular-nums">
+            Started {formatStartedAt(row.startedAt)}
+          </span>
+        </div>
+      ) : null}
+    </li>
+  );
+}
+
 interface ThreadBackgroundCommandsCardProps {
   commands: TimelineWorkflowWorkRow[];
   isExpanded: boolean;
   onToggle: () => void;
+  onStop?: ((row: TimelineWorkflowWorkRow) => Promise<void>) | undefined;
 }
 
 export function ThreadBackgroundCommandsCard({
   commands,
   isExpanded,
   onToggle,
+  onStop,
 }: ThreadBackgroundCommandsCardProps) {
   const isCompactViewport = useIsCompactViewport();
   const cardRef = useRef<HTMLElement>(null!);
   const [isCompactCard, setIsCompactCard] = useState<boolean | null>(null);
+  const [stopStates, setStopStates] = useState<
+    ReadonlyMap<string, BackgroundTaskStopState>
+  >(() => new Map());
   useResizeObserver({
     ref: cardRef,
     box: "border-box",
@@ -183,11 +322,26 @@ export function ThreadBackgroundCommandsCard({
   const others = commands.slice(1);
   const hasMore = others.length > 0;
   const useCompactSummary = isCompactCard ?? isCompactViewport;
-  const canExpand = hasMore || useCompactSummary;
-  const expandedRows = useCompactSummary ? commands : others;
+  const showsGroupSummary = useCompactSummary || isExpanded;
   const compactLabel = compactBackgroundActivityLabel(commands);
   const primaryDisplay = backgroundActivityDisplay(primary);
   const groupLabel = backgroundActivityGroupLabel(commands);
+  const setStopState = (
+    itemId: string,
+    state: BackgroundTaskStopState,
+  ): void => {
+    setStopStates((previous) => new Map(previous).set(itemId, state));
+  };
+  const stopRow = (row: TimelineWorkflowWorkRow): void => {
+    if (!onStop) return;
+    setStopState(row.itemId, { kind: "stopping" });
+    onStop(row).catch((error: unknown) => {
+      setStopState(row.itemId, {
+        kind: "failed",
+        message: stopFailureMessage(error),
+      });
+    });
+  };
 
   return (
     <PromptStackCard
@@ -197,116 +351,71 @@ export function ThreadBackgroundCommandsCard({
       style={{ minHeight: PROMPT_STACK_CARD_ROW_HEIGHT }}
     >
       <div className="flex items-center">
-        {canExpand ? (
-          <button
-            type="button"
-            id={TOGGLE_ID}
-            aria-expanded={isExpanded}
-            aria-controls={BODY_ID}
-            aria-label={
-              useCompactSummary
-                ? compactLabel
-                : backgroundActivityAriaLabel(primary, groupLabel)
-            }
-            onClick={onToggle}
-            className={activityRowClass(
-              "active",
-              PROMPT_STACK_CARD_HEADER_BUTTON_CLASS,
-            )}
-          >
-            <Icon
-              name={primaryDisplay.icon}
-              className={activityIconClass("active", "size-3.5 shrink-0")}
-              aria-hidden="true"
-            />
-            {useCompactSummary ? (
-              <span className="min-w-0 flex-1 truncate text-left font-medium">
-                {compactLabel}
-              </span>
-            ) : (
-              <>
-                <BackgroundActivitySummary row={primary} showDuration={false} />
+        <button
+          type="button"
+          id={TOGGLE_ID}
+          aria-expanded={isExpanded}
+          aria-controls={BODY_ID}
+          aria-label={
+            showsGroupSummary
+              ? compactLabel
+              : hasMore
+                ? backgroundActivityAriaLabel(primary, groupLabel)
+                : backgroundActivityAriaLabel(primary)
+          }
+          onClick={onToggle}
+          className={activityRowClass(
+            "active",
+            PROMPT_STACK_CARD_HEADER_BUTTON_CLASS,
+          )}
+        >
+          <Icon
+            name={primaryDisplay.icon}
+            className={activityIconClass("active", "size-3.5 shrink-0")}
+            aria-hidden="true"
+          />
+          {showsGroupSummary ? (
+            <span className="min-w-0 flex-1 truncate text-left font-medium">
+              {compactLabel}
+            </span>
+          ) : (
+            <>
+              <BackgroundActivitySummary
+                row={primary}
+                showDuration={!hasMore}
+              />
+              {hasMore ? (
                 <span className={activityMetaClass("active", "shrink-0")}>
                   +{others.length} more
                 </span>
-              </>
-            )}
-            <PromptStackCardChevron
-              isExpanded={isExpanded}
-              className={activityIconClass("active")}
-            />
-          </button>
-        ) : (
-          <div
-            className={activityRowClass(
-              "active",
-              "flex min-h-8 w-full min-w-0 cursor-default items-center gap-1.5 rounded-none px-3 py-1.5 text-xs text-foreground",
-            )}
-            aria-label={backgroundActivityAriaLabel(primary)}
-          >
-            <Icon
-              name={primaryDisplay.icon}
-              className={activityIconClass("active", "size-3.5 shrink-0")}
-              aria-hidden="true"
-            />
-            <BackgroundActivitySummary row={primary} showDuration />
-          </div>
-        )}
+              ) : null}
+            </>
+          )}
+          <PromptStackCardChevron
+            isExpanded={isExpanded}
+            className={activityIconClass("active")}
+          />
+        </button>
       </div>
-      {canExpand ? (
-        <AnimatedBody
-          id={BODY_ID}
-          labelledBy={TOGGLE_ID}
-          isExpanded={isExpanded}
-          collapsedBorder="none"
-        >
-          <div className="flex flex-col gap-0.5 py-1">
-            {expandedRows.map((row) => {
-              const display = backgroundActivityDisplay(row);
-              const model = backgroundActivityModel(row);
-              return (
-                <div
-                  key={row.id}
-                  className={cn(
-                    "flex min-w-0 gap-1.5 px-3 py-0.5 text-xs",
-                    useCompactSummary ? "items-start" : "items-center",
-                  )}
-                >
-                  <Icon
-                    name={display.icon}
-                    className="size-3.5 shrink-0 text-muted-foreground/60"
-                    aria-hidden="true"
-                  />
-                  <span
-                    className={cn(
-                      "min-w-0 flex-1 text-muted-foreground",
-                      useCompactSummary
-                        ? "whitespace-normal [overflow-wrap:anywhere]"
-                        : "truncate",
-                    )}
-                    title={row.description}
-                  >
-                    {row.description}
-                  </span>
-                  {model ? (
-                    <span
-                      className="shrink-0 whitespace-nowrap font-mono text-2xs text-subtle-foreground"
-                      title={`Model: ${model}`}
-                    >
-                      {model}
-                    </span>
-                  ) : null}
-                  <span className="shrink-0 whitespace-nowrap tabular-nums text-subtle-foreground">
-                    {isExpanded ? (
-                      <LiveDurationText startedAt={row.startedAt} />
-                    ) : null}
-                  </span>
-                </div>
-              );
-            })}
-          </div>
-        </AnimatedBody>
-      ) : null}
+      <AnimatedBody
+        id={BODY_ID}
+        labelledBy={TOGGLE_ID}
+        isExpanded={isExpanded}
+        collapsedBorder="none"
+      >
+        <ul className="flex flex-col gap-0.5 py-1">
+          {commands.map((row) => (
+            <BackgroundActivityRow
+              key={row.id}
+              row={row}
+              isCardExpanded={isExpanded}
+              isCompact={useCompactSummary}
+              stopState={stopStates.get(row.itemId)}
+              onStop={onStop ? () => stopRow(row) : undefined}
+            />
+          ))}
+        </ul>
+      </AnimatedBody>
     </PromptStackCard>
   );
 }

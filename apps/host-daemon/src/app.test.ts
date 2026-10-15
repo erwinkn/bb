@@ -275,6 +275,9 @@ function createFakeRuntime(): AgentRuntime {
     async clearThreadGoal() {
       return { cleared: true };
     },
+    async stopBackgroundTask() {
+      return { stopped: false };
+    },
     async renameThread() {},
     async archiveThread() {},
     async unarchiveThread() {},

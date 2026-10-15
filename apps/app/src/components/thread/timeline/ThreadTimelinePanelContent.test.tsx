@@ -84,6 +84,7 @@ function workflowRow(): TimelineWorkflowWorkRow {
     workflowName: "fixture-mini",
     description: "fixture workflow",
     model: null,
+    command: null,
     taskStatus: "running",
     workflow: null,
     usage: null,

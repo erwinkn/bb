@@ -550,6 +550,7 @@ export function createDeltaAssembler(
         ...(shape.outputFile === undefined
           ? {}
           : { outputFile: shape.outputFile }),
+        ...(shape.command === undefined ? {} : { command: shape.command }),
       },
       parentToolCallId,
     );

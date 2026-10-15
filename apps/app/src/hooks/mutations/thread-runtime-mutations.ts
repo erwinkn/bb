@@ -545,6 +545,18 @@ export function useCancelThreadPlan() {
   });
 }
 
+export function useStopThreadBackgroundTask() {
+  return useMutation({
+    meta: {
+      errorMessage: "Failed to stop the background task.",
+      showErrorToast: false,
+    },
+    mutationFn: async (args: { threadId: string; itemId: string }) => {
+      await sdk.threads.stopBackgroundTask(args);
+    },
+  });
+}
+
 export function useClearThreadGoal() {
   const queryClient = useQueryClient();
 

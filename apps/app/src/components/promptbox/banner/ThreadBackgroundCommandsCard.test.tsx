@@ -116,7 +116,11 @@ describe("ThreadBackgroundCommandsCard", () => {
     );
 
     const card = screen.getByRole("region", { name: "Background commands" });
-    expect(screen.queryByRole("button")).toBeNull();
+    expect(
+      screen.getByRole("button", {
+        name: `Background command: ${description}`,
+      }),
+    ).not.toBeNull();
 
     reportCardWidth(card, 320);
 
@@ -193,6 +197,156 @@ describe("ThreadBackgroundCommandsCard", () => {
     expect(item.textContent).toContain("Running background agent:");
     expect(item.textContent).toContain(description);
     expect(screen.getByTitle("Model: haiku").textContent).toBe("haiku");
-    expect(screen.queryByRole("button")).toBeNull();
+    expect(item.getAttribute("aria-expanded")).toBe("false");
+  });
+
+  it("shows a command's full text and start time when its row is opened", () => {
+    const startedAt = new Date(2026, 9, 14, 18, 2, 15).getTime();
+    render(
+      <CompactViewportOverrideProvider isCompactViewport={false}>
+        <ThreadBackgroundCommandsCard
+          commands={[
+            backgroundCommandRow({
+              description: "Collect unused slots",
+              command: "pnpm -s slot gc 2>&1 | tail -60",
+              startedAt,
+              status: "pending",
+              taskStatus: "running",
+            }),
+          ]}
+          isExpanded
+          onToggle={() => {}}
+        />
+      </CompactViewportOverrideProvider>,
+    );
+
+    const row = screen.getByRole("button", {
+      name: "Background command: Collect unused slots",
+    });
+    expect(screen.queryByText("pnpm -s slot gc 2>&1 | tail -60")).toBeNull();
+
+    fireEvent.click(row);
+
+    expect(row.getAttribute("aria-expanded")).toBe("true");
+    expect(screen.getByText("pnpm -s slot gc 2>&1 | tail -60").tagName).toBe(
+      "PRE",
+    );
+    expect(screen.getByText(/^Started /).textContent).toContain(
+      new Date(startedAt).toLocaleTimeString(undefined, {
+        hour: "numeric",
+        minute: "2-digit",
+        second: "2-digit",
+      }),
+    );
+  });
+
+  it("takes a collapsed card's rows and Stop buttons out of keyboard reach", () => {
+    function Card() {
+      const [isExpanded, setIsExpanded] = useState(true);
+      return (
+        <CompactViewportOverrideProvider isCompactViewport={false}>
+          <ThreadBackgroundCommandsCard
+            commands={[
+              backgroundCommandRow({
+                description: "Collect unused slots",
+                status: "pending",
+                taskStatus: "running",
+              }),
+            ]}
+            isExpanded={isExpanded}
+            onToggle={() => setIsExpanded((value) => !value)}
+            onStop={() => Promise.resolve()}
+          />
+        </CompactViewportOverrideProvider>
+      );
+    }
+    render(<Card />);
+    const stop = screen.getByRole("button", {
+      name: "Stop background command: Collect unused slots",
+    });
+    expect(stop.closest("[inert]")).toBeNull();
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Running 1 background command" }),
+    );
+
+    expect(stop.closest("[inert]")).not.toBeNull();
+  });
+
+  it("has no Stop button when the provider cannot stop background tasks", () => {
+    render(
+      <CompactViewportOverrideProvider isCompactViewport={false}>
+        <ThreadBackgroundCommandsCard
+          commands={[
+            backgroundCommandRow({ status: "pending", taskStatus: "running" }),
+          ]}
+          isExpanded
+          onToggle={() => {}}
+        />
+      </CompactViewportOverrideProvider>,
+    );
+
+    expect(screen.queryByRole("button", { name: /^Stop / })).toBeNull();
+  });
+
+  it("stops a row, showing it as stopping until the task settles", async () => {
+    const onStop = vi.fn(() => new Promise<void>(() => {}));
+    const row = backgroundCommandRow({
+      description: "Collect unused slots",
+      status: "pending",
+      taskStatus: "running",
+    });
+    render(
+      <CompactViewportOverrideProvider isCompactViewport={false}>
+        <ThreadBackgroundCommandsCard
+          commands={[row]}
+          isExpanded
+          onToggle={() => {}}
+          onStop={onStop}
+        />
+      </CompactViewportOverrideProvider>,
+    );
+
+    const stop = screen.getByRole("button", {
+      name: "Stop background command: Collect unused slots",
+    });
+    fireEvent.click(stop);
+
+    expect(onStop).toHaveBeenCalledWith(row);
+    expect(stop.textContent).toBe("Stopping…");
+    expect(stop.hasAttribute("disabled")).toBe(true);
+  });
+
+  it("shows why a stop failed and lets the user try again", async () => {
+    const onStop = vi
+      .fn<() => Promise<void>>()
+      .mockRejectedValueOnce(new Error("Host is offline"));
+    render(
+      <CompactViewportOverrideProvider isCompactViewport={false}>
+        <ThreadBackgroundCommandsCard
+          commands={[
+            backgroundCommandRow({
+              description: "Collect unused slots",
+              status: "pending",
+              taskStatus: "running",
+            }),
+          ]}
+          isExpanded
+          onToggle={() => {}}
+          onStop={onStop}
+        />
+      </CompactViewportOverrideProvider>,
+    );
+
+    const stop = screen.getByRole("button", {
+      name: "Stop background command: Collect unused slots",
+    });
+    fireEvent.click(stop);
+
+    expect((await screen.findByRole("alert")).textContent).toBe(
+      "Could not stop: Host is offline",
+    );
+    expect(stop.textContent).toBe("Stop");
+    expect(stop.hasAttribute("disabled")).toBe(false);
   });
 });

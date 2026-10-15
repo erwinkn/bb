@@ -73,6 +73,7 @@ import {
   type ThreadForkParams,
   type ThreadResumeParams,
   type ThreadStartParams,
+  type ThreadBackgroundTaskStopParams,
   type ThreadStopParams,
   type TurnStartParams,
   type TurnSteerParams,
@@ -447,6 +448,7 @@ function requireSkillPluginsRoot(): string {
   return skillPluginsRoot;
 }
 
+const MISSING_BACKGROUND_TASK_GRACE_MS = 10_000;
 const THREAD_STOP_CLOSE_TIMEOUT_MS = 4_000;
 const CLAUDE_CHROME_SETTING_RESTART_REASON = "Claude in Chrome setting changed";
 const CLAUDE_SANDBOX_SETTING_RESTART_REASON =
@@ -1758,6 +1760,12 @@ function createOnSdkMessage(
       message,
     });
     if (
+      message.type === "system" &&
+      message.subtype === "background_tasks_changed"
+    ) {
+      scheduleMissingBackgroundTaskSettlement(threadSession, args);
+    }
+    if (
       message.type === "result" ||
       (message.type === "system" &&
         (message.subtype === "init" || message.subtype === "compact_boundary"))
@@ -1813,6 +1821,35 @@ function createOnSdkMessage(
       );
     }
   };
+}
+
+function scheduleMissingBackgroundTaskSettlement(
+  threadSession: ThreadSession,
+  args: CreateSdkCallbackArgs,
+): void {
+  const missing =
+    threadSession.translator.listBackgroundTasksMissingFromLiveSet(
+      args.threadIdRef.current,
+    );
+  if (missing.length === 0) return;
+  setTimeout(() => {
+    const threadId = args.threadIdRef.current;
+    if (
+      getCurrentThreadSession({
+        sessionSerial: args.sessionSerial,
+        threadId,
+      }) !== threadSession
+    ) {
+      return;
+    }
+    sendThreadDeltas(
+      threadId,
+      threadSession.translator.settleBackgroundTasksStillMissing(
+        threadId,
+        missing,
+      ),
+    );
+  }, MISSING_BACKGROUND_TASK_GRACE_MS).unref();
 }
 
 function createOnSdkDone(
@@ -2388,6 +2425,7 @@ async function handleRequest(request: ClaudeCodeJsonRpcRequest): Promise<void> {
           threadArchive: false,
           threadRename: false,
           threadGoalClear: false,
+          backgroundTaskStop: true,
           fork: "checkpoint",
           approvalEnforcedBy: "provider",
           grammarVersions: [THREAD_DELTA_GRAMMAR_V3, THREAD_DELTA_GRAMMAR_V3],
@@ -2475,6 +2513,9 @@ async function handleRequest(request: ClaudeCodeJsonRpcRequest): Promise<void> {
       break;
     case "thread/discard":
       sendResult(request.id, await closeThreadForStop(request.params.threadId));
+      break;
+    case "thread/backgroundTask/stop":
+      await handleBackgroundTaskStop(request.id, request.params);
       break;
     case "skills/configure":
       configuredSkillRoots = assembleSkillPlugins(request.params.roots);
@@ -2966,6 +3007,12 @@ async function swapSdkSession(
   }
   const { session, sessionSerial } = started;
   const replaced = threadSession.session;
+  sendThreadDeltas(
+    attachment.threadIdRef.current,
+    threadSession.translator.settleBackgroundTasks(
+      attachment.threadIdRef.current,
+    ),
+  );
   threadSession.sessionSerial = sessionSerial;
   threadSession.session = session;
   threadSession.contextUsageCollector = new ClaudeContextUsageCollector();
@@ -3186,6 +3233,35 @@ async function handleThreadStop(
     );
   }
   sendResult(id, await closeThreadForStop(params.threadId));
+}
+
+async function handleBackgroundTaskStop(
+  id: string | number,
+  params: ThreadBackgroundTaskStopParams,
+): Promise<void> {
+  const threadSession = threadAttachments.get(params.threadId)?.residentSession;
+  const generation =
+    threadSession && !threadSession.closing
+      ? threadSession.translator.runningBackgroundTaskGeneration(
+          params.threadId,
+          params.taskId,
+          params.providerItemId,
+        )
+      : null;
+  if (!threadSession || generation === null) {
+    sendResult(id, { stopped: false });
+    return;
+  }
+  await threadSession.session.stopTask(params.taskId);
+  sendThreadDeltas(
+    params.threadId,
+    threadSession.translator.settleStoppedBackgroundTask(
+      params.threadId,
+      params.taskId,
+      generation,
+    ),
+  );
+  sendResult(id, { stopped: true });
 }
 
 function localAttachmentMarker(args: {

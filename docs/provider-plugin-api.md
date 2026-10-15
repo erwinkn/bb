@@ -65,6 +65,7 @@ bb.providers.register({
     supportsThreadArchive: true,
     supportsThreadRename: true,
     supportsServiceTier: false,
+    supportsBackgroundTaskStop: true, // optional, default false; Stop on background task rows
     reasoningLevels: ["low", "high"], // the coarse ladder; `reasoningLevels` below is precise
   },
   reasoningLevels: [             // picker options; model/list is precise
@@ -174,6 +175,7 @@ The runtime never scopes processes per thread and never matches error text.
   threadArchive: boolean,
   threadRename: boolean,
   threadGoalClear: boolean,
+  backgroundTaskStop: boolean,  // the bridge handles thread/backgroundTask/stop
   fork: "none" | "tip" | "checkpoint",
   approvalEnforcedBy: "runtime" | "provider",
   steerMode: "inject" | "queue", // declared and recorded; nothing acts on it yet
@@ -189,7 +191,11 @@ dropped on the bridge's `staleTurn` recovery hint whatever the mode.
 
 **Runtime → bridge**: `model/list`,
 `thread/{start,resume,fork,stop,discard,archive,unarchive,name/set,goal/clear}`,
-`turn/{start,steer}`, `skills/configure {roots}` (only when the handshake
+`thread/backgroundTask/stop {taskId, providerItemId}` (only when the
+handshake declares `backgroundTaskStop`; `providerItemId` is the item key the
+bridge opened that run under, so a newer run of the same `taskId` is never
+stopped; answers `{stopped: false}` without stopping anything when the
+session no longer runs that exact item), `turn/{start,steer}`, `skills/configure {roots}` (only when the handshake
 declares `skills.configure`),
 `provider/{health,usage,installation/status,installation/run}`.
 

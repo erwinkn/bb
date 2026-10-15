@@ -14,6 +14,7 @@ import {
   providerInstallationStatusSchema,
   providerUsageResultSchema,
   ThreadEventGrammar,
+  threadBackgroundTaskStopResultSchema,
   threadIdentityResultSchema,
 } from "@bb/provider-bridge-protocol";
 import {
@@ -335,7 +336,9 @@ export function createAgentRuntime(options: AgentRuntimeOptions): AgentRuntime {
       threadIdentityRegistry.clearThread(threadId);
       clearThreadRuntimeConfig(threadId);
       turnState.clearThread(threadId);
-      backgroundWorkState.clearThread(threadId);
+      for (const event of backgroundWorkState.settleThread(threadId)) {
+        options.onEvent(event);
+      }
       threadEventGrammar.clearThread(threadId);
     },
     onStderr: options.onStderr,
@@ -2280,6 +2283,39 @@ export function createAgentRuntime(options: AgentRuntimeOptions): AgentRuntime {
             timeoutMs: THREAD_GOAL_CLEAR_EVENT_TIMEOUT_MS,
           });
           return { cleared: confirmed };
+        },
+      });
+    },
+
+    async stopBackgroundTask({ threadId, itemId, taskId }) {
+      return runThreadOperation({
+        threadId,
+        work: async () => {
+          if (
+            !threadRuntimeConfigs.has(threadId) ||
+            !backgroundWorkState.hasOpenBackgroundTask(threadId, itemId)
+          ) {
+            return { stopped: false };
+          }
+          const pid = threadIdentityRegistry.resolveProviderForThread(threadId);
+          const proc = requireProviderProcessForThread(threadId);
+          const adapterCommand: AdapterCommand = {
+            type: "thread/backgroundTask/stop",
+            threadId,
+            providerThreadId: requireProviderThreadId(threadId),
+            itemId,
+            taskId,
+          };
+          const cmd = requireProviderRequestPlan({
+            commandType: adapterCommand.type,
+            plan: proc.adapter.buildCommandPlan(adapterCommand),
+            providerId: pid,
+          });
+          return sendCommand({
+            proc,
+            message: cmd,
+            resultSchema: threadBackgroundTaskStopResultSchema,
+          });
         },
       });
     },

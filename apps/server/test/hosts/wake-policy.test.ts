@@ -38,6 +38,12 @@ const commands: HostDaemonCommand[] = [
   },
   { ...target, type: "thread.rename", title: "New title" },
   { ...target, type: "thread.plan.cancel", expectedTurnId: "turn-policy" },
+  {
+    ...target,
+    type: "thread.backgroundTask.stop",
+    itemId: "item-policy",
+    taskId: "task-policy",
+  },
   { ...target, type: "thread.rewind.discard", leaseId: "lease-policy" },
 ];
 

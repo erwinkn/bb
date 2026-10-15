@@ -295,6 +295,10 @@ export interface ThreadActionArgs {
   threadId: string;
 }
 
+export interface ThreadStopBackgroundTaskArgs extends ThreadActionArgs {
+  itemId: string;
+}
+
 export interface ThreadStatusArgs extends ThreadActionArgs {
   signal?: AbortSignal;
 }
@@ -554,6 +558,9 @@ export interface ThreadsArea {
   cancelPlan(args: ThreadActionArgs): Promise<ThreadBannerActionResult>;
   clearContext(args: ThreadActionArgs): Promise<ThreadBannerActionResult>;
   clearGoal(args: ThreadActionArgs): Promise<ThreadBannerActionResult>;
+  stopBackgroundTask(
+    args: ThreadStopBackgroundTaskArgs,
+  ): Promise<ThreadBannerActionResult>;
   conversationOutline(
     args: ThreadStatusArgs,
   ): Promise<ThreadConversationOutlineResult>;
@@ -1366,6 +1373,16 @@ export function createThreadsArea(args: CreateSdkAreaArgs): ThreadsArea {
       await transport.readVoid(
         transport.api.v1.threads[":id"].goal.clear.$post({
           param: { id: input.threadId },
+        }),
+      );
+      return { ok: true };
+    },
+    async stopBackgroundTask(input) {
+      await transport.readVoid(
+        transport.api.v1.threads[":id"]["background-tasks"][
+          ":itemId"
+        ].stop.$post({
+          param: { id: input.threadId, itemId: input.itemId },
         }),
       );
       return { ok: true };

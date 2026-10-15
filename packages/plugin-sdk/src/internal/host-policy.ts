@@ -1444,6 +1444,14 @@ export function validatePluginProviderDeclaration(
     }
   }
   if (
+    capabilities.supportsBackgroundTaskStop !== undefined &&
+    typeof capabilities.supportsBackgroundTaskStop !== "boolean"
+  ) {
+    throw new Error(
+      `provider "${id}" capabilities.supportsBackgroundTaskStop must be a boolean`,
+    );
+  }
+  if (
     !(PROVIDER_FORK_VALUES as readonly string[]).includes(capabilities.fork)
   ) {
     throw new Error(
@@ -1457,6 +1465,9 @@ export function validatePluginProviderDeclaration(
     supportsManualCompaction: capabilities.supportsManualCompaction,
     supportsThreadArchive: capabilities.supportsThreadArchive,
     supportsThreadRename: capabilities.supportsThreadRename,
+    ...(capabilities.supportsBackgroundTaskStop === true
+      ? { supportsBackgroundTaskStop: true }
+      : {}),
     permissionModes: validateProviderLiteralArray({
       providerId: id,
       field: "capabilities.permissionModes",

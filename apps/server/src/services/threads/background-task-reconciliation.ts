@@ -13,6 +13,7 @@ import {
   threadScope,
 } from "@bb/domain";
 import type { ThreadEventBackgroundTaskItem } from "@bb/domain";
+import type { HostDaemonEventEnvelope } from "@bb/host-daemon-contract";
 import type { AppDeps } from "../../types.js";
 import { appendThreadEventsInTransaction } from "./thread-events.js";
 
@@ -21,6 +22,12 @@ interface SettleDanglingBackgroundTasksArgs {
 }
 
 type SettleDanglingBackgroundTasksDeps = Pick<AppDeps, "db" | "hub" | "logger">;
+
+interface AppendedDaemonEvent {
+  event: HostDaemonEventEnvelope["event"];
+  sequence: number;
+  threadId: string;
+}
 type SettleDanglingBackgroundTasksTransactionDeps = {
   db: DbTransaction;
   hub: DbNotifier;
@@ -31,7 +38,7 @@ const storedBackgroundTaskEventDataSchema = z.object({
   item: threadEventBackgroundTaskItemSchema,
 });
 
-function parseStoredBackgroundTaskItem(
+export function parseStoredBackgroundTaskItem(
   row: OpenBackgroundTaskItemRow,
 ): ThreadEventBackgroundTaskItem | null {
   try {
@@ -70,6 +77,66 @@ export function settleDanglingBackgroundTasks(
 
   for (const threadId of settledThreadIds) {
     deps.hub.notifyThread(threadId, ["events-appended"], {
+      backgroundActivityChanged: true,
+      eventTypes: ["item/backgroundTask/completed"],
+    });
+  }
+}
+
+export function settleBackgroundTasksOfEndedProviderSessions(
+  deps: SettleDanglingBackgroundTasksDeps,
+  args: { events: readonly AppendedDaemonEvent[] },
+): void {
+  for (const { event, sequence, threadId } of args.events) {
+    if (event.type === "thread/identity") {
+      settleOpenBackgroundTasks(deps, (tx) =>
+        listOpenBackgroundTaskItemRowsForThread(tx, {
+          threadId,
+          beforeSequence: sequence,
+        }).filter(
+          (row) =>
+            row.providerThreadId !== null &&
+            row.providerThreadId !== event.providerThreadId,
+        ),
+      );
+    } else if (
+      event.type === "system/error" &&
+      event.code === "provider_process_exited"
+    ) {
+      settleOpenBackgroundTasks(deps, (tx) =>
+        listOpenBackgroundTaskItemRowsForThread(tx, {
+          threadId,
+          beforeSequence: sequence,
+        }),
+      );
+    }
+  }
+}
+
+export function settleBackgroundTask(
+  deps: SettleDanglingBackgroundTasksDeps,
+  args: { threadId: string; itemId: string },
+): void {
+  settleOpenBackgroundTasks(deps, (tx) =>
+    listOpenBackgroundTaskItemRowsForThread(tx, args),
+  );
+}
+
+function settleOpenBackgroundTasks(
+  deps: SettleDanglingBackgroundTasksDeps,
+  listRows: (tx: DbTransaction) => OpenBackgroundTaskItemRow[],
+): void {
+  const settledThreadIds = deps.db.transaction(
+    (tx) =>
+      appendDanglingBackgroundTaskCompletions(
+        { db: tx, logger: deps.logger },
+        listRows(tx),
+      ),
+    { behavior: "immediate" },
+  );
+  for (const threadId of settledThreadIds) {
+    deps.hub.notifyThread(threadId, ["events-appended"], {
+      backgroundActivityChanged: true,
       eventTypes: ["item/backgroundTask/completed"],
     });
   }
@@ -83,6 +150,7 @@ export function settleDanglingBackgroundTasksForStoppedThreadInTransaction(
   const settledThreadIds = appendDanglingBackgroundTaskCompletions(deps, rows);
   for (const threadId of settledThreadIds) {
     deps.hub.notifyThread(threadId, ["events-appended"], {
+      backgroundActivityChanged: true,
       eventTypes: ["item/backgroundTask/completed"],
     });
   }

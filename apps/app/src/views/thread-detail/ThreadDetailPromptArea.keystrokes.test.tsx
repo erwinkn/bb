@@ -233,6 +233,7 @@ vi.mock("@/hooks/mutations/thread-runtime-mutations", () => {
     useSetThreadQueuedMessageGroupBoundary: idleMutation,
     useSendThreadQueuedMessage: idleMutation,
     useStopThread: idleMutation,
+    useStopThreadBackgroundTask: idleMutation,
     useUpdateThreadQueuedMessage: () => ({
       isPending: false,
       mutateAsync: mocks.updateQueuedMessageMutateAsync,
@@ -370,6 +371,7 @@ function buildPromptArea({
       <ThreadDetailPromptArea
         activeBackgroundAgentCount={0}
         activeBackgroundCommands={[]}
+        canStopBackgroundTasks={false}
         activePromptMode={null}
         activeWorkflows={[]}
         canUseGitUi={false}

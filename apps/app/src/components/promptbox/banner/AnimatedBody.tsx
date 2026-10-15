@@ -28,6 +28,7 @@ export function AnimatedBody({
       role="region"
       aria-labelledby={labelledBy}
       aria-hidden={!isExpanded}
+      inert={isExpanded ? undefined : true}
       className={cn(
         "grid overflow-hidden transition-[grid-template-rows,opacity,border-color] duration-200 ease-out",
         isExpanded

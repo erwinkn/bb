@@ -675,6 +675,10 @@ vi.mock("@/hooks/mutations/thread-runtime-mutations", () => ({
     isPending: false,
     mutate: mocks.clearThreadGoalMutate,
   }),
+  useStopThreadBackgroundTask: () => ({
+    isPending: false,
+    mutateAsync: vi.fn(),
+  }),
   useCreateThread: () => ({
     isPending: false,
     mutateAsync: mocks.createThreadMutateAsync,
@@ -860,6 +864,7 @@ function buildPromptAreaElement({
       <ThreadDetailPromptArea
         activeBackgroundAgentCount={0}
         activeBackgroundCommands={[]}
+        canStopBackgroundTasks={false}
         activePromptMode={activePromptMode}
         activeWorkflows={activeWorkflows}
         canUseGitUi={false}

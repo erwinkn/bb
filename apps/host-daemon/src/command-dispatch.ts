@@ -494,6 +494,22 @@ const commandHandlers: CommandHandlerMap = {
     await options.eventSink.flush();
     return { cancelled: true };
   },
+  "thread.backgroundTask.stop": async (command, options) => {
+    const owners = options.runtimeManager.listThreadOwnerEntries(
+      command.threadId,
+    );
+    let stopped = false;
+    for (const owner of owners) {
+      const result = await owner.runtime.stopBackgroundTask({
+        threadId: command.threadId,
+        itemId: command.itemId,
+        taskId: command.taskId,
+      });
+      stopped ||= result.stopped;
+    }
+    await options.eventSink.flush();
+    return { stopped };
+  },
   "thread.rename": async (command, options) => {
     const entry = await options.runtimeManager.getOrAwait(
       command.environmentId,

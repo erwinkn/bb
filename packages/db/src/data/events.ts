@@ -1322,6 +1322,8 @@ export interface ListOpenBackgroundTaskItemRowsForHostArgs {
 
 export interface ListOpenBackgroundTaskItemRowsForThreadArgs {
   threadId: string;
+  itemId?: string;
+  beforeSequence?: number;
 }
 
 export interface OpenBackgroundTaskItemRow {
@@ -2646,7 +2648,8 @@ function storedConversationOutlineStructuralEventRowFields() {
         '$.item.usage',
         '$.item.summary',
         '$.item.error',
-        '$.item.outputFile'
+        '$.item.outputFile',
+        '$.item.command'
       )
       ELSE ${events.data}
     END`,
@@ -4059,6 +4062,10 @@ export function listOpenBackgroundTaskItemRowsForThread(
     .where(
       and(
         eq(events.threadId, args.threadId),
+        args.itemId === undefined ? undefined : eq(events.itemId, args.itemId),
+        args.beforeSequence === undefined
+          ? undefined
+          : lt(events.sequence, args.beforeSequence),
         eq(events.itemKind, "backgroundTask"),
         inArray(events.type, [startedType, progressType]),
         isNotNull(events.itemId),

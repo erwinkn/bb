@@ -109,6 +109,7 @@ import {
   useCreateThreadQueuedMessage,
   useCancelThreadPlan,
   useClearThreadGoal,
+  useStopThreadBackgroundTask,
   useStopThread,
 } from "@/hooks/mutations/thread-runtime-mutations";
 import {
@@ -217,6 +218,7 @@ interface ThreadDetailPromptAreaProps {
   modelFallback: ThreadTimelineModelFallback | null;
   activeWorkflows: TimelineWorkflowWorkRow[];
   activeBackgroundCommands: TimelineWorkflowWorkRow[];
+  canStopBackgroundTasks: boolean;
   parentThreadSection: ThreadPromptParentThreadSection | null;
   childPendingInteractions: readonly ChildThreadPendingAttention[];
   childThreadsSection: ThreadPromptChildThreadsSection | null;
@@ -432,6 +434,7 @@ export function ThreadDetailPromptArea({
   modelFallback,
   activeWorkflows,
   activeBackgroundCommands,
+  canStopBackgroundTasks,
   parentThreadSection,
   childPendingInteractions,
   childThreadsSection,
@@ -512,6 +515,7 @@ export function ThreadDetailPromptArea({
   const stopThread = useStopThread();
   const cancelThreadPlan = useCancelThreadPlan();
   const clearThreadGoal = useClearThreadGoal();
+  const { mutateAsync: stopBackgroundTask } = useStopThreadBackgroundTask();
   const unarchiveThread = useUnarchiveThread();
   const restoreThreadEnvironment = useRestoreThreadEnvironment();
   const createThread = useCreateThread();
@@ -2108,6 +2112,18 @@ export function ThreadDetailPromptArea({
       )),
     [childPendingInteractions],
   );
+  const handleStopBackgroundTask = useMemo(
+    () =>
+      canStopBackgroundTasks
+        ? async (row: TimelineWorkflowWorkRow) => {
+            await stopBackgroundTask({
+              threadId: thread.id,
+              itemId: row.itemId,
+            });
+          }
+        : undefined,
+    [canStopBackgroundTasks, stopBackgroundTask, thread.id],
+  );
   const promptStack = useMemo(
     () => (
       <>
@@ -2124,6 +2140,7 @@ export function ThreadDetailPromptArea({
           commands={activeBackgroundCommands}
           isExpanded={isBackgroundCommandsExpanded}
           onToggle={() => setIsBackgroundCommandsExpanded((value) => !value)}
+          onStop={handleStopBackgroundTask}
         />
         {shouldHideComposer ? null : activePromptModeCard}
         {shouldHideComposer ? null : activeGoalCard}
@@ -2246,6 +2263,7 @@ export function ThreadDetailPromptArea({
       toggleWorkflowExpanded,
       activeBackgroundCommands,
       isBackgroundCommandsExpanded,
+      handleStopBackgroundTask,
       modelFallback,
       parentThreadSection,
       childThreadsSection,

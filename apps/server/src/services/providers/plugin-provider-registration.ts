@@ -182,6 +182,9 @@ export function buildPluginProviderRegistration(args: {
       permissionModes: [...permissionModes],
       supportsFork: capabilities.fork !== "none",
       supportsSessionRewind: capabilities.fork === "checkpoint",
+      ...(capabilities.supportsBackgroundTaskStop === true
+        ? { supportsBackgroundTaskStop: true }
+        : {}),
       modelCatalogScope: declaration.models.scope,
     },
     composerActions,
