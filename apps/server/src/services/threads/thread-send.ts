@@ -83,8 +83,19 @@ type SendThreadMessageMode = SendMessageRequest["mode"];
 type TextPromptInput = Extract<PromptInput, { type: "text" }>;
 type SendThreadMessageTrigger = "auto-dispatch" | "user";
 
-type SendThreadMessagePayload = SendMessageRequest & {
+/**
+ * Who sent one input group of a turn that carries several queued agent
+ * messages. Each group is labelled with its own sender and send time; without
+ * it, every group is labelled with the payload's one sender.
+ */
+export interface InputGroupSender {
+  senderThreadId: string;
+  sentAt: number;
+}
+
+export type SendThreadMessagePayload = SendMessageRequest & {
   inputGroups?: PromptInput[][];
+  inputGroupSenders?: InputGroupSender[];
 };
 
 interface SendThreadMessageArgs {
@@ -113,11 +124,13 @@ interface ResolveMessageSenderArgs {
 interface FormatAgentThreadInputArgs {
   input: PromptInput[];
   senderThreadId: string;
+  sentAt?: number;
 }
 
 interface BuildAgentThreadMessageTextArgs {
   messageText: string;
   senderThreadId: string;
+  sentAt: number | undefined;
 }
 
 interface SendThreadMessageTransactionPreflightArgs {
@@ -305,6 +318,11 @@ function buildAgentThreadMessageText(
   return renderTemplate("agentThreadMessage", {
     messageText: args.messageText,
     senderThreadId: args.senderThreadId,
+    ...(args.sentAt !== undefined
+      ? {
+          sentAt: new Date(args.sentAt).toISOString().replace(/\.\d{3}Z$/, "Z"),
+        }
+      : {}),
   });
 }
 
@@ -318,6 +336,7 @@ export function formatAgentThreadInput(
       text: buildAgentThreadMessageText({
         messageText: "",
         senderThreadId: args.senderThreadId,
+        sentAt: args.sentAt,
       }),
       mentions: [],
     };
@@ -333,8 +352,28 @@ export function formatAgentThreadInput(
       text: buildAgentThreadMessageText({
         messageText: item.text,
         senderThreadId: args.senderThreadId,
+        sentAt: args.sentAt,
       }),
     };
+  });
+}
+
+export function formatAgentThreadInputGroups(args: {
+  inputGroups: PromptInput[][];
+  inputGroupSenders: InputGroupSender[] | undefined;
+  senderThreadId: string | null;
+}): PromptInput[][] {
+  return args.inputGroups.map((inputGroup, index) => {
+    const groupSender = args.inputGroupSenders?.[index];
+    if (groupSender !== undefined) {
+      return formatAgentThreadInput({ input: inputGroup, ...groupSender });
+    }
+    return args.senderThreadId
+      ? formatAgentThreadInput({
+          input: inputGroup,
+          senderThreadId: args.senderThreadId,
+        })
+      : inputGroup;
   });
 }
 
@@ -495,14 +534,11 @@ async function sendThreadMessageWithoutContextClear(
     targetThread: thread,
   });
   let inputGroups = payload.inputGroups
-    ? payload.inputGroups.map((inputGroup) =>
-        senderThreadId
-          ? formatAgentThreadInput({
-              input: inputGroup,
-              senderThreadId,
-            })
-          : inputGroup,
-      )
+    ? formatAgentThreadInputGroups({
+        inputGroups: payload.inputGroups,
+        inputGroupSenders: payload.inputGroupSenders,
+        senderThreadId,
+      })
     : undefined;
   let input =
     inputGroups !== undefined

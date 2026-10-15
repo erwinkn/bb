@@ -56,8 +56,8 @@ export function createQueuedMessageAutoSendPausedError(): ApiError {
  * row's own columns — so a settle has nothing to write down, only somebody to
  * tell.
  */
-export interface SettleQueueRowArgs {
-  row: QueuedThreadMessageRow;
+export interface SettleQueueRowsArgs {
+  rows: readonly QueuedThreadMessageRow[];
 }
 
 /** The message a queued row will carry, as the queueing site supplies it. */
@@ -164,12 +164,15 @@ export function recordQueuedMessageWait(
 }
 
 /**
- * Records that a queued row's waits all cleared and it dispatched. Called
- * AFTER the row is consumed, so a plugin listening on `message.dispatched` sees
- * the row leave the queue rather than a row that is about to.
+ * Records that queued rows' waits all cleared and they dispatched, one
+ * `message.dispatched` per row: a turn may carry several. Called AFTER the
+ * rows are consumed, so a plugin listening on `message.dispatched` sees each
+ * row leave the queue rather than a row that is about to.
  */
-export function settleQueueRowDispatched(args: SettleQueueRowArgs): void {
-  emitPluginMessageDispatched(toThreadQueuedMessage(args.row));
+export function settleQueueRowsDispatched(args: SettleQueueRowsArgs): void {
+  for (const row of args.rows) {
+    emitPluginMessageDispatched(toThreadQueuedMessage(row));
+  }
 }
 
 /**

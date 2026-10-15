@@ -51,6 +51,22 @@ describe("@bb/templates", () => {
     );
   });
 
+  it("adds the send time to an agent thread message only when given one", () => {
+    const rendered = renderTemplate("agentThreadMessage", {
+      senderThreadId: "thr_sender",
+      sentAt: "2026-10-14T14:02:11Z",
+      messageText: "Report 1",
+    });
+
+    expect(rendered).toBe(
+      [
+        "[bb message from thread:thr_sender; sent 2026-10-14T14:02:11Z]",
+        "",
+        "Report 1",
+      ].join("\n"),
+    );
+  });
+
   it("renders child thread needs-attention messages with blocker summaries", () => {
     const rendered = renderTemplate("systemMessageChildThreadNeedsAttention", {
       blockerSummary: [

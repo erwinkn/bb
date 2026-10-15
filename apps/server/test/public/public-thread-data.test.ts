@@ -4147,13 +4147,17 @@ describe("public thread data routes", () => {
       );
       expect(sendResponse.status, await sendResponse.clone().text()).toBe(200);
 
+      const sentAt = (createdAt: number) =>
+        new Date(createdAt).toISOString().replace(/\.\d{3}Z$/, "Z");
       const firstFormattedText = renderTemplate("agentThreadMessage", {
         messageText: "First grouped sender message",
         senderThreadId: senderThread.id,
+        sentAt: sentAt(firstQueuedMessage.createdAt),
       });
       const secondFormattedText = renderTemplate("agentThreadMessage", {
         messageText: "Second grouped sender message",
         senderThreadId: senderThread.id,
+        sentAt: sentAt(secondQueuedMessage.createdAt),
       });
       const expectedInput = [
         { type: "text", text: firstFormattedText, mentions: [] },

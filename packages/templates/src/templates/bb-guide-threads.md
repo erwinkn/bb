@@ -380,6 +380,15 @@ Queued messages:
   queued row in the workspace; `--wait-holder plugin:<plugin-id>` narrows it to
   the rows one plugin is holding.
 
+  When a thread becomes free, the messages other agent threads queued for it
+  run together: up to 16 ready ones join a single new turn in queue order,
+  each under its own `[bb message from thread:<id>; sent <time>]` header. A
+  group composed by hand in the queue is always sent whole, even past 16. A
+  user's message, a system notice, a retry, or a message with a different
+  model, reasoning level, permission mode or service tier ends the batch and
+  runs in a turn of its own, so nothing ready is overtaken. A message queued
+  behind a running turn never joins that turn; it waits for the turn to end.
+
   Failed rows show their failure reason instead of their previous wait, followed
   by a recovery command: `bb thread queue send <thread-id> <message-id>`.
   Use it to retry immediately, including after automatic retries are exhausted.

@@ -14,7 +14,6 @@ import {
 } from "@bb/db";
 import {
   promptInputSchema,
-  type PromptInput,
   type QueuedMessagePayload,
   type QueuedMessageWaitingOn,
   type ResolvedThreadExecutionOptions,
@@ -51,7 +50,7 @@ import {
   createQueuedMessageAutoSendPausedError,
   createQueuedMessageClaimLostError,
   recordQueuedMessageWait,
-  settleQueueRowDispatched,
+  settleQueueRowsDispatched,
   type QueuedDispatchMessage,
 } from "./queue-waits.js";
 import { applyLoggedThreadLifecycleEventInTransaction } from "./lifecycle-outcome.js";
@@ -82,6 +81,7 @@ import {
   ensureThreadIsWritable,
   resolveMessageSenderThreadId,
   sendThreadMessage,
+  type SendThreadMessagePayload,
   type SendThreadMessageTransactionPreflight,
 } from "./thread-send.js";
 import { resolveDispatchAuthor } from "./dispatch-author.js";
@@ -217,7 +217,7 @@ export type DispatchAttemptSource =
 
 export interface DispatchAttemptArgs {
   thread: Thread;
-  payload: SendMessageRequest & { inputGroups?: PromptInput[][] };
+  payload: SendThreadMessagePayload;
   source: DispatchAttemptSource;
   /**
    * The start context creation just wrote, on the attempt that is creating the
@@ -235,6 +235,11 @@ export interface DispatchAttemptArgs {
   /** Execution defaults resolved by creation, which the thread row lacks. */
   executionDefaults?: Parameters<typeof buildExecutionOptions>[2];
   trigger: "auto-dispatch" | "user";
+  /**
+   * The running turn an `auto` row was held for. It joins only that turn:
+   * once the turn has ended, the row is sent as `queue-if-active`.
+   */
+  joinTurnId?: string;
 }
 
 export type DispatchAttemptOutcome =
@@ -294,6 +299,17 @@ async function runDispatchAttempt(
   reattempted: boolean,
 ): Promise<DispatchAttemptOutcome> {
   const { payload, thread } = args;
+  if (
+    args.joinTurnId !== undefined &&
+    getActiveTurnId(deps, thread.id) !== args.joinTurnId
+  ) {
+    const { joinTurnId: _ended, ...rest } = args;
+    return runDispatchAttempt(
+      deps,
+      { ...rest, payload: { ...payload, mode: "queue-if-active" } },
+      reattempted,
+    );
+  }
   // A stopping thread is writable HERE and nowhere upstream: the checkpoint
   // below turns it into a core wait, which is a truthful "not yet" the row can
   // recover from, rather than the 409 that used to make a stop a dead end for
@@ -599,7 +615,11 @@ async function runDispatchAttempt(
       trigger: args.trigger,
       ...(args.retryOf !== undefined ? { retryOf: args.retryOf } : {}),
       beforeAppendInTransaction: ({ tx }) => {
-        if (getThread(tx, thread.id)?.status !== thread.status) {
+        if (
+          getThread(tx, thread.id)?.status !== thread.status ||
+          (args.joinTurnId !== undefined &&
+            getActiveTurnId({ db: tx }, thread.id) !== args.joinTurnId)
+        ) {
           throw new DispatchThreadStatusChangedError();
         }
         if (claimed !== null) {
@@ -623,7 +643,7 @@ async function runDispatchAttempt(
     );
   }
   if (claimed !== null) {
-    settleQueueRowDispatched({ row: claimed[0]! });
+    settleQueueRowsDispatched({ rows: claimed });
   }
   return { kind: "dispatched" };
 }
@@ -675,7 +695,7 @@ function consumeClaimedRows(
 
 interface AdmitPendingThreadArgs {
   claimed: ClaimedQueuedThreadMessageRow[] | null;
-  payload: SendMessageRequest & { inputGroups?: PromptInput[][] };
+  payload: SendThreadMessagePayload;
   respectManualStopPause: boolean;
   /** Creation's own record; null on a re-attempt, which reads it back. */
   startContext: PendingThreadStartContext | null;
@@ -683,7 +703,7 @@ interface AdmitPendingThreadArgs {
 }
 
 interface PendingThreadAdmission {
-  claimedRow: ClaimedQueuedThreadMessageRow | null;
+  claimedRows: readonly ClaimedQueuedThreadMessageRow[];
   startingThread: Thread;
 }
 
@@ -733,7 +753,7 @@ async function admitPendingThread(
   const execution = await buildExecutionOptions(deps, args.payload, {
     threadId: args.thread.id,
   });
-  const claimedRow = args.claimed?.[0] ?? null;
+  const claimedRows = args.claimed ?? [];
   let startingThread: Thread;
   try {
     startingThread = deps.db.transaction(
@@ -792,7 +812,7 @@ async function admitPendingThread(
     buildThreadStatusChangeMetadata(deps, startingThread),
   );
   return {
-    claimedRow,
+    claimedRows,
     startingThread,
   };
 }
@@ -801,10 +821,8 @@ async function launchAdmittedThread(
   deps: LoggedPendingInteractionWorkSessionDeps,
   admission: PendingThreadAdmission,
 ): Promise<void> {
-  const { claimedRow, startingThread } = admission;
-  if (claimedRow !== null) {
-    settleQueueRowDispatched({ row: claimedRow });
-  }
+  const { claimedRows, startingThread } = admission;
+  settleQueueRowsDispatched({ rows: claimedRows });
   scheduleThreadProvisioningAdvance(deps, startingThread.id);
 }
 
@@ -815,9 +833,9 @@ async function launchAdmittedThread(
  * queue drain has always used to replay a frozen tuple.
  */
 function resolveExecutionIntoPayload(
-  payload: SendMessageRequest & { inputGroups?: PromptInput[][] },
+  payload: SendThreadMessagePayload,
   execution: ResolvedThreadExecutionOptions,
-): SendMessageRequest & { inputGroups?: PromptInput[][] } {
+): SendThreadMessagePayload {
   return {
     ...payload,
     model: execution.model,

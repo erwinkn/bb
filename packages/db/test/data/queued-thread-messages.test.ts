@@ -1,8 +1,15 @@
 import { describe, expect, it, vi } from "vitest";
-import { threadScope, type PromptInput } from "@bb/domain";
+import {
+  threadScope,
+  type PromptInput,
+  type QueuedMessagePayload,
+  type QueuedMessageSystemNotice,
+  type QueuedMessageWaitingOn,
+} from "@bb/domain";
 import { noopNotifier } from "../../src/notifier.js";
 import { insertEvents } from "../../src/data/events.js";
 import {
+  MAX_BATCHED_QUEUED_MESSAGES,
   claimNextQueuedThreadMessageGroup,
   claimQueuedThreadMessageGroup,
   clearQueuedThreadMessageWaitingOn,
@@ -18,6 +25,7 @@ import {
   requeueClaimedQueuedThreadMessages,
   setQueuedThreadMessageGroupBoundary,
   updateQueuedThreadMessage,
+  type QueuedThreadMessageRow,
 } from "../../src/data/queued-thread-messages.js";
 import { createProject } from "../../src/data/projects.js";
 import { createThread } from "../../src/data/threads.js";
@@ -532,6 +540,7 @@ describe("queued thread messages", () => {
         noopNotifier,
         thread.id,
         () => true,
+        { batchAgentMessages: false },
       )?.[0];
       expect(claimedQueuedMessage?.id).toBe(firstQueuedMessage.id);
       expect(
@@ -734,6 +743,7 @@ describe("queued thread messages", () => {
       noopNotifier,
       thread.id,
       () => true,
+      { batchAgentMessages: false },
     );
 
     expect(
@@ -813,6 +823,7 @@ describe("queued thread messages", () => {
         noopNotifier,
         thread.id,
         () => true,
+        { batchAgentMessages: false },
       )?.map((row) => row.id),
     ).toEqual([notice.id]);
     expect(
@@ -880,6 +891,7 @@ describe("queued thread messages", () => {
         noopNotifier,
         thread.id,
         () => true,
+        { batchAgentMessages: false },
       )?.map((row) => row.id),
     ).toEqual([askedForDuringStop.id]);
     expect(
@@ -962,6 +974,7 @@ describe("queued thread messages", () => {
       noopNotifier,
       thread.id,
       () => true,
+      { batchAgentMessages: false },
     );
     expect(claimed?.map((queuedMessage) => queuedMessage.id)).toEqual([
       lead.id,
@@ -982,6 +995,7 @@ describe("queued thread messages", () => {
         noopNotifier,
         thread.id,
         () => true,
+        { batchAgentMessages: false },
       ),
     ).toBeNull();
 
@@ -1004,6 +1018,7 @@ describe("queued thread messages", () => {
         noopNotifier,
         thread.id,
         () => true,
+        { batchAgentMessages: false },
       )?.map((queuedMessage) => queuedMessage.id),
     ).toEqual([independent.id]);
   });
@@ -1046,6 +1061,7 @@ describe("queued thread messages", () => {
       noopNotifier,
       thread.id,
       () => true,
+      { batchAgentMessages: false },
     );
     requeueClaimedQueuedThreadMessages(db, noopNotifier, {
       claims: claimed!.map(({ id, claimToken }) => ({ id, claimToken })),
@@ -1201,6 +1217,7 @@ describe("queued thread messages", () => {
         noopNotifier,
         thread.id,
         () => true,
+        { batchAgentMessages: false },
       )?.map((queuedMessage) => queuedMessage.id),
     ).toEqual([firstQueuedMessage.id]);
   });
@@ -1492,6 +1509,7 @@ describe("queued thread messages", () => {
       noopNotifier,
       thread.id,
       () => true,
+      { batchAgentMessages: false },
     );
     if (!claimedQueuedMessages) {
       throw new Error("Expected grouped claim");
@@ -1651,6 +1669,7 @@ describe("queued thread messages", () => {
       noopNotifier,
       thread.id,
       () => true,
+      { batchAgentMessages: false },
     )?.[0];
     expect(claimedQueuedMessage?.id).toBe(secondQueuedMessage.id);
     expect(
@@ -1798,6 +1817,7 @@ describe("queued thread messages", () => {
         noopNotifier,
         thread.id,
         () => true,
+        { batchAgentMessages: false },
       )?.map((queuedMessage) => queuedMessage.id),
     ).toEqual([firstQueuedMessage.id]);
   });
@@ -1917,5 +1937,271 @@ describe("queued thread messages", () => {
         nextQueuedMessageId: secondQueuedMessage.id,
       }).kind,
     ).toBe("stale_neighbor");
+  });
+});
+
+describe("batching agent messages in the idle drain", () => {
+  interface QueueArgs {
+    model?: string;
+    payload?: QueuedMessagePayload;
+    sendAt?: number;
+    senderThreadId: string | null;
+    systemNotice?: QueuedMessageSystemNotice;
+    text: string;
+    waitingOn?: QueuedMessageWaitingOn | null;
+  }
+
+  function setupBatch() {
+    const { db, project, thread } = setup();
+    const [first, second, third] = [1, 2, 3].map(
+      () =>
+        createThread(db, noopNotifier, {
+          projectId: project.id,
+          providerId: "codex",
+        }).id,
+    );
+    const queue = (args: QueueArgs) =>
+      createQueuedThreadMessage(db, noopNotifier, {
+        threadId: thread.id,
+        content: textInput(args.text),
+        senderThreadId: args.senderThreadId,
+        model: args.model ?? "gpt-5",
+        reasoningLevel: "medium",
+        permissionMode: "full",
+        serviceTier: "default",
+        waitingOn:
+          args.waitingOn === undefined
+            ? { kind: "thread-busy" }
+            : args.waitingOn,
+        sendAt: args.sendAt ?? null,
+        payload: args.payload ?? { kind: "inline" },
+        systemNotice: args.systemNotice ?? null,
+      });
+    const claimNext = (
+      batchAgentMessages = true,
+      isGroupEligible: (
+        rows: readonly QueuedThreadMessageRow[],
+      ) => boolean = () => true,
+    ) =>
+      claimNextQueuedThreadMessageGroup(
+        db,
+        noopNotifier,
+        thread.id,
+        isGroupEligible,
+        { batchAgentMessages },
+      );
+    const texts = (rows: readonly { content: string }[] | null) =>
+      rows?.map((row) =>
+        (JSON.parse(row.content) as PromptInput[])
+          .map((item) => (item.type === "text" ? item.text : ""))
+          .join(""),
+      ) ?? null;
+    return {
+      claimNext,
+      db,
+      queue,
+      senders: [first!, second!, third!] as const,
+      texts,
+      thread,
+    };
+  }
+
+  it("claims nothing from an empty queue", () => {
+    const { claimNext } = setupBatch();
+    expect(claimNext()).toBeNull();
+  });
+
+  it("claims a lone agent message on its own", () => {
+    const { claimNext, queue, senders, texts } = setupBatch();
+    queue({ senderThreadId: senders[0], text: "Report 1" });
+    expect(texts(claimNext())).toEqual(["Report 1"]);
+    expect(claimNext()).toBeNull();
+  });
+
+  it("claims every ready agent message, whatever its sender, in queue order", () => {
+    const { claimNext, queue, senders, texts } = setupBatch();
+    for (const [index, sender] of senders.entries()) {
+      queue({ senderThreadId: sender, text: `Report ${index + 1}` });
+    }
+    const claimed = claimNext();
+    expect(texts(claimed)).toEqual(["Report 1", "Report 2", "Report 3"]);
+    expect(claimed?.map((row) => row.senderThreadId)).toEqual([...senders]);
+    expect(new Set(claimed?.map((row) => row.claimToken)).size).toBe(1);
+  });
+
+  it("claims one message at a time when the caller does not batch", () => {
+    const { claimNext, queue, senders, texts } = setupBatch();
+    queue({ senderThreadId: senders[0], text: "Report 1" });
+    queue({ senderThreadId: senders[1], text: "Report 2" });
+    expect(texts(claimNext(false))).toEqual(["Report 1"]);
+    expect(texts(claimNext(false))).toEqual(["Report 2"]);
+  });
+
+  it("stops at a user's message so nothing ready is overtaken", () => {
+    const { claimNext, queue, senders, texts } = setupBatch();
+    queue({ senderThreadId: senders[0], text: "Report 1" });
+    queue({ senderThreadId: senders[1], text: "Report 2" });
+    queue({ senderThreadId: null, text: "Pause the slot work" });
+    queue({ senderThreadId: senders[2], text: "Report 3" });
+
+    expect(texts(claimNext())).toEqual(["Report 1", "Report 2"]);
+    expect(texts(claimNext())).toEqual(["Pause the slot work"]);
+    expect(texts(claimNext())).toEqual(["Report 3"]);
+  });
+
+  it("never extends a user's message with agent messages", () => {
+    const { claimNext, queue, senders, texts } = setupBatch();
+    queue({ senderThreadId: null, text: "Look at this first" });
+    queue({ senderThreadId: senders[0], text: "Report 1" });
+    expect(texts(claimNext())).toEqual(["Look at this first"]);
+  });
+
+  it("passes over rows that are not ready, as the drain does", () => {
+    const { claimNext, db, queue, senders, texts, thread } = setupBatch();
+    queue({ senderThreadId: senders[0], text: "Report 1" });
+    const held = queue({
+      senderThreadId: senders[1],
+      text: "Held by a plugin",
+      waitingOn: { kind: "plugin", pluginId: "limiter", reason: "full" },
+    });
+    queue({ senderThreadId: senders[2], text: "Report 3" });
+
+    expect(texts(claimNext())).toEqual(["Report 1", "Report 3"]);
+    expect(
+      listQueuedThreadMessages(db, thread.id).map((row) => row.id),
+    ).toEqual([held.id]);
+  });
+
+  it.each([
+    ["other execution options", { model: "gpt-5-mini" }],
+    [
+      "a retry",
+      {
+        payload: {
+          kind: "retry",
+          retryOfTurnRequestId: "creq_2222222222",
+          attempt: 2,
+          reason: "Rate limited",
+        },
+      },
+    ],
+    [
+      "a system notice",
+      { systemNotice: { kind: "unlabeled", subject: null } },
+    ],
+  ] as const)("stops at %s", (_label, override) => {
+    const { claimNext, queue, senders, texts } = setupBatch();
+    queue({ senderThreadId: senders[0], text: "Report 1" });
+    queue({ senderThreadId: senders[1], text: "Different", ...override });
+    queue({ senderThreadId: senders[2], text: "Report 3" });
+    expect(texts(claimNext())).toEqual(["Report 1"]);
+  });
+
+  it.each([
+    ["stops at a due", 1_000, ["Report 1"]],
+    ["passes over a later", 9_000, ["Report 1", "Report 3"]],
+  ] as const)(
+    "%s scheduled user message",
+    (_label, sendAt, expected) => {
+      const { claimNext, queue, senders, texts } = setupBatch();
+      queue({ senderThreadId: senders[0], text: "Report 1" });
+      queue({
+        senderThreadId: null,
+        text: "Stop",
+        waitingOn: { kind: "time" },
+        sendAt,
+      });
+      queue({ senderThreadId: senders[2], text: "Report 3" });
+      // The server's eligibility: a scheduled row is eligible once it is due.
+      const dueAt5000 = (rows: readonly QueuedThreadMessageRow[]) =>
+        rows.every((row) => row.sendAt === null || row.sendAt <= 5_000);
+      expect(texts(claimNext(true, dueAt5000))).toEqual(expected);
+    },
+  );
+
+  it("claims a lead group the user composed whole, beyond the cap", () => {
+    const { claimNext, db, queue, senders } = setupBatch();
+    const rows = Array.from(
+      { length: MAX_BATCHED_QUEUED_MESSAGES + 1 },
+      (_, index) => queue({ senderThreadId: senders[0], text: `Part ${index}` }),
+    );
+    setQueuedThreadMessageGroupBoundary({
+      db,
+      notifier: noopNotifier,
+      threadId: rows[0]!.threadId,
+      expectedGroupedPrefixQueuedMessageIds: rows.map((row) => row.id),
+      groupBoundaryQueuedMessageId: rows.at(-1)!.id,
+    });
+    queue({ senderThreadId: senders[1], text: "Report 2" });
+    expect(claimNext()).toHaveLength(MAX_BATCHED_QUEUED_MESSAGES + 1);
+  });
+
+  it("caps a batch and leaves the rest for the next turn", () => {
+    const { claimNext, queue, senders } = setupBatch();
+    for (let index = 0; index < MAX_BATCHED_QUEUED_MESSAGES + 4; index++) {
+      queue({ senderThreadId: senders[index % 3]!, text: `Report ${index}` });
+    }
+    expect(claimNext()).toHaveLength(MAX_BATCHED_QUEUED_MESSAGES);
+    expect(claimNext()).toHaveLength(4);
+  });
+
+  it("holds every ordinary message back while a manual stop pauses the queue", () => {
+    const { claimNext, db, queue, senders, thread } = setupBatch();
+    queue({ senderThreadId: senders[0], text: "Report 1" });
+    queue({ senderThreadId: senders[1], text: "Report 2" });
+    insertEvents(db, noopNotifier, [
+      {
+        threadId: thread.id,
+        sequence: 1,
+        type: "system/thread/interrupted",
+        scope: threadScope(),
+        itemId: null,
+        itemKind: null,
+        parentToolCallId: null,
+        data: JSON.stringify({ reason: "manual-stop" }),
+      },
+    ]);
+    expect(claimNext()).toBeNull();
+  });
+
+  it("leaves a message that arrives while the batch starts for the next turn", () => {
+    const { claimNext, db, queue, senders, texts } = setupBatch();
+    queue({ senderThreadId: senders[0], text: "Report 1" });
+    queue({ senderThreadId: senders[1], text: "Report 2" });
+    const batch = claimNext()!;
+    queue({ senderThreadId: senders[2], text: "Report 3" });
+
+    expect(texts(claimNext())).toEqual(["Report 3"]);
+    const consume = () =>
+      db.transaction((tx) =>
+        deleteClaimedQueuedThreadMessageBatchInTransaction(tx, {
+          queuedMessages: batch,
+        }),
+      );
+    expect(consume()).toBe(true);
+    expect(consume()).toBe(false);
+  });
+
+  it("returns a batch whose turn never started to the queue in order", () => {
+    const { claimNext, db, queue, senders, texts } = setupBatch();
+    const nowSpy = vi.spyOn(Date, "now");
+    try {
+      nowSpy.mockReturnValue(1_000);
+      for (const [index, sender] of senders.entries()) {
+        queue({ senderThreadId: sender, text: `Report ${index + 1}` });
+      }
+      const batch = claimNext()!;
+      expect(batch).toHaveLength(3);
+      nowSpy.mockReturnValue(10_000);
+      expect(
+        releaseStaleQueuedMessageClaims(db, noopNotifier, {
+          claimedBefore: 5_000,
+          protectedClaimTokens: [],
+        }),
+      ).toBe(3);
+      expect(texts(claimNext())).toEqual(["Report 1", "Report 2", "Report 3"]);
+    } finally {
+      nowSpy.mockRestore();
+    }
   });
 });
