@@ -191,6 +191,16 @@ threads reuse completed outline items from a bounded in-memory cache (16 threads
 clears, metadata or display changes, and writes from another database connection
 force a rebuild. Eviction only affects performance.
 
+Ordinary outlines select only root events. Threads with background tasks,
+delegations, inherited parent metadata, or an external-user ordering boundary
+select nested events too; that choice is sticky and changing it rebuilds the
+prefix. A checkpoint is the newest completed turn boundary whose tail references
+no turn, request, or item id seen before it, so a background task or child item
+that outlives its turn only holds the checkpoint behind its start. Rejected and
+pending steer rows stay at the end of the outline, the tail projection receives
+any earlier external-user boundary so it sorts rows as the full projection does,
+and thread status is not part of the checkpoint key.
+
 ## Catch-up feedback
 
 Event-append notifications carry `metadata.timelineSequence`, the thread's
