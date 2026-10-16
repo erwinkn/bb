@@ -9,26 +9,33 @@ import {
   type ThreadEventWithMeta,
 } from "@bb/thread-view";
 
-interface ConversationOutlineProjection {
-  events: ThreadEventWithMeta[];
-  items: {
-    item: ThreadConversationOutlineItem;
-    sourceSeqStart: number;
-    sourceSeqEnd: number;
-  }[];
+interface ProjectedOutlineItem {
+  item: ThreadConversationOutlineItem;
+  sourceSeqStart: number;
+  sourceSeqEnd: number;
+}
+
+export interface ConversationOutlineProjection {
+  externalUserBoundarySeq: number | null;
+  items: ProjectedOutlineItem[];
+  pendingSteerItems: ProjectedOutlineItem[];
 }
 
 export interface ConversationOutlineSelection {
   events: ThreadEventWithMeta[];
-  project: () => ConversationOutlineProjection["items"];
+  project: () => ConversationOutlineProjection;
 }
 
-interface Checkpoint {
+export interface ConversationOutlinePrefix {
   agentMessageDeltaCount: number;
-  items: ThreadConversationOutlineItem[];
+  externalUserBoundarySeq: number | null;
   sequenceStart: number;
-  turnIds: Set<string>;
-  requestIds: Set<string>;
+}
+
+interface Checkpoint extends ConversationOutlinePrefix {
+  identities: Set<string>;
+  items: ThreadConversationOutlineItem[];
+  pendingSteerItems: ThreadConversationOutlineItem[];
 }
 
 interface Entry {
@@ -51,28 +58,32 @@ const caches = new WeakMap<DbConnection, OutlineCache>();
 const MAX_ENTRIES = 16;
 const MAX_CHARS = 8_000_000;
 
-function referencedRequestId(
-  event: ThreadEventWithMeta["event"],
-): string | null {
+function eventIdentities(event: ThreadEventWithMeta["event"]): string[] {
+  const identities: string[] = [];
+  if (event.scope.kind === "turn")
+    identities.push(`turn:${event.scope.turnId}`);
   if (
     event.type === "client/turn/requested" ||
     event.type === "client/turn/rejected"
-  ) {
-    return event.requestId;
+  )
+    identities.push(`request:${event.requestId}`);
+  if (
+    event.type === "client/turn/requested" &&
+    "expectedTurnId" in event.target &&
+    event.target.expectedTurnId !== null
+  )
+    identities.push(`turn:${event.target.expectedTurnId}`);
+  if (event.type === "turn/input/accepted")
+    identities.push(`request:${event.clientRequestId}`);
+  if ("item" in event) {
+    identities.push(`item:${event.item.id}`);
+    if ("parentToolCallId" in event.item && event.item.parentToolCallId != null)
+      identities.push(`item:${event.item.parentToolCallId}`);
   }
-  return event.type === "turn/input/accepted" ? event.clientRequestId : null;
-}
-
-function hasCrossTurnState(events: ThreadEventWithMeta[]): boolean {
-  return events.some(
-    ({ event }) =>
-      ("parentToolCallId" in event && event.parentToolCallId != null) ||
-      ("item" in event &&
-        (event.item.type === "backgroundTask" ||
-          event.item.type === "delegation" ||
-          ("parentToolCallId" in event.item &&
-            event.item.parentToolCallId != null))),
-  );
+  if ("itemId" in event) identities.push(`item:${event.itemId}`);
+  if ("parentToolCallId" in event && event.parentToolCallId != null)
+    identities.push(`item:${event.parentToolCallId}`);
+  return identities;
 }
 
 function isThreadError(event: ThreadEventWithMeta["event"]): boolean {
@@ -88,41 +99,93 @@ function canReuse(
   checkpoint: Checkpoint,
   events: ThreadEventWithMeta[],
 ): boolean {
-  if (hasCrossTurnState(events)) return false;
   let hasTailTurn = false;
   return events.every(({ event }) => {
     if (event.type === "turn/started") hasTailTurn = true;
     if (isThreadError(event) && !hasTailTurn) return false;
-    if (
-      event.scope.kind === "turn" &&
-      checkpoint.turnIds.has(event.scope.turnId)
-    )
-      return false;
-    const requestId = referencedRequestId(event);
-    if (requestId !== null && checkpoint.requestIds.has(requestId))
-      return false;
-    if (
-      event.type === "client/turn/requested" &&
-      "expectedTurnId" in event.target
-    ) {
-      const turnId = event.target.expectedTurnId;
-      if (turnId !== null && checkpoint.turnIds.has(turnId)) return false;
-    }
-    return true;
+    return eventIdentities(event).every(
+      (identity) => !checkpoint.identities.has(identity),
+    );
   });
 }
 
-function nextCheckpoint(
+function checkpointAt(
+  events: ThreadEventWithMeta[],
   projection: ConversationOutlineProjection,
   previous: Checkpoint,
-  orderingBoundarySequence: number | null,
+  boundary: number,
+): Checkpoint | null {
+  const identities = new Set(previous.identities);
+  let agentMessageDeltaCount = previous.agentMessageDeltaCount;
+  for (const { event, meta } of events) {
+    if (meta.seq >= boundary) break;
+    for (const identity of eventIdentities(event)) identities.add(identity);
+    if (event.type === "item/agentMessage/delta") agentMessageDeltaCount += 1;
+  }
+  const checkpoint: Checkpoint = {
+    agentMessageDeltaCount,
+    externalUserBoundarySeq:
+      projection.externalUserBoundarySeq !== null &&
+      projection.externalUserBoundarySeq < boundary
+        ? projection.externalUserBoundarySeq
+        : null,
+    identities,
+    items: previous.items,
+    pendingSteerItems: previous.pendingSteerItems,
+    sequenceStart: boundary,
+  };
+  const tailEvents = events.filter(({ meta }) => meta.seq >= boundary);
+  if (!canReuse(checkpoint, tailEvents)) return null;
+  const items = frozenBefore(projection.items, boundary);
+  const pendingSteerItems = frozenBefore(
+    projection.pendingSteerItems,
+    boundary,
+  );
+  if (items === null || pendingSteerItems === null) return null;
+  checkpoint.items = [...previous.items, ...items];
+  checkpoint.pendingSteerItems = [
+    ...previous.pendingSteerItems,
+    ...pendingSteerItems,
+  ];
+  return checkpoint;
+}
+
+function frozenBefore(
+  items: ProjectedOutlineItem[],
+  boundary: number,
+): ThreadConversationOutlineItem[] | null {
+  let reachedTail = false;
+  const frozen: ThreadConversationOutlineItem[] = [];
+  for (const { item, sourceSeqStart, sourceSeqEnd } of items) {
+    if (sourceSeqStart >= boundary) reachedTail = true;
+    else {
+      if (reachedTail || sourceSeqEnd >= boundary) return null;
+      frozen.push(item);
+    }
+  }
+  return frozen;
+}
+
+function nextCheckpoint(
+  events: ThreadEventWithMeta[],
+  projection: ConversationOutlineProjection,
+  previous: Checkpoint,
 ): Checkpoint {
-  if (hasCrossTurnState(projection.events)) return previous;
   const activeTurns = new Set<string>();
   const pendingRequests = new Set<string>();
+  const candidates: number[] = [];
+  const firstSeen = new Map<string, number>();
+  const earliestReferences: number[] = [];
   let completedBoundary = previous.sequenceStart;
   let boundary = previous.sequenceStart;
-  for (const { event, meta } of projection.events) {
+  for (const { event, meta } of events) {
+    let earliestReference = Infinity;
+    for (const identity of eventIdentities(event)) {
+      const seen = firstSeen.get(identity) ?? meta.seq;
+      firstSeen.set(identity, seen);
+      earliestReference = Math.min(earliestReference, seen);
+    }
+    earliestReferences.push(earliestReference);
     if (isThreadError(event)) {
       completedBoundary = boundary;
     }
@@ -138,12 +201,10 @@ function nextCheckpoint(
       pendingRequests.delete(event.requestId);
     if (event.scope.kind !== "turn") continue;
     if (event.type === "turn/started") {
-      if (
-        activeTurns.size === 0 &&
-        (orderingBoundarySequence === null ||
-          completedBoundary <= orderingBoundarySequence)
-      )
+      if (activeTurns.size === 0 && completedBoundary > boundary) {
         boundary = completedBoundary;
+        candidates.push(boundary);
+      }
       activeTurns.add(event.scope.turnId);
     }
     if (event.type === "turn/completed") {
@@ -152,49 +213,19 @@ function nextCheckpoint(
         completedBoundary = meta.seq + 1;
     }
   }
-  if (boundary <= previous.sequenceStart) return previous;
-  const turnIds = new Set(previous.turnIds);
-  const requestIds = new Set(previous.requestIds);
-  for (const { event, meta } of projection.events) {
-    if (meta.seq >= boundary) continue;
-    if (event.scope.kind === "turn") turnIds.add(event.scope.turnId);
-    const requestId = referencedRequestId(event);
-    if (requestId !== null) requestIds.add(requestId);
+  for (let index = earliestReferences.length - 2; index >= 0; index -= 1)
+    earliestReferences[index] = Math.min(
+      earliestReferences[index]!,
+      earliestReferences[index + 1]!,
+    );
+  let tailStart = events.length;
+  for (const candidate of candidates.reverse()) {
+    while (tailStart > 0 && events[tailStart - 1]!.meta.seq >= candidate)
+      tailStart -= 1;
+    if (earliestReferences[tailStart]! < candidate) continue;
+    return checkpointAt(events, projection, previous, candidate) ?? previous;
   }
-  const checkpoint: Checkpoint = {
-    agentMessageDeltaCount:
-      previous.agentMessageDeltaCount +
-      projection.events.filter(
-        ({ event, meta }) =>
-          meta.seq < boundary && event.type === "item/agentMessage/delta",
-      ).length,
-    items: previous.items,
-    sequenceStart: boundary,
-    turnIds,
-    requestIds,
-  };
-  const tailEvents = projection.events.filter(
-    ({ meta }) => meta.seq >= boundary,
-  );
-  if (!canReuse(checkpoint, tailEvents)) return previous;
-  if (
-    projection.items.some(
-      ({ sourceSeqStart, sourceSeqEnd }) =>
-        sourceSeqStart < boundary && sourceSeqEnd >= boundary,
-    )
-  )
-    return previous;
-  let reachedTail = false;
-  const frozen: ThreadConversationOutlineItem[] = [];
-  for (const row of projection.items) {
-    if (row.sourceSeqStart >= boundary) reachedTail = true;
-    else {
-      if (reachedTail) return previous;
-      frozen.push(row.item);
-    }
-  }
-  checkpoint.items = [...previous.items, ...frozen];
-  return checkpoint;
+  return previous;
 }
 
 export function projectConversationOutlineIncrementally(args: {
@@ -203,11 +234,7 @@ export function projectConversationOutlineIncrementally(args: {
   key: string;
   maxSeq: number;
   contextBoundarySeq: number;
-  orderingBoundarySequence: number | null;
-  select: (
-    sequenceStart: number,
-    precedingAgentMessageDeltaCount: number,
-  ) => ConversationOutlineSelection;
+  select: (prefix: ConversationOutlinePrefix) => ConversationOutlineSelection;
 }): ThreadConversationOutlineItem[] {
   let cache = caches.get(args.db);
   if (cache === undefined) {
@@ -223,10 +250,11 @@ export function projectConversationOutlineIncrementally(args: {
   }
   const empty: Checkpoint = {
     agentMessageDeltaCount: 0,
+    externalUserBoundarySeq: null,
+    identities: new Set(),
     items: [],
+    pendingSteerItems: [],
     sequenceStart: args.contextBoundarySeq,
-    turnIds: new Set(),
-    requestIds: new Set(),
   };
   let checkpoint =
     entry !== undefined &&
@@ -234,15 +262,10 @@ export function projectConversationOutlineIncrementally(args: {
     entry.dataVersion === dataVersion &&
     entry.generation === generation &&
     entry.contextBoundarySeq === args.contextBoundarySeq &&
-    (args.orderingBoundarySequence === null ||
-      entry.checkpoint.sequenceStart <= args.orderingBoundarySequence) &&
     entry.maxSeq <= args.maxSeq
       ? entry.checkpoint
       : empty;
-  let selection = args.select(
-    checkpoint.sequenceStart,
-    checkpoint.agentMessageDeltaCount,
-  );
+  let selection = args.select(checkpoint);
   let agentMessageDeltaCount =
     checkpoint.agentMessageDeltaCount +
     selection.events.filter(
@@ -258,28 +281,27 @@ export function projectConversationOutlineIncrementally(args: {
     (crossedCompactionThreshold || !canReuse(checkpoint, selection.events))
   ) {
     checkpoint = empty;
-    selection = args.select(checkpoint.sequenceStart, 0);
+    selection = args.select(checkpoint);
     agentMessageDeltaCount = selection.events.filter(
       ({ event }) => event.type === "item/agentMessage/delta",
     ).length;
   }
-  const projection = { events: selection.events, items: selection.project() };
+  const projection = selection.project();
   const items = [
     ...checkpoint.items,
     ...projection.items.map(({ item }) => item),
+    ...checkpoint.pendingSteerItems,
+    ...projection.pendingSteerItems.map(({ item }) => item),
   ];
-  const next = nextCheckpoint(
-    projection,
-    checkpoint,
-    args.orderingBoundarySequence,
-  );
+  const next = nextCheckpoint(selection.events, projection, checkpoint);
   if (next.sequenceStart > args.contextBoundarySeq) {
     const chars =
       next === entry?.checkpoint
         ? entry.chars
         : JSON.stringify(next.items).length +
-          [...next.turnIds, ...next.requestIds].reduce(
-            (sum, id) => sum + id.length,
+          JSON.stringify(next.pendingSteerItems).length +
+          [...next.identities].reduce(
+            (sum, identity) => sum + identity.length,
             0,
           );
     if (chars <= MAX_CHARS) {

@@ -161,12 +161,20 @@ their outline. When an active thread advances, a bounded per-database cache
 retains completed outline items and reprojects the tail from a safe turn
 boundary. It keeps the latest turn in the tail even after that turn completes.
 
-Checkpoints never cross an unresolved steer, an open turn, or the first
-external-user ordering boundary. Late references to retained turns or requests,
-history rewrites, context clears, metadata/display changes, and writes from
-another database connection force a rebuild. Background/delegated and parented
-events use the full projection because their effects can cross turn boundaries.
-Crossing the message-delta compaction threshold also rebuilds the prefix so
-empty completed messages keep the same fallback previews.
+Checkpoints never cross an unresolved steer or an open turn. A checkpoint
+records every turn, request, and item id (including parent tool-call ids) seen
+before it. The newest turn boundary whose tail references none of them becomes
+the next checkpoint, so a background task or child item that outlives its turn
+only keeps the checkpoint behind its start. Rejected requests keep their rows at
+the end of the outline, after every reprojected tail row. When the full
+projection would order rows by source sequence from an earlier external-user
+boundary, the tail projection receives that boundary and applies the same order.
+Thread status is not part of the checkpoint key because retained turns are
+complete; the tail is always reprojected with the current status.
+
+Late references to retained turns, requests, or items, history rewrites, context
+clears, metadata/display changes, and writes from another database connection
+force a rebuild. Crossing the message-delta compaction threshold also rebuilds
+the prefix so empty completed messages keep the same fallback previews.
 The checkpoint cache retains at most 16 threads and 8 million characters of
 serialized previews and identity data; eviction only affects performance.

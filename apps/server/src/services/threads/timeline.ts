@@ -1,5 +1,6 @@
 import {
   projectConversationOutlineIncrementally,
+  type ConversationOutlinePrefix,
   type ConversationOutlineSelection,
 } from "./conversation-outline-cache.js";
 import { paginateTimelineContents } from "./timeline-content-pagination.js";
@@ -1600,11 +1601,10 @@ function selectThreadConversationOutline(
   db: DbConnection,
   thread: Thread,
   options: BuildThreadConversationOutlineOptions,
-  sequenceStart: number,
-  precedingAgentMessageDeltaCount: number,
+  prefix: ConversationOutlinePrefix,
 ): ConversationOutlineSelection {
   const rawEventRows = listStoredConversationOutlineEventRows(db, {
-    sequenceStart,
+    sequenceStart: prefix.sequenceStart,
     threadId: thread.id,
   });
   const decodedRawEvents = rawEventRows.map((row) =>
@@ -1612,7 +1612,7 @@ function selectThreadConversationOutline(
   );
   const decodedEvents = compactThreadTimelineSummaryEvents(
     decodedRawEvents,
-    precedingAgentMessageDeltaCount,
+    prefix.agentMessageDeltaCount,
   );
   const clientRequestContextRows = selectClientRequestContextRows(db, {
     rows: rawEventRows,
@@ -1627,7 +1627,10 @@ function selectThreadConversationOutline(
     ),
   };
   return {
-    events: decodedRawEvents,
+    events: [
+      ...decodedRawEvents,
+      ...acceptedClientRequestContext.rejectedClientRequestEvents,
+    ].sort((left, right) => left.meta.seq - right.meta.seq),
     project: () => {
       const timeline = buildThreadTimelineFromEvents({
         acceptedClientRequestContext,
@@ -1644,26 +1647,38 @@ function selectThreadConversationOutline(
           threadStatus: thread.status,
           workspaceRoot: resolveThreadWorkspaceRoot(db, thread),
         },
+        ...(prefix.externalUserBoundarySeq === null
+          ? {}
+          : {
+              precedingExternalUserBoundarySeq: prefix.externalUserBoundarySeq,
+            }),
       });
-      const items: ReturnType<ConversationOutlineSelection["project"]> = [];
-      for (const row of timeline.rows) {
-        if (row.kind !== "conversation") {
-          continue;
-        }
-        items.push({
-          sourceSeqStart: row.sourceSeqStart,
-          sourceSeqEnd: row.sourceSeqEnd,
-          item: {
-            id: row.id,
-            role: row.role,
-            preview: toConversationOutlinePreview(row.text),
-            attachmentSummary: toConversationOutlineAttachmentSummary(
-              row.attachments,
-            ),
-          },
-        });
-      }
-      return items;
+      const toItems = (rows: TimelineRow[]) =>
+        rows.flatMap((row) =>
+          row.kind === "conversation"
+            ? [
+                {
+                  sourceSeqStart: row.sourceSeqStart,
+                  sourceSeqEnd: row.sourceSeqEnd,
+                  item: {
+                    id: row.id,
+                    role: row.role,
+                    preview: toConversationOutlinePreview(row.text),
+                    attachmentSummary: toConversationOutlineAttachmentSummary(
+                      row.attachments,
+                    ),
+                  },
+                },
+              ]
+            : [],
+        );
+      const pendingSteerStart =
+        timeline.rows.length - timeline.pendingSteerRowCount;
+      return {
+        externalUserBoundarySeq: timeline.externalUserBoundarySeq,
+        items: toItems(timeline.rows.slice(0, pendingSteerStart)),
+        pendingSteerItems: toItems(timeline.rows.slice(pendingSteerStart)),
+      };
     },
   };
 }
@@ -1679,15 +1694,16 @@ export function buildThreadConversationOutline(
         atOrBeforeSequence: options.maxSeq,
         threadId: thread.id,
       }) ?? 0;
-    const selection = selectThreadConversationOutline(
-      db,
-      thread,
-      options,
+    const selection = selectThreadConversationOutline(db, thread, options, {
+      agentMessageDeltaCount: 0,
+      externalUserBoundarySeq: null,
       sequenceStart,
-      0,
-    );
+    });
+    const projection = selection.project();
     return {
-      items: selection.project().map(({ item }) => item),
+      items: [...projection.items, ...projection.pendingSteerItems].map(
+        ({ item }) => item,
+      ),
       maxSeq: options.maxSeq,
     };
   });
@@ -1705,6 +1721,20 @@ export function buildThreadConversationOutlineProjectionKey(
     thread.providerId,
     options.providerDisplayName ?? null,
     thread.status,
+    thread.title,
+    thread.titleFallback,
+    options.completedTurnDisplay,
+  ]);
+}
+
+function buildConversationOutlineCheckpointKey(
+  thread: Thread,
+  options: BuildThreadConversationOutlineOptions,
+): string {
+  return JSON.stringify([
+    CONVERSATION_OUTLINE_PROJECTION_VERSION,
+    thread.providerId,
+    options.providerDisplayName ?? null,
     thread.title,
     thread.titleFallback,
     options.completedTurnDisplay,
@@ -1754,27 +1784,15 @@ export function loadThreadConversationOutline(
           atOrBeforeSequence: options.maxSeq,
           threadId: thread.id,
         }) ?? 0;
-      const { orderingBoundarySequence } = getTimelineGroupingContext(db, {
-        maxSeq: options.maxSeq,
-        sequenceStart: contextBoundarySeq,
-        threadId: thread.id,
-      });
       return {
         items: projectConversationOutlineIncrementally({
           db,
           threadId: thread.id,
-          key: buildThreadConversationOutlineProjectionKey(thread, 0, options),
+          key: buildConversationOutlineCheckpointKey(thread, options),
           maxSeq: options.maxSeq,
           contextBoundarySeq,
-          orderingBoundarySequence,
-          select: (sequenceStart, precedingAgentMessageDeltaCount) =>
-            selectThreadConversationOutline(
-              db,
-              thread,
-              options,
-              sequenceStart,
-              precedingAgentMessageDeltaCount,
-            ),
+          select: (prefix) =>
+            selectThreadConversationOutline(db, thread, options, prefix),
         }),
         maxSeq: options.maxSeq,
       };

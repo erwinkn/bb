@@ -88,6 +88,7 @@ interface BuildThreadTimelineFromEventsArgs {
   headStateEvents?: ThreadEventWithMeta[];
   events: ThreadEventWithMeta[];
   options: ThreadTimelineFromEventsOptions;
+  precedingExternalUserBoundarySeq?: number;
 }
 
 export interface ThreadTimelineFromEventsResult {
@@ -96,8 +97,10 @@ export interface ThreadTimelineFromEventsResult {
   activeWorkflows: TimelineWorkflowWorkRow[];
   activeBackgroundCommands: TimelineWorkflowWorkRow[];
   contextWindowUsage: ThreadContextWindowUsage | null;
+  externalUserBoundarySeq: number | null;
   goal: ThreadTimelineGoal | null;
   modelFallback: ThreadTimelineModelFallback | null;
+  pendingSteerRowCount: number;
   pendingTodos: ThreadTimelinePendingTodos | null;
   rows: TimelineRow[];
 }
@@ -1127,6 +1130,7 @@ function materializeTimelinePlan(
 function buildTimelineRows(
   projection: EventProjection,
   options: BuildTimelineRowsOptions,
+  precedingExternalUserBoundarySeq?: number,
 ): TimelineRow[] {
   const rows: TimelineRow[] = [];
   for (const item of planTimelineRows(
@@ -1137,10 +1141,12 @@ function buildTimelineRows(
     appendRows(rows, materializeTimelinePlan(item, options));
   }
 
-  return orderRowsAfterExternalUserBoundary(
-    rows,
-    collectExternalUserBoundarySeqs(projection),
-  );
+  return orderRowsAfterExternalUserBoundary(rows, [
+    ...(precedingExternalUserBoundarySeq === undefined
+      ? []
+      : [precedingExternalUserBoundarySeq]),
+    ...collectExternalUserBoundarySeqs(projection),
+  ]);
 }
 
 export function buildThreadTimelineFromEvents(
@@ -1159,18 +1165,23 @@ export function buildThreadTimelineFromEvents(
   } satisfies Parameters<typeof buildEventProjection>[1];
   const projection = buildEventProjection(args.events, projectionOptions);
 
+  const pendingSteerRows = buildPendingSteerRowsFromEvents(
+    args.acceptedClientRequestContext,
+    args.events,
+    args.options,
+  );
   const rows = [
-    ...buildTimelineRows(projection, {
-      completedTurnDisplay: args.options.completedTurnDisplay,
-      includeNestedRows: args.options.includeNestedRows,
-      rowIdPrefix: ROOT_TIMELINE_ROW_ID_PREFIX,
-      workspaceRoot: args.options.workspaceRoot,
-    }),
-    ...buildPendingSteerRowsFromEvents(
-      args.acceptedClientRequestContext,
-      args.events,
-      args.options,
+    ...buildTimelineRows(
+      projection,
+      {
+        completedTurnDisplay: args.options.completedTurnDisplay,
+        includeNestedRows: args.options.includeNestedRows,
+        rowIdPrefix: ROOT_TIMELINE_ROW_ID_PREFIX,
+        workspaceRoot: args.options.workspaceRoot,
+      },
+      args.precedingExternalUserBoundarySeq,
     ),
+    ...pendingSteerRows,
   ];
 
   return {
@@ -1196,12 +1207,17 @@ export function buildThreadTimelineFromEvents(
     contextWindowUsage: extractThreadContextWindowUsage(
       args.contextWindowEvents,
     ),
+    externalUserBoundarySeq:
+      args.precedingExternalUserBoundarySeq ??
+      collectExternalUserBoundarySeqs(projection)[0] ??
+      null,
     goal: !args.options.isLatestPage
       ? null
       : extractThreadTimelineGoal(stateEvents),
     modelFallback: !args.options.isLatestPage
       ? null
       : extractThreadTimelineModelFallback(args.events),
+    pendingSteerRowCount: pendingSteerRows.length,
     pendingTodos: !args.options.isLatestPage
       ? null
       : extractThreadTimelinePendingTodos(
