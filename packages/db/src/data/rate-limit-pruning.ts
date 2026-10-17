@@ -1,4 +1,7 @@
-import { isBeforeLatestThreadEvent } from "./event-pruning-guards.js";
+import {
+  isBeforeLatestThreadEvent,
+  isUnparentedEvent,
+} from "./event-pruning-guards.js";
 import { sql } from "drizzle-orm";
 import type { DbQueryConnection } from "../connection.js";
 
@@ -26,6 +29,7 @@ export function pruneRateLimitSnapshotWindow(
       sql`, `,
     )})
       AND ${isBeforeLatestThreadEvent(args.threadId)}
+      AND ${isUnparentedEvent()}
       AND (EXISTS (SELECT 1 FROM threads WHERE id = ${args.threadId} AND archived_at IS NOT NULL)
         OR sequence < (SELECT sequence FROM events WHERE thread_id = ${args.threadId}
           AND type = 'provider/rateLimits/updated' ORDER BY sequence DESC LIMIT 1))

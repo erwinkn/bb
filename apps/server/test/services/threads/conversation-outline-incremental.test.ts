@@ -4,11 +4,13 @@ import {
   type CompletedTurnDisplay,
 } from "@bb/domain";
 import {
+  advanceThreadPruning,
   deleteThreadEventSuffixInTransaction,
   createThread,
   noopNotifier,
   getLatestStoredConversationOutlineSequence,
   getLatestThreadSequence,
+  type THREAD_PRUNING_POLICIES,
 } from "@bb/db";
 import {
   buildThreadConversationOutline,
@@ -181,6 +183,68 @@ function expectMatchesFull(
     }),
   );
   return result;
+}
+
+function snapshots(turnId: string, index: number): RowSpec[] {
+  return [
+    {
+      type: "provider/rateLimits/updated",
+      turnId,
+      data: { rateLimits: { providerId: "codex" } },
+    },
+    {
+      type: "thread/contextWindowUsage/updated",
+      turnId,
+      data: {
+        contextWindowUsage: {
+          estimated: false,
+          modelContextWindow: 200_000,
+          usedTokens: index,
+        },
+      },
+    },
+    {
+      type: "thread/tokenUsage/updated",
+      turnId,
+      data: { tokenUsage: { total: { totalTokens: index } } },
+    },
+    { type: "turn/diff/updated", turnId, data: { diff: `diff ${index}` } },
+  ];
+}
+
+function seedWithSnapshots(testThread: TestThread, count: number): void {
+  appendRows(
+    testThread,
+    Array.from({ length: count }, (_, i) => {
+      const turnId = `turn-${i}`;
+      const requestId = `creq_${i.toString(8).replaceAll("0", "a").replaceAll("1", "b").padStart(10, "a")}`;
+      return [
+        request(requestId),
+        started(turnId),
+        accepted(requestId, turnId),
+        ...snapshots(turnId, i),
+        delta(turnId, "Answer "),
+        delta(turnId, `${i}`),
+        ...snapshots(turnId, i),
+        message(turnId, `Answer ${i}`),
+        completed(turnId),
+      ];
+    }).flat(),
+  );
+  appendRows(testThread, [started("live"), delta("live", "Live")]);
+}
+
+function drainPruning(
+  testThread: TestThread,
+  policy: (typeof THREAD_PRUNING_POLICIES)[number],
+): number {
+  let removed = 0;
+  for (let pass = 0; pass < 1000; pass += 1) {
+    const result = advanceThreadPruning(testThread.db, policy);
+    removed += result.removed;
+    if (result.action === "cycle-complete") return removed;
+  }
+  throw new Error(`${policy} pruning did not finish a cycle`);
 }
 
 function countSelectedEventRows(
@@ -596,6 +660,31 @@ describe("incremental conversation outlines", () => {
         );
       }),
   );
+
+  it("keeps the checkpoint warm and byte-identical across snapshot-only pruning, and rebuilds after a resolved-item prune", () => {
+    withTestThread((testThread) => {
+      seedWithSnapshots(testThread, 100);
+      const original = JSON.stringify(expectMatchesFull(testThread));
+      for (const policy of ["rate-limits", "usage", "turn-diffs"] as const) {
+        expect(drainPruning(testThread, policy)).toBeGreaterThan(0);
+        let warm = "";
+        expect(
+          countSelectedEventRows(testThread, () => {
+            warm = JSON.stringify(load(testThread));
+          }),
+        ).toBeLessThan(20);
+        expect(warm).toBe(original);
+        expect(JSON.stringify(expectMatchesFull(testThread))).toBe(original);
+      }
+      expect(drainPruning(testThread, "resolved-items")).toBeGreaterThan(0);
+      expect(
+        countSelectedEventRows(testThread, () => {
+          load(testThread);
+        }),
+      ).toBeGreaterThan(500);
+      expect(JSON.stringify(expectMatchesFull(testThread))).toBe(original);
+    });
+  });
 
   it("evicts old checkpoints without changing their rebuilt outlines", () => {
     withTestThread((testThread) => {

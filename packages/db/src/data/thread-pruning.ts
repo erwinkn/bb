@@ -2,7 +2,10 @@ import {
   drainPendingThreadPruningWork,
   THREAD_PRUNING_PENDING_POLICY,
 } from "./thread-pruning-work.js";
-import { isBeforeLatestThreadEvent } from "./event-pruning-guards.js";
+import {
+  isBeforeLatestThreadEvent,
+  isUnparentedEvent,
+} from "./event-pruning-guards.js";
 import {
   advanceLiveEventPruning,
   emptyResolvedItemPruningProbe,
@@ -35,6 +38,12 @@ const VERSION_BY_POLICY: Record<ThreadPruningPolicy, number> = {
   usage: 1,
   "turn-diffs": 1,
   "resolved-items": 1,
+};
+const REWRITES_HISTORY_BY_POLICY: Record<ThreadPruningPolicy, boolean> = {
+  "rate-limits": false,
+  usage: false,
+  "turn-diffs": false,
+  "resolved-items": true,
 };
 const BATCH_SIZE = 500;
 const LIVE_BATCH_SIZE = 32;
@@ -300,6 +309,7 @@ function advanceThreadPruningTransaction(
                       rows.map((row) => row.id),
                     ),
                     isBeforeLatestThreadEvent(threadId),
+                    isUnparentedEvent(),
                   ),
                 )
                 .run().changes;
@@ -412,9 +422,11 @@ function advanceThreadPruningTransaction(
     },
     { behavior: "immediate" },
   );
-  if (result.removed > 0 && result.threadId !== null)
+  const historyRewritten =
+    REWRITES_HISTORY_BY_POLICY[policy] && result.removed > 0;
+  if (historyRewritten && result.threadId !== null)
     bumpThreadEventRewriteGeneration(result.threadId);
-  return result;
+  return { ...result, historyRewritten };
 }
 
 export function advanceThreadPruning(

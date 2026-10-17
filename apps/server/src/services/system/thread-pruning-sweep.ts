@@ -61,7 +61,7 @@ export async function runThreadPruningSweep(
       scanned += result.scanned;
       removed += result.removed;
       removedBytes += result.removedBytes;
-      if (result.removed > 0 && result.threadId !== null)
+      if (result.historyRewritten && result.threadId !== null)
         compactedThreadIds.add(result.threadId);
       deps.logger.debug(
         { ...result, advanceElapsedMs },

@@ -415,7 +415,7 @@ describe("thread event pruning", () => {
     });
   });
 
-  it("notifies only after a committed live advance and reports its bounded work", async () => {
+  it("notifies only after a committed live advance that rewrites history and reports its bounded work", async () => {
     await withTestHarness(async (harness) => {
       const host = seedHost(harness.deps);
       const { project } = seedProjectWithSource(harness.deps, {
@@ -440,27 +440,36 @@ describe("thread event pruning", () => {
           itemKind: null,
           data: {},
         });
+      seedResolvedAssistantMessage(harness, {
+        completedSequence: 104,
+        deltaSequences: [101, 102, 103],
+        itemId: "assistant-1",
+        threadId: thread.id,
+        turnId: "turn",
+      });
       const notify = vi
         .spyOn(harness.deps.hub, "notifyThread")
         .mockImplementation(() => {});
-      const first = pruneThreadEventHistoryBestEffort(harness.deps, {
-        threadId: thread.id,
-        mode: "active",
-      });
-      expect(first).toMatchObject({
+      const prune = () =>
+        pruneThreadEventHistoryBestEffort(harness.deps, {
+          threadId: thread.id,
+          mode: "active",
+        });
+      expect(prune()).toMatchObject({
         policy: "rate-limits",
         scanned: 32,
         totalRemoved: 32,
       });
+      expect(prune()).toMatchObject({ policy: "usage", totalRemoved: 0 });
+      expect(prune()).toMatchObject({ policy: "turn-diffs", totalRemoved: 0 });
+      expect(notify).not.toHaveBeenCalled();
+      expect(prune()).toMatchObject({
+        policy: "resolved-items",
+        totalRemoved: 2,
+      });
       expect(notify).toHaveBeenCalledExactlyOnceWith(thread.id, [
         "history-compacted",
       ]);
-      const second = pruneThreadEventHistoryBestEffort(harness.deps, {
-        threadId: thread.id,
-        mode: "active",
-      });
-      expect(second).toMatchObject({ policy: "usage", totalRemoved: 0 });
-      expect(notify).toHaveBeenCalledTimes(1);
       notify.mockRestore();
     });
   });
