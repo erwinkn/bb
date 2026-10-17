@@ -729,9 +729,10 @@ describe("bb-app launcher", () => {
     });
   });
 
-  it("runs the source update shim for a start unless --no-in-app-updates is passed", () => {
-    expect(shouldRunSourceAppUpdateShim([])).toBe(true);
-    expect(shouldRunSourceAppUpdateShim(["start"])).toBe(true);
+  it("runs the source update shim only for a start with --in-app-updates (fork)", () => {
+    expect(shouldRunSourceAppUpdateShim([])).toBe(false);
+    expect(shouldRunSourceAppUpdateShim(["start"])).toBe(false);
+    expect(shouldRunSourceAppUpdateShim(["--in-app-updates"])).toBe(true);
     expect(shouldRunSourceAppUpdateShim(["--no-in-app-updates"])).toBe(false);
     expect(shouldRunSourceAppUpdateShim(["start", "--no-in-app-updates"])).toBe(
       false,
@@ -742,7 +743,7 @@ describe("bb-app launcher", () => {
 
   it("keeps accepting --in-app-updates from launchers started by earlier update shims", () => {
     expect(parseLauncherArgs(["start", "--in-app-updates"])).toEqual({
-      options: { help: false, json: false },
+      options: { help: false, inAppUpdates: true, json: false },
       positionals: ["start"],
     });
     expect(shouldRunSourceAppUpdateShim(["start", "--in-app-updates"])).toBe(

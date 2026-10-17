@@ -130,8 +130,8 @@ that hosting app through its native updater. It never updates the desktop you
 are viewing from unless that desktop hosts this server.
 
 `bb updates apply` covers provider CLIs only. `bb updates app apply` updates
-bb itself when it was started from `npx bb-app` (or a global `bb-app`) without
-`--no-in-app-updates`: it installs the new version next to the running one and
+bb itself when it was started from `npx bb-app` (or a global `bb-app`) with
+`--in-app-updates` (this fork build keeps them off by default): it installs the new version next to the running one and
 restarts into it. It does not roll back if the new version fails to start.
 Desktop users update through the desktop app's relaunch, and `bb-server` cannot
 update itself. Connected daemons follow the server version automatically.

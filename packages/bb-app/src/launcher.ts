@@ -356,6 +356,7 @@ interface LauncherCliOptions {
   dataDir?: string;
   enrollKey?: string;
   help: boolean;
+  inAppUpdates?: boolean;
   performanceDiagnostics?: boolean;
   hostDaemonPort?: string;
   hostId?: string;
@@ -871,6 +872,9 @@ export function parseLauncherArgs(args: string[]): ParsedLauncherArgs {
       );
     }
     options.noInAppUpdates = true;
+  }
+  if (readBooleanOption(parsed.values["in-app-updates"])) {
+    options.inAppUpdates = true;
   }
   if (readBooleanOption(parsed.values["perf-diagnostics"])) {
     options.performanceDiagnostics = true;
@@ -3151,14 +3155,15 @@ function printBbAppHelp(): void {
   process.stdout.write(`bb-app
 
 Usage:
-  bb-app [--data-dir <path>] [--server-bind-host <host>] [--server-port <port>] [--host-daemon-port <port>] [--no-in-app-updates] [--bundled]
+  bb-app [--data-dir <path>] [--server-bind-host <host>] [--server-port <port>] [--host-daemon-port <port>] [--in-app-updates] [--bundled]
   bb-app start
 
   --perf-diagnostics permits CPU profiles and detailed logs when the performanceDiagnostics experiment is also on.
-  Settings → Updates and bb updates app can update and restart bb. bb-app
-  runs the newest of this package and any version installed by an in-app
-  update; --bundled runs this package regardless. --no-in-app-updates turns
-  in-app updates off and runs this package.
+  --in-app-updates lets Settings → Updates and bb updates app update and
+  restart bb. bb-app then runs the newest of this package and any version
+  installed by an in-app update; --bundled runs this package regardless.
+  This fork build keeps in-app updates off unless the flag is passed, so an
+  update can never replace the fork; --no-in-app-updates is accepted.
 
   bb-app stop
   bb-app config set <key> <value>
@@ -3931,6 +3936,14 @@ function isRunningUnderAppUpdateShim(env: NodeJS.ProcessEnv): boolean {
   return env[APP_UPDATE_SHIM_PROTOCOL_ENV_NAME] !== undefined;
 }
 
+// FORK: upstream turned in-app updates on by default (#5056). The fork keeps
+// them opt-in, as in 0.45: under the shim, Settings → Updates could move the
+// service onto upstream npm, and the shim's launcher sees the resolved build
+// path, which defeats resolveFollowedInstallContext (server-only deploys).
+function inAppUpdatesRequested(options: LauncherCliOptions): boolean {
+  return options.inAppUpdates === true && options.noInAppUpdates !== true;
+}
+
 function shouldRunNpmAppUpdateShim(args: {
   enabled: boolean;
   options: RunBbAppOptions;
@@ -3981,7 +3994,7 @@ const shimOutput: ShimOutput = {
 export function shouldRunSourceAppUpdateShim(cliArgs: string[]): boolean {
   const parsed = parseLauncherArgs(cliArgs);
   return (
-    parsed.options.noInAppUpdates !== true &&
+    inAppUpdatesRequested(parsed.options) &&
     !parsed.options.help &&
     resolveBbAppCommand(parsed.positionals).kind === "start"
   );
@@ -4171,7 +4184,7 @@ export async function runBbApp(
   if (
     shouldRunNpmAppUpdateShim({
       options,
-      enabled: parsedArgs.options.noInAppUpdates !== true,
+      enabled: inAppUpdatesRequested(parsedArgs.options),
       runtime,
       underShim: underAppUpdateShim,
     })
