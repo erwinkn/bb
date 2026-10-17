@@ -498,8 +498,27 @@ function randomSessionRows(state: SessionState, random: Random): RowSpec[] {
         },
       ];
     }
+    if (roll < 0.85) {
+      return [
+        { data: { diff: "diff --git" }, turnId, type: "turn/diff/updated" },
+      ];
+    }
     return [
-      { data: { diff: "diff --git" }, turnId, type: "turn/diff/updated" },
+      {
+        data: {
+          rateLimits: {
+            kind: "subscription-window",
+            overageReason: null,
+            overageStatus: null,
+            providerId: "codex",
+            reachedReason: null,
+            status: "allowed",
+            windows: [],
+          },
+        },
+        providerThreadId,
+        type: "provider/rateLimits/updated",
+      },
     ];
   }
   if (choice < 0.86) {
@@ -641,14 +660,14 @@ function planStepsRow(turnId: string, id: string, step: string): RowSpec {
   });
 }
 
-function pruneUsageSnapshots(testThread: TestThread): void {
-  for (let pass = 0; pass < 100; pass += 1) {
-    if (
-      advanceThreadPruning(testThread.db, "usage").action === "cycle-complete"
-    )
-      return;
+function pruneSnapshots(testThread: TestThread): void {
+  for (const policy of ["rate-limits", "usage", "turn-diffs"] as const) {
+    let complete = false;
+    for (let pass = 0; pass < 100 && !complete; pass += 1)
+      complete =
+        advanceThreadPruning(testThread.db, policy).action === "cycle-complete";
+    if (!complete) throw new Error(`${policy} pruning did not finish a cycle`);
   }
-  throw new Error("Usage pruning did not finish a cycle");
 }
 
 describe("latest timeline selection memo", () => {
@@ -684,7 +703,7 @@ describe("latest timeline selection memo", () => {
               { db: testThread.db },
               { mode: "active", threadId: testThread.thread.id },
             );
-            pruneUsageSnapshots(testThread);
+            pruneSnapshots(testThread);
           } else {
             append(testThread, randomSessionRows(state, random));
           }

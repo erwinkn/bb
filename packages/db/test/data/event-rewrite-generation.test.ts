@@ -190,14 +190,6 @@ describe("thread event rewrite generation", () => {
       rewrite: (db, threadId) => deleteSuffix(db, threadId, 2),
     },
     {
-      name: "a usage prune",
-      seed: (threadId) => [tokenUsage(threadId, 1)],
-      noop: (db) => pruneThreadEvents(db, "usage"),
-      between: (threadId) =>
-        [2, 3, 4].map((sequence) => tokenUsage(threadId, sequence)),
-      rewrite: (db) => pruneThreadEvents(db, "usage"),
-    },
-    {
       name: "a resolved delta prune",
       seed: (threadId) =>
         [1, 2, 3].map((sequence) =>
@@ -250,6 +242,34 @@ describe("thread event rewrite generation", () => {
       expect(testCase.rewrite(db, threadId)).toBeGreaterThan(0);
     });
     expect(getThreadEventRewriteGeneration(otherThreadId)).toBe(otherBefore);
+  });
+
+  it.each<{
+    policy: ThreadPruningPolicy;
+    snapshot: (threadId: string, sequence: number) => InsertEventInput;
+  }>([
+    { policy: "usage", snapshot: tokenUsage },
+    {
+      policy: "rate-limits",
+      snapshot: (threadId, sequence) =>
+        row(threadId, sequence, "provider/rateLimits/updated", {
+          rateLimits: { providerId: "codex" },
+        }),
+    },
+    {
+      policy: "turn-diffs",
+      snapshot: (threadId, sequence) =>
+        row(threadId, sequence, "turn/diff/updated", { diff: `${sequence}` }),
+    },
+  ])("does not change when a $policy prune removes snapshots", (testCase) => {
+    const { db, threadId } = setup();
+    insertEvents(db, noopNotifier, [
+      ...[1, 2, 3, 4].map((sequence) => testCase.snapshot(threadId, sequence)),
+      message(threadId, 5),
+    ]);
+    expectGenerationBump(threadId, false, () => {
+      expect(pruneThreadEvents(db, testCase.policy)).toBeGreaterThan(0);
+    });
   });
 
   it("changes when a completed output is migrated and not when the scanned output fits", () => {

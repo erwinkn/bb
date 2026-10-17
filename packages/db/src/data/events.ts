@@ -1,4 +1,7 @@
-import { isBeforeLatestThreadEvent } from "./event-pruning-guards.js";
+import {
+  isBeforeLatestThreadEvent,
+  isUnparentedEvent,
+} from "./event-pruning-guards.js";
 import { acquireProjectAttachmentOwnership } from "./project-attachments.js";
 import {
   storedAttachmentPaths,
@@ -3963,6 +3966,7 @@ function pruneUsageSnapshots(
     WHERE id IN (${pruningCandidates(args)}) AND thread_id = ${args.threadId}
       AND type = ${args.eventType}
       AND ${isBeforeLatestThreadEvent(args.threadId)}
+      AND ${isUnparentedEvent()}
       AND sequence NOT IN (${keepers.latestRootSequence}, ${keepers.latestContextSequence}, ${boundarySequence})`)
     .changes;
 }

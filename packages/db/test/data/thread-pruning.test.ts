@@ -123,6 +123,43 @@ describe("thread pruning", () => {
     }
   });
 
+  it("keeps parented snapshots, which can move a timeline ordering boundary", () => {
+    const f = setup();
+    try {
+      const snapshots = [
+        [
+          "provider/rateLimits/updated",
+          { rateLimits: { providerId: "codex" } },
+        ],
+        [
+          "thread/contextWindowUsage/updated",
+          { contextWindowUsage: { usedTokens: 1, modelContextWindow: 200000 } },
+        ],
+        ["thread/tokenUsage/updated", { tokenUsage: { total: {} } }],
+        ["turn/diff/updated", { diff: "diff" }],
+      ] as const;
+      let sequence = 0;
+      const parented: number[] = [];
+      for (const [type, data] of snapshots)
+        for (const parentToolCallId of [null, "agent", null, "agent", null]) {
+          seed(f, ++sequence, {
+            type,
+            data: JSON.stringify(data),
+            parentToolCallId,
+          });
+          if (parentToolCallId !== null) parented.push(sequence);
+        }
+      seed(f, ++sequence, { type: "system/manager/user_message", data: "{}" });
+      for (const policy of ["rate-limits", "usage", "turn-diffs"] as const)
+        cycle(f, policy);
+      const remaining = sequences(f);
+      expect(remaining.length).toBeLessThan(sequence - 4);
+      expect(remaining).toEqual(expect.arrayContaining(parented));
+    } finally {
+      f.db.$client.close();
+    }
+  });
+
   it("rotates scoped live policies durably and drains active usage without global idle cleanup", () => {
     let f = setup();
     try {
@@ -226,9 +263,13 @@ describe("thread pruning", () => {
       expect(getThreadEventRewriteGeneration(f.thread.id)).toBe(generation);
       f.db.run(sql`DROP TRIGGER fail_live_advance`);
       expect(
-        advanceThreadPruning(f.db, { threadId: f.thread.id }).removed,
-      ).toBe(1);
-      expect(getThreadEventRewriteGeneration(f.thread.id)).toBe(generation + 1);
+        advanceThreadPruning(f.db, { threadId: f.thread.id }),
+      ).toMatchObject({
+        policy: "rate-limits",
+        removed: 1,
+        historyRewritten: false,
+      });
+      expect(getThreadEventRewriteGeneration(f.thread.id)).toBe(generation);
     } finally {
       f.db.$client.close();
     }
@@ -492,25 +533,38 @@ describe("thread pruning", () => {
   it("rolls back the cursor and deletions together without publishing a rewrite generation", () => {
     const f = setup();
     try {
-      seed(f, 1);
+      for (const sequence of [1, 2, 3])
+        seed(f, sequence, {
+          type: "item/agentMessage/delta",
+          itemId: "message",
+          data: '{"delta":"part"}',
+        });
       f.db
         .insert(threadPruningCursors)
-        .values({ policy: "rate-limits", version: 1, updatedAt: 1 })
+        .values({ policy: "resolved-items", version: 1, updatedAt: 1 })
         .run();
-      seed(f, 2);
+      seed(f, 4, {
+        type: "item/completed",
+        itemId: "message",
+        itemKind: "agentMessage",
+        data: '{"item":{"text":"partpartpart"}}',
+      });
       const before = f.db.select().from(threadPruningCursors).all();
       const generation = getThreadEventRewriteGeneration(f.thread.id);
       f.db.run(
         sql`CREATE TRIGGER fail_pruning BEFORE UPDATE ON thread_pruning_cursors BEGIN SELECT RAISE(ABORT, 'injected failure'); END`,
       );
-      expect(() => advanceThreadPruning(f.db, "rate-limits")).toThrow(
+      expect(() => advanceThreadPruning(f.db, "resolved-items")).toThrow(
         "injected failure",
       );
-      expect(sequences(f)).toEqual([1, 2]);
+      expect(sequences(f)).toEqual([1, 2, 3, 4]);
       expect(f.db.select().from(threadPruningCursors).all()).toEqual(before);
       expect(getThreadEventRewriteGeneration(f.thread.id)).toBe(generation);
       f.db.run(sql`DROP TRIGGER fail_pruning`);
-      expect(advanceThreadPruning(f.db, "rate-limits").removed).toBe(1);
+      expect(advanceThreadPruning(f.db, "resolved-items")).toMatchObject({
+        removed: 2,
+        historyRewritten: true,
+      });
       expect(getThreadEventRewriteGeneration(f.thread.id)).toBe(generation + 1);
     } finally {
       f.db.$client.close();
