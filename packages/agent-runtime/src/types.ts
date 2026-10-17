@@ -195,7 +195,7 @@ export interface RunTurnArgs {
   options: AgentRuntimeExecutionOptions;
   contributedEnv?: readonly AgentRuntimeContributedEnvEntry[];
   instructions?: string;
-  /** FORK: the thread's tools as BB resolved them for this turn. */
+
   dynamicTools?: DynamicTool[];
 }
 

@@ -145,14 +145,6 @@ function toBridgeWireOptions(
   };
 }
 
-/**
- * FORK: the hidden tool Erwin's Claude Code bridge calls before each new turn
- * (FORK.md, "per-turn context from a hidden tool"). A plugin selects it for a
- * thread whose turns must get their context from it (chat memory). Only a
- * bridge that advertises the `turnContext` capability serves it: every other
- * one never shows it to its model and refuses a turn that requires it, so no
- * turn runs without the context its thread requires, on any path.
- */
 export const TURN_CONTEXT_TOOL_NAME = "claude_code_turn_context";
 
 const requiresTurnContext = (tools: readonly DynamicTool[] | undefined) =>
@@ -195,7 +187,6 @@ export function createBridgeProtocolAdapter(
     return (handshake as { turnContext?: unknown }).turnContext === true;
   }
 
-  /** The tools a session or turn gets: the turn-context hook only where it is served. */
   function bridgeTools(
     tools: DynamicTool[] | undefined,
   ): DynamicTool[] | undefined {

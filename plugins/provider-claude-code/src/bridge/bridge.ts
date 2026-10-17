@@ -324,10 +324,7 @@ type CanonicalTurnSteerParams = z.infer<typeof canonicalTurnSteerParamsSchema>;
 interface CanonicalTurnAcceptance {
   clientRequestId: CanonicalTurnStartParams["clientRequestId"];
   providerThreadId: string;
-  /**
-   * The thread's tools as BB resolved them for this new turn. They decide
-   * whether it asks for its turn context, whatever the session was built with.
-   */
+
   turnTools?: CanonicalTurnStartParams["dynamicTools"];
 }
 
@@ -1308,14 +1305,6 @@ function configureInjectedTools(
   );
 }
 
-/**
- * A session started for a new turn (a fresh OptChat session, or a resident
- * restarted after its stream ended) serves the tools BB resolved for that
- * turn, not the ones the thread's first session was built with (A473): a
- * thread whose memory was enabled since gets its memory tools there, and its
- * fresh-session seed changes with them. Returns the undo for a session that
- * failed to start.
- */
 function adoptTurnTools(
   threadSession: ThreadSession,
   tools: SessionConstructionConfig["dynamicTools"],
@@ -1325,7 +1314,7 @@ function adoptTurnTools(
   if (tools === undefined || isDeepStrictEqual(config.dynamicTools, tools)) {
     return () => {};
   }
-  const use = (dynamicTools: SessionConstructionConfig["dynamicTools"]) => {
+  const apply = (dynamicTools: SessionConstructionConfig["dynamicTools"]) => {
     attachment.sessionConstructionConfig = { ...config, dynamicTools };
     setSessionTools(
       attachment.sessionOptions,
@@ -1334,8 +1323,8 @@ function adoptTurnTools(
     );
     configureInjectedTools(threadSession.translator, dynamicTools);
   };
-  use(tools);
-  return () => use(config.dynamicTools);
+  apply(tools);
+  return () => apply(config.dynamicTools);
 }
 
 function createThreadSession(attachment: ThreadAttachment): ThreadSession {
@@ -2431,7 +2420,7 @@ async function handleRequest(request: ClaudeCodeJsonRpcRequest): Promise<void> {
           grammarVersions: [THREAD_DELTA_GRAMMAR_V3, THREAD_DELTA_GRAMMAR_V3],
           steerMode: "inject",
           skills: { configure: true },
-          // FORK: a new turn whose tools include TURN_CONTEXT_TOOL_NAME asks it first.
+
           turnContext: true,
         },
       };
@@ -2524,8 +2513,6 @@ async function handleRequest(request: ClaudeCodeJsonRpcRequest): Promise<void> {
   }
 }
 
-// The tools a thread's sessions start with: its own bb-bridge MCP server,
-// serving every tool BB gave it but the hidden turn context tool.
 function setSessionTools(
   sessionOptions: SdkSessionOptions,
   dynamicTools: SessionConstructionConfig["dynamicTools"],
@@ -2769,8 +2756,7 @@ async function deliverTurnInput(
     );
     return;
   }
-  // A held steer goes to the session its turn was prepared on; a permission
-  // restart waits for the next turn (restartBeforeNextTurn).
+
   const threadSession = bound
     ? isCurrentSession(bound)
       ? bound
@@ -2886,10 +2872,6 @@ function isCurrentSession(threadSession: ThreadSession): boolean {
   );
 }
 
-// Every OptChat message reaches Claude through its turn context, so a steer
-// whose turn has already closed never goes to the resident session: it fails
-// with the error of a turn whose preparation failed, or goes back to BB as
-// stale so that BB sends it as a new turn.
 function rejectSteerOutsideTurn(
   id: string | number,
   threadSession: ThreadSession,

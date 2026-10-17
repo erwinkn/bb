@@ -733,8 +733,6 @@ describe("createAgentRuntime command contracts", () => {
     await runtime.shutdown();
   });
 
-  // FORK (A471 finding 1): every turn carries the tools BB resolved for it, and
-  // a bridge that does not serve the turn-context hook refuses a turn needing it.
   it("sends each turn its tools and refuses one that needs an unserved turn-context hook", async () => {
     const { record, runtime } = createContractRuntime();
     await runtime.startThread({

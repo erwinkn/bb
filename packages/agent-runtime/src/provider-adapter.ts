@@ -87,7 +87,7 @@ export type AdapterCommand =
       input: PromptInput[];
       clientRequestId: ClientTurnRequestId;
       options: ProviderExecutionContext;
-      /** FORK: the thread's tools as resolved for this turn. */
+
       dynamicTools?: DynamicTool[];
     }
   | {

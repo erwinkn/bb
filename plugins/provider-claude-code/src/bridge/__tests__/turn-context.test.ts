@@ -1279,9 +1279,6 @@ it("advertises that it serves the turn context", async () => {
   ).toBe(true);
 });
 
-// A471 findings 1-3: whether a turn asks follows the tools BB resolved for
-// that turn, on every path that starts one (a queued message, a parent
-// notice, Send now), not the tools its session was built with.
 it("asks for the turn context when the turn's tools have the hook, though its session was built without it", async () => {
   await startThread(bridge, dynamicTools.slice(1));
   sendTurn(
@@ -1348,7 +1345,6 @@ it("runs a turn in its session when the turn's tools no longer have the hook", a
   );
 });
 
-// A473 finding 3: a session started for a turn serves that turn's tools.
 const memoryTools = [
   dynamicTools[0]!,
   ...["memory_read", "memory_zoom"].map((name) => ({
@@ -1418,7 +1414,6 @@ it("gives a fresh session, and its seed, the memory tools of a thread whose memo
   }
   expect(fresh.options.resume).toBe(seedCalls()[0]!.options.sessionId);
 
-  // Another tool list is another setup: a new seed, with that list.
   const next = await freshTurnWithTools(
     "turn-2",
     SECOND_REQUEST,
@@ -1461,8 +1456,7 @@ it("keeps the thread's tools when the fresh session with the turn's tools fails 
   expect((await bridge.waitForResponse("turn-1")).error?.message).toContain(
     "spawn claude ENOENT",
   );
-  // The resident still serves the tools it was built with, so BB resuming
-  // the thread with those tools keeps it.
+
   const started = queryCalls().length;
   bridge.sendRequest("resume", "thread/resume", {
     cwd: "/tmp/worktree",

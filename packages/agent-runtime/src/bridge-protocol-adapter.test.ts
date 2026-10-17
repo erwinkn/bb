@@ -777,9 +777,6 @@ describe("deferred text flush", () => {
   });
 });
 
-// FORK (A471 findings 1 and 5): a turn whose tools include the turn-context
-// hook runs only on a bridge that serves it; every other bridge refuses it,
-// whatever path started it, and never shows the hook to its model.
 describe("turn-context hook", () => {
   const hook = {
     name: "claude_code_turn_context",

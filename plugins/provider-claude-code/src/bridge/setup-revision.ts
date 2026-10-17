@@ -19,8 +19,7 @@ const pathListSchema = z.union([
   z.array(z.string()),
 ]);
 const pathsSchema = pathListSchema.optional().catch(undefined);
-// Commands may also map each name to its source file, or to inline content
-// that the fingerprinted manifest already holds.
+
 const commandPathsSchema = z
   .union([
     pathListSchema,
@@ -148,7 +147,6 @@ class SetupFingerprint {
     return createHash("sha256").update(this.lines.join("\n")).digest("hex");
   }
 
-  // A directory with a SKILL.md is one skill; any other holds skills.
   private async skill(dir: string, depth = 0): Promise<void> {
     const skill = join(dir, "SKILL.md");
     const info = await this.stat(skill);
