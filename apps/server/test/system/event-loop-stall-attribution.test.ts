@@ -1,7 +1,11 @@
+import { ChildProcess, execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { createMigratedConnection } from "@bb/db/testing";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   recordEventLoopDbQuery,
+  startSpawnAttribution,
+  summarizeSpawnsBetween,
   takeEventLoopAttributionWindow,
 } from "../../src/services/system/event-loop-stall-attribution.js";
 import { startEventLoopStallSampler } from "../../src/services/system/event-loop-stall-sampler.js";
@@ -48,6 +52,39 @@ describe("event loop stall attribution", () => {
     });
   });
 
+  it("times each process spawn on the event loop", async () => {
+    const originalSpawn = ChildProcess.prototype["spawn" as keyof ChildProcess];
+    const stop = startSpawnAttribution();
+    const startedAt = Date.now();
+    try {
+      takeEventLoopAttributionWindow();
+      await promisify(execFile)(process.execPath, ["-e", "0"]);
+      burnTheEventLoop(30);
+      const window = takeEventLoopAttributionWindow();
+      expect(window).toMatchObject({
+        slowestSpawn: expect.stringMatching(/^node/u),
+        spawnCount: 1,
+      });
+      expect(window.spawnMs).toBeGreaterThan(0);
+      expect(window.spawnMaxMs).toBe(window.spawnMs);
+      expect(window.mainThreadCpuMs).toBeGreaterThanOrEqual(20);
+      expect(window.windowMs).toBeGreaterThanOrEqual(window.mainThreadCpuMs);
+      expect(summarizeSpawnsBetween(startedAt, Date.now())).toEqual({
+        spawnCount: 1,
+        spawnMs: window.spawnMs,
+      });
+      expect(summarizeSpawnsBetween(0, startedAt - 1)).toEqual({
+        spawnCount: 0,
+        spawnMs: 0,
+      });
+    } finally {
+      stop();
+    }
+    expect(ChildProcess.prototype["spawn" as keyof ChildProcess]).toBe(
+      originalSpawn,
+    );
+  });
+
   it("receives every statement from a connection created with onQuery", () => {
     const onQuery = vi.fn();
     const db = createMigratedConnection({
@@ -67,9 +104,11 @@ describe("event loop stall attribution", () => {
     { timeout: 15_000 },
     async () => {
       const logger = { info: vi.fn(), warn: vi.fn() };
-      const sampler = startEventLoopStallSampler({ logger });
+      const onSample = vi.fn();
+      const sampler = startEventLoopStallSampler({ logger, onSample });
       try {
         await new Promise((resolve) => setTimeout(resolve, 500));
+        const startedAt = Date.now();
         burnTheEventLoop(1_200);
         await vi.waitFor(
           () => {
@@ -87,6 +126,21 @@ describe("event loop stall attribution", () => {
           { timeout: 5_000, interval: 50 },
         );
         expect(logger.warn).not.toHaveBeenCalled();
+        expect(onSample).toHaveBeenCalledTimes(1);
+        const [sample] = onSample.mock.calls[0]!;
+        expect(sample).toMatchObject({ spawnCount: 0, spawnMs: 0 });
+        expect(sample.peakLagMs).toBeGreaterThanOrEqual(250);
+        expect(Math.abs(sample.startedAt - startedAt)).toBeLessThan(150);
+        if (process.platform === "linux") {
+          expect(sample.mainThread.wallMs).toBeGreaterThanOrEqual(1_150);
+          expect(
+            sample.mainThread.cpuMs + sample.mainThread.runQueueMs,
+          ).toBeGreaterThanOrEqual(900);
+          expect(sample.mainThread.offCpuMs).toBeGreaterThanOrEqual(0);
+          expect(sample.mainThread.majorFaults).toBeGreaterThanOrEqual(0);
+        } else {
+          expect(sample.mainThread).toBeNull();
+        }
       } finally {
         sampler.stop();
       }

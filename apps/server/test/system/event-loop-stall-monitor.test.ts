@@ -176,6 +176,98 @@ describe("event loop stall monitor", () => {
     monitor.stop();
   });
 
+  it("logs a stall that only the stack sampler caught", () => {
+    installHistogram({ maxDelayMs: 300, meanDelayMs: 25, p99DelayMs: 280 });
+    const logger = { info: vi.fn() };
+    const monitor = startEventLoopStallMonitor({ logger });
+    const sample = {
+      durationMs: 1_470,
+      mainThread: {
+        cpuMs: 410,
+        majorFaults: 0,
+        offCpuMs: 1_020,
+        runQueueMs: 40,
+        wallMs: 1_470,
+      },
+      peakLagMs: 380,
+      samples: 52,
+      spawnCount: 6,
+      spawnMs: 151,
+      startedAt: 1_000,
+      topFunctions: ["spawn 151ms"],
+      topStack: "spawn < execFile",
+    };
+
+    monitor.noteSampledStall(sample);
+    vi.advanceTimersByTime(EVENT_LOOP_STALL_MONITOR_INTERVAL_MS);
+
+    expect(logger.info).toHaveBeenCalledWith(
+      {
+        detectedBy: "sampler",
+        durationMs: 1_470,
+        mainThread: sample.mainThread,
+        maxDelayMs: 380,
+        spawnCount: 6,
+        spawnMs: 151,
+        startedAt: 1_000,
+        topStack: "spawn < execFile",
+        stallAttribution: "unattributed",
+        stallCauseCandidate: null,
+        ...EMPTY_WORK_SNAPSHOT,
+      },
+      "Event loop stalled",
+    );
+    expect(logger.info).toHaveBeenCalledWith(
+      expect.objectContaining({ maxDelayMs: 380, spawnCount: 0 }),
+      "Event loop stall attributed",
+    );
+    logger.info.mockClear();
+    vi.advanceTimersByTime(EVENT_LOOP_STALL_MONITOR_INTERVAL_MS);
+    expect(logger.info).not.toHaveBeenCalled();
+
+    monitor.stop();
+  });
+
+  it("does not log a sampled stall again when the delay histogram already did", () => {
+    const histogram = installHistogram({
+      maxDelayMs: 600,
+      meanDelayMs: 25,
+      p99DelayMs: 450,
+    });
+    const logger = { info: vi.fn() };
+    const monitor = startEventLoopStallMonitor({ logger });
+    const sample = {
+      durationMs: 640,
+      mainThread: null,
+      peakLagMs: 600,
+      samples: 20,
+      spawnCount: 0,
+      spawnMs: 0,
+      startedAt: 1_000,
+      topFunctions: [],
+      topStack: null,
+    };
+    const stallLogs = () =>
+      logger.info.mock.calls.filter(
+        ([, message]) => message === "Event loop stalled",
+      );
+
+    vi.advanceTimersByTime(EVENT_LOOP_STALL_MONITOR_INTERVAL_MS);
+    histogram.max = 0;
+    monitor.noteSampledStall(sample);
+    vi.advanceTimersByTime(EVENT_LOOP_STALL_MONITOR_INTERVAL_MS);
+    monitor.noteSampledStall(sample);
+    histogram.max = millisecondsToNanoseconds(600);
+    vi.advanceTimersByTime(EVENT_LOOP_STALL_MONITOR_INTERVAL_MS);
+
+    expect(stallLogs()).toHaveLength(2);
+    expect(
+      stallLogs().some(([fields]) => "detectedBy" in (fields as object)),
+    ).toBe(false);
+
+    monitor.stop();
+  });
+
   it("stops sampling after stop", () => {
     const histogram = installHistogram({
       maxDelayMs: 500,

@@ -367,7 +367,10 @@ export async function runServer(serverConfig: ServerConfig): Promise<void> {
     logger,
     thresholdMs: () => (diagnosticsEnabled() ? 100 : 500),
   });
-  const eventLoopStallSampler = startEventLoopStallSampler({ logger });
+  const eventLoopStallSampler = startEventLoopStallSampler({
+    logger,
+    onSample: eventLoopStallMonitor.noteSampledStall,
+  });
   const stopDaemonLivenessChecks = startDaemonLivenessChecks({
     config: runtimeConfig,
     db,
