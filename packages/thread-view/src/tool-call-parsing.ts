@@ -543,7 +543,10 @@ function classifyShellSegment(
   }
 }
 
-const PARSED_INTENTS_CACHE_MAX_ENTRIES = 8_192;
+export const PARSED_INTENTS_CACHE_MAX_ENTRIES = 8_192;
+export const PARSED_INTENTS_CACHE_MAX_CHARS = 4_000_000;
+export const PARSED_INTENTS_CACHE_MAX_COMMAND_CHARS = 65_536;
+let parsedIntentsCacheChars = 0;
 const parsedIntentsByCommand = new Map<
   string,
   EventProjectionToolParsedIntent[]
@@ -551,6 +554,7 @@ const parsedIntentsByCommand = new Map<
 
 export function clearParsedShellCommandIntentsCache(): void {
   parsedIntentsByCommand.clear();
+  parsedIntentsCacheChars = 0;
 }
 
 export function parseShellCommandIntents(
@@ -564,10 +568,18 @@ export function parseShellCommandIntents(
     return cached;
   }
   const intents = parseUncachedShellCommandIntents(command);
+  if (command.length > PARSED_INTENTS_CACHE_MAX_COMMAND_CHARS) return intents;
   parsedIntentsByCommand.set(command, intents);
-  if (parsedIntentsByCommand.size > PARSED_INTENTS_CACHE_MAX_ENTRIES) {
-    const oldest = parsedIntentsByCommand.keys().next().value;
-    if (oldest !== undefined) parsedIntentsByCommand.delete(oldest);
+  parsedIntentsCacheChars += command.length;
+  for (const oldest of parsedIntentsByCommand.keys()) {
+    if (
+      parsedIntentsByCommand.size <= PARSED_INTENTS_CACHE_MAX_ENTRIES &&
+      parsedIntentsCacheChars <= PARSED_INTENTS_CACHE_MAX_CHARS
+    ) {
+      break;
+    }
+    parsedIntentsByCommand.delete(oldest);
+    parsedIntentsCacheChars -= oldest.length;
   }
   return intents;
 }

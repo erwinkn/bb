@@ -638,16 +638,36 @@ export function replaceKnownFileEditMessages(
   previousRows: readonly EventProjectionFileEditMessage[],
   nextRows: readonly EventProjectionFileEditMessage[],
 ): boolean {
-  const previousIndexes = previousRows
-    .map((row) => messages.lastIndexOf(row))
-    .sort((left, right) => left - right);
-  if (previousIndexes.includes(-1)) {
+  const previous = new Set<EventProjectionMessage>(previousRows);
+  let firstIndex = messages.length;
+  let found = 0;
+  for (
+    let index = messages.length - 1;
+    index >= 0 && found < previous.size;
+    index -= 1
+  ) {
+    if (previous.has(messages[index]!)) {
+      found += 1;
+      firstIndex = index;
+    }
+  }
+  if (found < previous.size) {
     return false;
   }
-  for (let index = previousIndexes.length - 1; index >= 0; index -= 1) {
-    messages.splice(previousIndexes[index]!, 1);
+  let writeIndex = firstIndex;
+  for (
+    let readIndex = firstIndex;
+    readIndex < messages.length;
+    readIndex += 1
+  ) {
+    const message = messages[readIndex]!;
+    if (!previous.has(message)) {
+      messages[writeIndex] = message;
+      writeIndex += 1;
+    }
   }
-  messages.splice(previousIndexes[0] ?? messages.length, 0, ...nextRows);
+  messages.length = writeIndex;
+  messages.splice(firstIndex, 0, ...nextRows);
   return true;
 }
 

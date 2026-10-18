@@ -3,6 +3,8 @@ import { threadCpuUsage } from "node:process";
 import { expect, it } from "vitest";
 import {
   clearParsedShellCommandIntentsCache,
+  PARSED_INTENTS_CACHE_MAX_CHARS,
+  PARSED_INTENTS_CACHE_MAX_COMMAND_CHARS,
   parseSentThreadMessage,
   parseShellCommandIntents,
 } from "../src/tool-call-parsing.js";
@@ -34,7 +36,7 @@ it("bounds intent parsing work after a script's disqualifying write", () => {
 });
 
 it("parses each distinct command once and returns the same intents on repeat", () => {
-  const command = `cat '${"repeated words ".repeat(20_000)}'`;
+  const command = `cat '${"repeated words ".repeat(4_000)}'`;
   clearParsedShellCommandIntentsCache();
   const first = parseShellCommandIntents(command);
   const started = threadCpuUsage();
@@ -46,6 +48,30 @@ it("parses each distinct command once and returns the same intents on repeat", (
   clearParsedShellCommandIntentsCache();
   expect(parseShellCommandIntents(command)).not.toBe(first);
   expect(parseShellCommandIntents(command)).toEqual(first);
+});
+
+it("keeps oversized commands out of the intent cache", () => {
+  const command = `cat '${"x".repeat(PARSED_INTENTS_CACHE_MAX_COMMAND_CHARS)}'`;
+  clearParsedShellCommandIntentsCache();
+  const first = parseShellCommandIntents(command);
+  expect(parseShellCommandIntents(command)).not.toBe(first);
+  expect(parseShellCommandIntents(command)).toEqual(first);
+});
+
+it("evicts the oldest commands once the cached text exceeds its budget", () => {
+  clearParsedShellCommandIntentsCache();
+  const commandChars = PARSED_INTENTS_CACHE_MAX_COMMAND_CHARS - 16;
+  const command = (index: number) =>
+    `cat '${String(index).padStart(8, "0")}${"y".repeat(commandChars - 16)}'`;
+  const fitting = Math.floor(PARSED_INTENTS_CACHE_MAX_CHARS / commandChars);
+  const firstIntents = parseShellCommandIntents(command(0));
+  const lastIntents = [];
+  for (let index = 1; index <= fitting; index += 1) {
+    lastIntents.push(parseShellCommandIntents(command(index)));
+  }
+  expect(parseShellCommandIntents(command(fitting))).toBe(lastIntents.at(-1));
+  expect(parseShellCommandIntents(command(0))).not.toBe(firstIntents);
+  clearParsedShellCommandIntentsCache();
 });
 
 it("keeps bb thread tell parsing linear on unterminated heredocs", () => {

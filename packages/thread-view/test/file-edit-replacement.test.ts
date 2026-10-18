@@ -1,3 +1,4 @@
+import { threadCpuUsage } from "node:process";
 import { expect, it } from "vitest";
 import type {
   EventProjectionFileEditMessage,
@@ -97,4 +98,30 @@ it("declines when a previous row is no longer among the messages", () => {
   const before = [...messages];
   expect(replaceKnownFileEditMessages(messages, [stale], [])).toBe(false);
   expect(messages).toEqual(before);
+});
+
+it("replaces a large multi-file call in time linear in the messages after it", () => {
+  const previousRows = Array.from({ length: 2_048 }, () =>
+    fileEdit("call-big"),
+  );
+  const later = Array.from({ length: 10_000 }, () => other());
+  const nextRows = previousRows.map(() => fileEdit("call-big"));
+  const cpuSamples: number[] = [];
+  for (let sample = 0; sample < 5; sample += 1) {
+    const messages: EventProjectionMessage[] = [];
+    previousRows.forEach((row, index) => {
+      messages.push(row);
+      if (index % 2 === 0) messages.push(later[index]!);
+    });
+    messages.push(...later);
+    const expected = replaceByScan(messages, "call-big", nextRows);
+    const started = threadCpuUsage();
+    expect(replaceKnownFileEditMessages(messages, previousRows, nextRows)).toBe(
+      true,
+    );
+    const cpu = threadCpuUsage(started);
+    cpuSamples.push(cpu.user + cpu.system);
+    expect(messages).toEqual(expected);
+  }
+  expect(Math.min(...cpuSamples)).toBeLessThan(10_000);
 });
