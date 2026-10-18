@@ -12,6 +12,7 @@ export const DATABASE_COMPACTION_MIN_RECLAIMABLE_RATIO = 0.15;
 
 export const DATABASE_INCREMENTAL_VACUUM_MIN_FREELIST_PAGES = 1_024;
 export const DATABASE_INCREMENTAL_VACUUM_MAX_PAGES = 20_000;
+export const DATABASE_INCREMENTAL_VACUUM_CHUNK_PAGES = 500;
 export const DATABASE_MAINTENANCE_BUSY_TIMEOUT_MS = 100;
 
 const ACTIVE_THREAD_STATUSES = ["active", "starting"] as const;
@@ -98,6 +99,15 @@ export interface IncrementalVacuumResult {
 
 export interface RunIncrementalVacuumArgs {
   maxPages: number;
+}
+
+export interface RunIncrementalVacuumInChunksArgs extends RunIncrementalVacuumArgs {
+  chunkPages: number;
+  yieldBetweenChunks: () => Promise<void>;
+}
+
+export interface ChunkedIncrementalVacuumResult extends IncrementalVacuumResult {
+  chunks: number;
 }
 
 export interface DropDeferredLegacyTablesResult {
@@ -406,6 +416,37 @@ export function compactDatabase(db: DbConnection): CompactDatabaseResult {
       };
     },
   });
+}
+
+export async function runIncrementalVacuumInChunks(
+  db: DbConnection,
+  args: RunIncrementalVacuumInChunksArgs,
+): Promise<ChunkedIncrementalVacuumResult> {
+  const checkpoint = () =>
+    runWithMaintenanceBusyTimeout({
+      db,
+      work: () => db.$client.exec("PRAGMA wal_checkpoint(PASSIVE)"),
+    });
+  const before = getDatabaseFreelistStats(db);
+  checkpoint();
+  let chunks = 0;
+  for (let remaining = args.maxPages; remaining > 0; ) {
+    const pages = Math.min(args.chunkPages, remaining);
+    const freed = runWithMaintenanceBusyTimeout({
+      db,
+      work: () => {
+        const freelistBefore = readFreelistCount(db);
+        db.$client.exec(`PRAGMA incremental_vacuum(${pages})`);
+        return freelistBefore - readFreelistCount(db);
+      },
+    });
+    chunks += 1;
+    remaining -= pages;
+    if (freed < pages || remaining === 0) break;
+    await args.yieldBetweenChunks();
+  }
+  checkpoint();
+  return { after: getDatabaseFreelistStats(db), before, chunks };
 }
 
 export function runIncrementalVacuum(

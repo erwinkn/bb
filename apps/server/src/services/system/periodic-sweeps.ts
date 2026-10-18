@@ -20,6 +20,7 @@ import {
   compactDatabase,
   DATABASE_COMPACTION_MIN_RECLAIMABLE_BYTES,
   DATABASE_COMPACTION_MIN_RECLAIMABLE_RATIO,
+  DATABASE_INCREMENTAL_VACUUM_CHUNK_PAGES,
   DATABASE_INCREMENTAL_VACUUM_MAX_PAGES,
   DATABASE_INCREMENTAL_VACUUM_MIN_FREELIST_PAGES,
   DEFAULT_CLOSED_SESSION_PRUNE_BATCH_SIZE,
@@ -38,7 +39,7 @@ import {
   environments,
   pruneClosedSessions,
   RETAINED_EVENT_OUTPUT_TARGETS,
-  runIncrementalVacuum,
+  runIncrementalVacuumInChunks,
   shouldCompactDatabase,
   shouldRunIncrementalVacuum,
   threads,
@@ -173,9 +174,9 @@ export async function runPeriodicSweepJobs(
   }
 }
 
-export function runDatabaseMaintenanceSweep(
+export async function runDatabaseMaintenanceSweep(
   deps: DatabaseMaintenanceSweepDeps,
-): void {
+): Promise<void> {
   const deferredLegacyTables = listDeferredLegacyTables(deps.db);
   if (deferredLegacyTables.length > 0) {
     const activity = getDatabaseMaintenanceActivity(deps.db);
@@ -219,8 +220,11 @@ export function runDatabaseMaintenanceSweep(
       return;
     }
     try {
-      const result = runIncrementalVacuum(deps.db, {
+      const result = await runIncrementalVacuumInChunks(deps.db, {
+        chunkPages: DATABASE_INCREMENTAL_VACUUM_CHUNK_PAGES,
         maxPages: DATABASE_INCREMENTAL_VACUUM_MAX_PAGES,
+        yieldBetweenChunks: () =>
+          new Promise<void>((resolve) => setImmediate(resolve)),
       });
       deps.logger.info({ result }, "Incremental database vacuum completed");
     } catch (error) {
