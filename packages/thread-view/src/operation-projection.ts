@@ -633,11 +633,33 @@ function takeUnusedFileEditRowForMatchKey(
   return row;
 }
 
+export function replaceKnownFileEditMessages(
+  messages: EventProjectionMessage[],
+  previousRows: readonly EventProjectionFileEditMessage[],
+  nextRows: readonly EventProjectionFileEditMessage[],
+): boolean {
+  const previousIndexes = previousRows
+    .map((row) => messages.lastIndexOf(row))
+    .sort((left, right) => left - right);
+  if (previousIndexes.includes(-1)) {
+    return false;
+  }
+  for (let index = previousIndexes.length - 1; index >= 0; index -= 1) {
+    messages.splice(previousIndexes[index]!, 1);
+  }
+  messages.splice(previousIndexes[0] ?? messages.length, 0, ...nextRows);
+  return true;
+}
+
 function replaceFileEditMessagesForCall(
   state: OperationProjectionState,
   callId: string,
+  previousRows: readonly EventProjectionFileEditMessage[],
   nextRows: readonly EventProjectionFileEditMessage[],
 ): void {
+  if (replaceKnownFileEditMessages(state.messages, previousRows, nextRows)) {
+    return;
+  }
   const insertionIndex = state.messages.findIndex(
     (message) => message.kind === "file-edit" && message.callId === callId,
   );
@@ -793,7 +815,12 @@ export function upsertFileEdit(
     }
 
     const allRows = [...foreignRows, ...nextRows];
-    replaceFileEditMessagesForCall(state, partial.callId, allRows);
+    replaceFileEditMessagesForCall(
+      state,
+      partial.callId,
+      existingRows,
+      allRows,
+    );
     state.fileEditsByCallId.set(partial.callId, allRows);
     return;
   }

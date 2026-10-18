@@ -29,6 +29,7 @@ import {
 } from "./timeline-cache.js";
 import { clearTimelineOrderingContextCache } from "./timeline-context-order.js";
 import { createTimelineLatestRowsCache } from "./timeline-latest-rows-cache.js";
+import { forgetTimelineRows } from "./timeline-row-cache.js";
 import {
   DEFAULT_MAX_INLINE_OUTPUT_CHARS,
   shortenTimelineResponseOutputs,
@@ -296,6 +297,7 @@ export function createThreadTimelineWindows(
     }
     if (message.changes.includes("thread-deleted")) {
       deltaFloorByThreadId.delete(message.id);
+      forgetTimelineRows(deps.db, message.id);
       const schedule = pushSchedulesByThreadId.get(message.id);
       if (schedule?.timer) {
         clearTimeout(schedule.timer);
@@ -318,6 +320,7 @@ export function createThreadTimelineWindows(
     }
     timelineCache.invalidateThread(message.id);
     latestRowsCache.invalidateThread(message.id);
+    forgetTimelineRows(deps.db, message.id);
     lastPushedByTarget = new WeakMap();
     deltaFloorByThreadId.set(
       message.id,

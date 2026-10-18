@@ -82,7 +82,6 @@ import {
   listStoredEventRows,
   listTimelineInterruptionRows,
   listStoredClientTurnRequestRowsByKeys,
-  listStoredEventRowsByParentToolCallIds,
   listItemEventSpansByItems,
   listStoredBufferedTextDeltaRowsByItems,
   getStoredItemLifecycleSequenceRange,
@@ -91,7 +90,6 @@ import {
   listLatestThreadStateEventRowsByThreadIds,
   listLatestOpenBackgroundTaskStateRowsForThread,
   listStoredTimelineWindowEventRows,
-  listStoredTimelineTurnEventRows,
   listStoredTimelineThreadWindowEventRows,
   listTimelineRootWindowTurnIds,
   listTodoSnapshotEventRowsForThread,
@@ -124,6 +122,12 @@ import {
   type ThreadTimelineEventSelectionStrategy,
   type TimelineBudgetFloor,
 } from "./timeline-selection-memo.js";
+import {
+  cachedTimelineRowSource,
+  directTimelineRowSource,
+  forgetTimelineRows,
+  type TimelineRowSource,
+} from "./timeline-row-cache.js";
 import {
   paginateTimelineRows,
   type ThreadTimelinePageKind,
@@ -296,6 +300,7 @@ interface TimelineWindowRowsArgs {
 interface TimelineWindowParentedRowsArgs extends TimelineWindowRowsArgs {
   excludeDiagnosticEvents: boolean;
   maxInlineOutputChars: InlineOutputCharLimit;
+  rowSource?: TimelineRowSource;
   sequenceBounds: {
     beforeSequence: number | undefined;
     sequenceStart: number;
@@ -546,7 +551,9 @@ function ensureTimelineWindowParentedRows(
     }
 
     const childSequenceBounds = args.sequenceBounds;
-    const childRows = listStoredEventRowsByParentToolCallIds(db, {
+    const childRows = (
+      args.rowSource ?? directTimelineRowSource
+    ).listParentedRows(db, {
       beforeSequence: childSequenceBounds?.beforeSequence,
       excludedTypes: THREAD_TIMELINE_EXCLUDED_EVENT_TYPES,
       excludeDiagnosticEvents: args.excludeDiagnosticEvents,
@@ -957,6 +964,10 @@ function selectStandardTimelineEventRows(
 ): StandardTimelineEventRowSelection {
   const decode: StoredEventDecoder = (row) =>
     decodeStoredEventRowCached(db, row);
+  const rowSource =
+    thread.status === "active"
+      ? cachedTimelineRowSource
+      : directTimelineRowSource;
   const beforeSequence =
     contentCursor?.beforeSequence ??
     (page.kind === "older" ? page.beforeCursor.anchorSeq : maxSeq + 1);
@@ -1057,7 +1068,7 @@ function selectStandardTimelineEventRows(
       for (const turnId of turnIds) fetchedTurns.add(turnId);
       selectedRows = mergeStoredEventRowsById([
         ...selectedRows,
-        ...listStoredTimelineTurnEventRows(db, {
+        ...rowSource.listTurnRows(db, {
           ...windowArgs,
           sequenceStart: epochSequenceStart,
           beforeSequence: maxSeq + 1,
@@ -1069,6 +1080,7 @@ function selectStandardTimelineEventRows(
         rows: selectedRows,
         maxInlineOutputChars,
         excludeDiagnosticEvents,
+        rowSource,
         sequenceBounds: {
           sequenceStart: epochSequenceStart,
           beforeSequence: maxSeq + 1,
@@ -1321,6 +1333,7 @@ function buildThreadTimelineInternal(
   const maxInlineOutputChars = options.maxInlineOutputChars;
   if (thread.status !== "active") {
     forgetLatestTimelineSelections(db, thread.id);
+    forgetTimelineRows(db, thread.id);
   }
   const memoArgs: LatestTimelineSelectionMemoArgs | null =
     options.page.kind === "latest" &&

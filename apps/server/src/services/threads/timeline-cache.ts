@@ -4,10 +4,12 @@ import type { ThreadTimelinePageRequest } from "./timeline-pagination.js";
 
 const DEFAULT_MAX_ENTRIES = 128;
 const DEFAULT_MAX_CACHEABLE_ROWS = 200;
+const DEFAULT_MAX_LARGE_ENTRIES = 4;
 
 interface ThreadTimelineCacheOptions {
   maxEntries?: number;
   maxCacheableRows?: number;
+  maxLargeEntries?: number;
 }
 
 interface ThreadTimelineCache {
@@ -21,6 +23,7 @@ interface ThreadTimelineCache {
 }
 
 interface ThreadTimelineCacheEntry {
+  large: boolean;
   response: ThreadTimelineResponse;
   threadId: string;
 }
@@ -31,7 +34,26 @@ export function createThreadTimelineCache(
   const maxEntries = options.maxEntries ?? DEFAULT_MAX_ENTRIES;
   const maxCacheableRows =
     options.maxCacheableRows ?? DEFAULT_MAX_CACHEABLE_ROWS;
+  const maxLargeEntries = options.maxLargeEntries ?? DEFAULT_MAX_LARGE_ENTRIES;
   const entries = new Map<string, ThreadTimelineCacheEntry>();
+  let largeEntryCount = 0;
+
+  function deleteEntry(key: string): void {
+    const entry = entries.get(key);
+    if (entry === undefined) return;
+    entries.delete(key);
+    if (entry.large) largeEntryCount -= 1;
+  }
+
+  function evictOldestWhile(
+    over: () => boolean,
+    evictable: (entry: ThreadTimelineCacheEntry) => boolean,
+  ): void {
+    for (const [key, entry] of entries) {
+      if (!over()) return;
+      if (evictable(entry)) deleteEntry(key);
+    }
+  }
 
   return {
     getOrBuild(threadId, key, build) {
@@ -43,22 +65,28 @@ export function createThreadTimelineCache(
       }
 
       const value = build();
-      if (value.rows.length <= maxCacheableRows) {
-        entries.set(key, { response: value, threadId });
-        while (entries.size > maxEntries) {
-          const oldest = entries.keys().next().value;
-          if (oldest === undefined) {
-            break;
-          }
-          entries.delete(oldest);
-        }
+      const large = value.rows.length > maxCacheableRows;
+      if (large && maxLargeEntries === 0) {
+        return value;
       }
+      entries.set(key, { large, response: value, threadId });
+      if (large) {
+        largeEntryCount += 1;
+        evictOldestWhile(
+          () => largeEntryCount > maxLargeEntries,
+          (entry) => entry.large,
+        );
+      }
+      evictOldestWhile(
+        () => entries.size > maxEntries,
+        () => true,
+      );
       return value;
     },
     invalidateThread(threadId) {
       for (const [key, entry] of entries) {
         if (entry.threadId === threadId) {
-          entries.delete(key);
+          deleteEntry(key);
         }
       }
     },

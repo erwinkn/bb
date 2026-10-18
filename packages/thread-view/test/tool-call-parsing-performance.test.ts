@@ -2,6 +2,7 @@
 import { threadCpuUsage } from "node:process";
 import { expect, it } from "vitest";
 import {
+  clearParsedShellCommandIntentsCache,
   parseSentThreadMessage,
   parseShellCommandIntents,
 } from "../src/tool-call-parsing.js";
@@ -20,6 +21,7 @@ it("bounds intent parsing work after a script's disqualifying write", () => {
     for (let sample = 0; sample < 5; sample += 1) {
       const started = threadCpuUsage();
       for (let repeat = 0; repeat < 32; repeat += 1) {
+        clearParsedShellCommandIntentsCache();
         parseShellCommandIntents(command);
       }
       const cpu = threadCpuUsage(started);
@@ -29,6 +31,21 @@ it("bounds intent parsing work after a script's disqualifying write", () => {
   };
 
   expect(minimumCpu(writeFirst)).toBeLessThan(minimumCpu(readOnly) / 8);
+});
+
+it("parses each distinct command once and returns the same intents on repeat", () => {
+  const command = `cat '${"repeated words ".repeat(20_000)}'`;
+  clearParsedShellCommandIntentsCache();
+  const first = parseShellCommandIntents(command);
+  const started = threadCpuUsage();
+  for (let repeat = 0; repeat < 256; repeat += 1) {
+    expect(parseShellCommandIntents(command)).toBe(first);
+  }
+  const cpu = threadCpuUsage(started);
+  expect(cpu.user + cpu.system).toBeLessThan(100_000);
+  clearParsedShellCommandIntentsCache();
+  expect(parseShellCommandIntents(command)).not.toBe(first);
+  expect(parseShellCommandIntents(command)).toEqual(first);
 });
 
 it("keeps bb thread tell parsing linear on unterminated heredocs", () => {

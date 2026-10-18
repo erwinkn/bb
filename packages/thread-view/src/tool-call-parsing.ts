@@ -543,11 +543,38 @@ function classifyShellSegment(
   }
 }
 
+const PARSED_INTENTS_CACHE_MAX_ENTRIES = 8_192;
+const parsedIntentsByCommand = new Map<
+  string,
+  EventProjectionToolParsedIntent[]
+>();
+
+export function clearParsedShellCommandIntentsCache(): void {
+  parsedIntentsByCommand.clear();
+}
+
 export function parseShellCommandIntents(
   command: string | undefined,
 ): EventProjectionToolParsedIntent[] {
   if (!command) return [];
+  const cached = parsedIntentsByCommand.get(command);
+  if (cached !== undefined) {
+    parsedIntentsByCommand.delete(command);
+    parsedIntentsByCommand.set(command, cached);
+    return cached;
+  }
+  const intents = parseUncachedShellCommandIntents(command);
+  parsedIntentsByCommand.set(command, intents);
+  if (parsedIntentsByCommand.size > PARSED_INTENTS_CACHE_MAX_ENTRIES) {
+    const oldest = parsedIntentsByCommand.keys().next().value;
+    if (oldest !== undefined) parsedIntentsByCommand.delete(oldest);
+  }
+  return intents;
+}
 
+function parseUncachedShellCommandIntents(
+  command: string,
+): EventProjectionToolParsedIntent[] {
   let intents: EventProjectionToolParsedIntent[] = [];
   visitShellCommandSegments(command, (segment) => {
     const classification = classifyShellSegment(segment, command);

@@ -3083,6 +3083,34 @@ export function listStoredEventRowsInSequenceRange(
     .all();
 }
 
+export function listLatestBackgroundTaskStateSequencesInRange(
+  db: DbConnection,
+  args: { afterSequence: number; beforeSequence: number; threadId: string },
+): Map<string, number> {
+  const rows = db
+    .select({
+      itemId: sql<string>`${events.itemId}`,
+      sequence: sql<number>`max(${events.sequence})`,
+    })
+    .from(sql`${events} INDEXED BY events_thread_sequence_idx`)
+    .where(
+      and(
+        eq(events.threadId, args.threadId),
+        gt(events.sequence, args.afterSequence),
+        lt(events.sequence, args.beforeSequence),
+        eq(events.itemKind, "backgroundTask"),
+        inArray(events.type, [
+          "item/backgroundTask/progress",
+          "item/backgroundTask/completed",
+        ]),
+        isNotNull(events.itemId),
+      ),
+    )
+    .groupBy(events.itemId)
+    .all();
+  return new Map(rows.map((row) => [row.itemId, row.sequence]));
+}
+
 export function getFirstParentedTimelineBoundarySequence(
   db: DbConnection,
   args: { threadId: string; sequenceStart: number; maxSeq: number },

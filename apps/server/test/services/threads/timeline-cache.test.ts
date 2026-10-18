@@ -71,8 +71,45 @@ describe("createThreadTimelineCache", () => {
     expect(cache.size).toBe(1);
   });
 
-  it("does not cache responses above the row cap (streaming expanded turns)", () => {
-    const cache = createThreadTimelineCache({ maxCacheableRows: 5 });
+  it("keeps only the most recent responses above the row cap (streaming expanded turns)", () => {
+    const cache = createThreadTimelineCache({
+      maxCacheableRows: 5,
+      maxLargeEntries: 1,
+    });
+    const build = vi.fn(() => makeResponse(50));
+
+    const first = cache.getOrBuild("thr_x", "a", build);
+    expect(cache.getOrBuild("thr_x", "a", build)).toBe(first);
+    expect(build).toHaveBeenCalledTimes(1);
+
+    cache.getOrBuild("thr_x", "b", build);
+    cache.getOrBuild("thr_x", "a", build);
+    expect(build).toHaveBeenCalledTimes(3);
+    expect(cache.size).toBe(1);
+  });
+
+  it("never evicts small responses to make room for large ones", () => {
+    const cache = createThreadTimelineCache({
+      maxCacheableRows: 5,
+      maxLargeEntries: 1,
+    });
+    const small = vi.fn(() => makeResponse(1));
+    const large = vi.fn(() => makeResponse(50));
+
+    cache.getOrBuild("thr_x", "small", small);
+    cache.getOrBuild("thr_x", "large-1", large);
+    cache.getOrBuild("thr_x", "large-2", large);
+    cache.getOrBuild("thr_x", "small", small);
+
+    expect(small).toHaveBeenCalledTimes(1);
+    expect(cache.size).toBe(2);
+  });
+
+  it("does not cache responses above the row cap when large entries are disabled", () => {
+    const cache = createThreadTimelineCache({
+      maxCacheableRows: 5,
+      maxLargeEntries: 0,
+    });
     const build = vi.fn(() => makeResponse(50));
 
     cache.getOrBuild("thr_x", "k", build);
