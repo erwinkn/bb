@@ -686,7 +686,7 @@ describe("incremental conversation outlines", () => {
     });
   });
 
-  it("evicts old checkpoints without changing their rebuilt outlines", () => {
+  it("reloads evicted checkpoints from disk without changing their outlines", () => {
     withTestThread((testThread) => {
       seed(testThread, 100);
       expectMatchesFull(testThread);
@@ -704,7 +704,7 @@ describe("incremental conversation outlines", () => {
       const count = countSelectedEventRows(testThread, () => {
         load(testThread);
       });
-      expect(count).toBeGreaterThan(500);
+      expect(count).toBeLessThan(20);
       expectMatchesFull(testThread);
       appendRows(testThread, [delta("live", " after eviction")]);
       expect(

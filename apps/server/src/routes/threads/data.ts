@@ -8,6 +8,7 @@ import {
   listContextWindowUsageRows,
   getLatestThreadSequence,
   getLatestStoredConversationOutlineSequence,
+  getThreadEventRewriteGeneration,
   listQueuedThreadMessages,
 } from "@bb/db";
 import type { Hono } from "hono";
@@ -29,6 +30,10 @@ import type { AppDeps } from "../../types.js";
 import { COMMAND_TIMEOUT_MS } from "../../constants.js";
 import { ApiError } from "../../errors.js";
 import { requirePublicThread } from "../../services/lib/entity-lookup.js";
+import {
+  finishResourceSample,
+  startResourceSample,
+} from "../../services/system/resource-sample.js";
 import { callHostRetryableOnlineRpc } from "../../services/hosts/online-rpc.js";
 import { requireThreadStorageTarget } from "../../services/threads/thread-storage.js";
 import { toThreadQueuedMessage } from "../../services/threads/thread-queued-messages.js";
@@ -37,7 +42,7 @@ import {
   buildThreadConversationOutlineProjectionKey,
   getThreadMessage,
   buildTimelineTurnSummaryDetails,
-  loadThreadConversationOutline,
+  loadThreadConversationOutlineWithSource,
   THREAD_TIMELINE_DEFAULT_SEGMENT_LIMIT,
   THREAD_TIMELINE_SEGMENT_LIMIT_MAX,
 } from "../../services/threads/timeline.js";
@@ -153,6 +158,7 @@ export function registerThreadDataRoutes(app: Hono, deps: AppDeps): void {
     ThreadConversationOutlineResponse["items"]
   >();
   const CONVERSATION_OUTLINE_CACHE_MAX_ENTRIES = 128;
+  const SLOW_CONVERSATION_OUTLINE_LOG_THRESHOLD_MS = 150;
   const resolveConversationRowsOptions = (thread: Thread) => {
     const providerDisplayName = resolveThreadProviderDisplayName(
       deps,
@@ -256,6 +262,7 @@ export function registerThreadDataRoutes(app: Hono, deps: AppDeps): void {
     const cacheKey = JSON.stringify([
       thread.id,
       getDatabaseDataVersion(deps.db),
+      getThreadEventRewriteGeneration(thread.id),
       buildThreadConversationOutlineProjectionKey(
         thread,
         outlineSequence,
@@ -268,10 +275,25 @@ export function registerThreadDataRoutes(app: Hono, deps: AppDeps): void {
       conversationOutlineCache.set(cacheKey, cached);
       return context.json({ items: selectItems(cached), maxSeq });
     }
-    const response = loadThreadConversationOutline(deps.db, thread, {
-      ...outlineOptions,
-      outlineSequence,
-    });
+    const sample = startResourceSample();
+    const { response, source } = loadThreadConversationOutlineWithSource(
+      deps.db,
+      thread,
+      { ...outlineOptions, outlineSequence },
+    );
+    const resources = finishResourceSample(sample);
+    if (resources.durationMs >= SLOW_CONVERSATION_OUTLINE_LOG_THRESHOLD_MS) {
+      deps.logger.info(
+        {
+          itemCount: response.items.length,
+          source,
+          thresholdMs: SLOW_CONVERSATION_OUTLINE_LOG_THRESHOLD_MS,
+          threadId: thread.id,
+          ...resources,
+        },
+        "Slow conversation outline load",
+      );
+    }
     conversationOutlineCache.set(cacheKey, response.items);
     while (
       conversationOutlineCache.size > CONVERSATION_OUTLINE_CACHE_MAX_ENTRIES

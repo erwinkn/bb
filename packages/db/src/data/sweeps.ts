@@ -8,6 +8,7 @@ import {
 } from "../retained-event-output.js";
 import { events, maintenanceScanCursors } from "../schema.js";
 import { bumpThreadEventRewriteGeneration } from "./event-rewrite-generation.js";
+import { deletePersistedThreadTimelineState } from "./thread-timeline-checkpoints.js";
 import {
   insertPreparedRetainedEventOutput,
   prepareCompletedEventOutputData,
@@ -676,6 +677,7 @@ function migrateNextCompletedEventOutput(
       }
       if (prepared.data !== candidate.data)
         markThreadPruningPolicyWork(tx, [candidate.thread_id], "resolved-items");
+      deletePersistedThreadTimelineState(tx, candidate.thread_id);
       bumpThreadEventRewriteGeneration(candidate.thread_id);
       if (retained) {
         insertPreparedRetainedEventOutput(tx, {

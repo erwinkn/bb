@@ -18,6 +18,11 @@ export {
   getThreadConversationOutlineRecord,
   upsertThreadConversationOutlineRecord,
 } from "./thread-conversation-outlines.js";
+export {
+  appendThreadTimelineCheckpointPart,
+  listThreadTimelineCheckpointParts,
+  replaceThreadTimelineCheckpoint,
+} from "./thread-timeline-checkpoints.js";
 
 export {
   createThreadSection,
@@ -324,6 +329,8 @@ export {
   listLatestBackgroundTaskStateSequencesInRange,
   listStoredEventRowsInSequenceRange,
   listTimelineOrderingContext,
+  getTimelineOrderingContextQuerySql,
+  TIMELINE_ORDERING_CONTEXT_EVENT_TYPES,
   listTimelineInterruptionRows,
   findTimelineWindowBudgetFloorSequence,
   findStoredTimelineWindowByteBudgetFloor,

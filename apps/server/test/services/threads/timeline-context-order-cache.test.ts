@@ -30,10 +30,18 @@ function expectCachedEqualsCold(
 ): ReturnType<typeof getTimelineGroupingContext> {
   const args = { maxSeq, sequenceStart, threadId: testThread.thread.id };
   const cached = getTimelineGroupingContext(testThread.db, args);
-  clearTimelineOrderingContextCache(testThread.coldDb);
-  expect(cached, JSON.stringify(args)).toEqual(
-    getTimelineGroupingContext(testThread.coldDb, args),
-  );
+  const cold = testThread.coldDb;
+  clearTimelineOrderingContextCache(cold);
+  cold.$client.exec("BEGIN");
+  try {
+    cold.$client.exec("DELETE FROM thread_timeline_checkpoints");
+    expect(cached, JSON.stringify(args)).toEqual(
+      getTimelineGroupingContext(cold, args),
+    );
+  } finally {
+    cold.$client.exec("ROLLBACK");
+    clearTimelineOrderingContextCache(cold);
+  }
   return cached;
 }
 

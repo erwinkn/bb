@@ -9,6 +9,8 @@ import {
   type InsertEventInput,
 } from "../../src/data/events.js";
 import { upsertHost } from "../../src/data/hosts.js";
+import { upsertThreadConversationOutlineRecord } from "../../src/data/thread-conversation-outlines.js";
+import { replaceThreadTimelineCheckpoint } from "../../src/data/thread-timeline-checkpoints.js";
 import { createProject } from "../../src/data/projects.js";
 import { migrateNextCompletedEventItemOutput } from "../../src/data/sweeps.js";
 import {
@@ -61,14 +63,40 @@ function pruneThreadEvents(
   throw new Error("Pruning did not finish a cycle");
 }
 
+function persistTimelineState(db: DbConnection, threadId: string): void {
+  replaceThreadTimelineCheckpoint(db, {
+    kind: "conversation-outline",
+    payload: "{}",
+    threadId,
+  });
+  upsertThreadConversationOutlineRecord(db, {
+    itemsJson: "[]",
+    projectionKey: "key",
+    threadId,
+  });
+}
+
+function hasPersistedTimelineState(db: DbConnection, threadId: string) {
+  const row = db.$client
+    .prepare(
+      `SELECT EXISTS (SELECT 1 FROM thread_timeline_checkpoints WHERE thread_id = @threadId)
+        AND EXISTS (SELECT 1 FROM thread_conversation_outlines WHERE thread_id = @threadId) AS present`,
+    )
+    .get({ threadId });
+  return (row as { present: number }).present === 1;
+}
+
 function expectGenerationBump(
+  db: DbConnection,
   threadId: string,
   bumped: boolean,
   mutate: () => void,
 ): void {
+  persistTimelineState(db, threadId);
   const before = getThreadEventRewriteGeneration(threadId);
   mutate();
   expect(getThreadEventRewriteGeneration(threadId) !== before).toBe(bumped);
+  expect(hasPersistedTimelineState(db, threadId)).toBe(!bumped);
 }
 
 function row(
@@ -233,15 +261,17 @@ describe("thread event rewrite generation", () => {
       message(otherThreadId, 1),
     ]);
 
-    expectGenerationBump(threadId, false, () => {
+    expectGenerationBump(db, threadId, false, () => {
       expect(testCase.noop(db, threadId)).toBe(0);
     });
     insertEvents(db, noopNotifier, testCase.between?.(threadId) ?? []);
     const otherBefore = getThreadEventRewriteGeneration(otherThreadId);
-    expectGenerationBump(threadId, true, () => {
+    persistTimelineState(db, otherThreadId);
+    expectGenerationBump(db, threadId, true, () => {
       expect(testCase.rewrite(db, threadId)).toBeGreaterThan(0);
     });
     expect(getThreadEventRewriteGeneration(otherThreadId)).toBe(otherBefore);
+    expect(hasPersistedTimelineState(db, otherThreadId)).toBe(true);
   });
 
   it.each<{
@@ -267,21 +297,21 @@ describe("thread event rewrite generation", () => {
       ...[1, 2, 3, 4].map((sequence) => testCase.snapshot(threadId, sequence)),
       message(threadId, 5),
     ]);
-    expectGenerationBump(threadId, false, () => {
+    expectGenerationBump(db, threadId, false, () => {
       expect(pruneThreadEvents(db, testCase.policy)).toBeGreaterThan(0);
     });
   });
 
   it("changes when a completed output is migrated and not when the scanned output fits", () => {
     const fits = setup();
-    expectGenerationBump(fits.threadId, false, () => {
+    expectGenerationBump(fits.db, fits.threadId, false, () => {
       expect(insertCommandOutput(fits.db, fits.threadId, "small")).toBe(
         "scanned",
       );
     });
 
     const oversized = setup();
-    expectGenerationBump(oversized.threadId, true, () => {
+    expectGenerationBump(oversized.db, oversized.threadId, true, () => {
       expect(
         insertCommandOutput(
           oversized.db,
@@ -294,7 +324,7 @@ describe("thread event rewrite generation", () => {
 
   it("does not change for daemon appends, increasing inserts or ignored duplicates", () => {
     const { db, threadId } = setup();
-    expectGenerationBump(threadId, false, () => {
+    expectGenerationBump(db, threadId, false, () => {
       insertEvents(db, noopNotifier, [
         message(threadId, 1),
         message(threadId, 2),
@@ -330,8 +360,9 @@ describe("thread event rewrite generation", () => {
       message(threadId, 4),
     ]);
     const otherBefore = getThreadEventRewriteGeneration(otherThreadId);
+    persistTimelineState(db, otherThreadId);
 
-    expectGenerationBump(threadId, true, () => {
+    expectGenerationBump(db, threadId, true, () => {
       expect(
         insertEvents(db, noopNotifier, [
           message(otherThreadId, 1),
@@ -340,5 +371,6 @@ describe("thread event rewrite generation", () => {
       ).toBe(2);
     });
     expect(getThreadEventRewriteGeneration(otherThreadId)).toBe(otherBefore);
+    expect(hasPersistedTimelineState(db, otherThreadId)).toBe(true);
   });
 });

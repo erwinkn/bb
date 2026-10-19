@@ -20,6 +20,7 @@ import {
   threads,
 } from "../schema.js";
 import { bumpThreadEventRewriteGeneration } from "./event-rewrite-generation.js";
+import { deletePersistedThreadTimelineState } from "./thread-timeline-checkpoints.js";
 import {
   getHighWaterMarks,
   pruneContextWindowUsageEventsInTransaction,
@@ -400,6 +401,12 @@ function advanceThreadPruningTransaction(
           cursor.step = 0;
         }
       }
+      if (
+        REWRITES_HISTORY_BY_POLICY[policy] &&
+        removed > 0 &&
+        threadId !== null
+      )
+        deletePersistedThreadTimelineState(tx, threadId);
       cursor.updatedAt = now;
       tx.update(threadPruningCursors)
         .set(cursor)

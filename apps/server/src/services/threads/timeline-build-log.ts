@@ -1,4 +1,5 @@
 import type { ServerLogger } from "../../types.js";
+import type { ResourceUsageDelta } from "../system/resource-sample.js";
 import type { ThreadTimelineBuildProfile } from "./timeline.js";
 
 const SLOW_THREAD_TIMELINE_BUILD_LOG_THRESHOLD_MS = 150;
@@ -9,6 +10,7 @@ const SLOW_THREAD_TIMELINE_BUILD_LOG_MAX_TRACKED_THREADS = 256;
 
 interface LogSlowThreadTimelineBuildArgs {
   profile: ThreadTimelineBuildProfile;
+  resources: ResourceUsageDelta;
   threadId: string;
 }
 
@@ -27,7 +29,7 @@ export function createSlowThreadTimelineBuildLogger(
   const suppressedByThread = new Map<string, number>();
 
   return {
-    log({ profile, threadId }) {
+    log({ profile, resources, threadId }) {
       if (
         profile.totalDurationMs < SLOW_THREAD_TIMELINE_BUILD_LOG_THRESHOLD_MS
       ) {
@@ -77,6 +79,9 @@ export function createSlowThreadTimelineBuildLogger(
           projectedRowCount: profile.projectedRowCount,
           responseRowCount: profile.responseRowCount,
           stageTimings: profile.stageTimings,
+          cpuDurationMs: resources.cpuDurationMs,
+          majorPageFaults: resources.majorPageFaults,
+          fsReadBytes: resources.fsReadBytes,
         },
         "Thread timeline build blocked the event loop",
       );

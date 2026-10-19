@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type { TimelineRow } from "@bb/server-contract";
 import {
   isExternalUserBoundaryForTurn,
@@ -9,9 +10,17 @@ import {
   getFirstParentedTimelineBoundarySequence,
   getThreadEventRewriteGeneration,
   getTimelineGroupingContextChangesInRange,
+  getTimelineOrderingContextQuerySql,
   listTimelineOrderingContext,
+  TIMELINE_ORDERING_CONTEXT_EVENT_TYPES,
   type DbConnection,
 } from "@bb/db";
+import { z } from "zod";
+import {
+  readPersistedCheckpoint,
+  writePersistedCheckpoint,
+  type PersistedCheckpointChain,
+} from "./persisted-checkpoint.js";
 
 interface TimelineGroupingContext {
   orderingBoundarySequence: number | null;
@@ -47,13 +56,156 @@ type TimelineOrderingContextRow = ReturnType<
 >[number];
 
 interface TimelineOrderingRowsEntry {
+  chain: PersistedCheckpointChain | null;
   dataVersion: number;
   generation: number;
   maxSeq: number;
+  persistedMaxSeq: number;
   rows: TimelineOrderingContextRow[];
 }
 
 const ORDERING_ROWS_KEY_LIMIT = 32;
+const PERSISTED_ORDERING_ROWS_KIND = "timeline-ordering-rows";
+const PERSISTED_ORDERING_ROWS_MAX_CHARS = 16_000_000;
+
+const persistedOrderingRowsPartSchema = z.object({
+  maxSeq: z.number().int(),
+  previousMaxSeq: z.number().int(),
+  query: z.string(),
+  rows: z.array(z.unknown()),
+  sequenceStart: z.number().int(),
+});
+
+type PersistedOrderingRowsPart = z.infer<
+  typeof persistedOrderingRowsPartSchema
+>;
+
+const orderingEventTypes: readonly string[] =
+  TIMELINE_ORDERING_CONTEXT_EVENT_TYPES;
+
+function isOrderingEventType(
+  value: unknown,
+): value is TimelineOrderingContextRow["type"] {
+  return typeof value === "string" && orderingEventTypes.includes(value);
+}
+
+function isNullableString(value: unknown): value is string | null {
+  return value === null || typeof value === "string";
+}
+
+function decodeOrderingRow(value: unknown): TimelineOrderingContextRow | null {
+  if (!Array.isArray(value) || value.length !== 8) return null;
+  const [
+    sequence,
+    type,
+    turnId,
+    parentToolCallId,
+    requestId,
+    clientRequestId,
+    expectedTurnId,
+    hasVisibleUserInput,
+  ] = value;
+  if (
+    typeof sequence !== "number" ||
+    !Number.isInteger(sequence) ||
+    !isOrderingEventType(type) ||
+    !isNullableString(turnId) ||
+    !isNullableString(parentToolCallId) ||
+    !isNullableString(requestId) ||
+    !isNullableString(clientRequestId) ||
+    !isNullableString(expectedTurnId) ||
+    typeof hasVisibleUserInput !== "number"
+  )
+    return null;
+  return {
+    clientRequestId,
+    expectedTurnId,
+    hasVisibleUserInput,
+    parentToolCallId,
+    requestId,
+    sequence,
+    turnId,
+    type,
+  };
+}
+
+function orderingQueryFingerprint(db: DbConnection): string {
+  return createHash("sha256")
+    .update(getTimelineOrderingContextQuerySql(db))
+    .digest("base64url");
+}
+
+function toPersistedOrderingRowsPart(
+  db: DbConnection,
+  args: TimelineGroupingContextArgs,
+  previousMaxSeq: number,
+  rows: readonly TimelineOrderingContextRow[],
+): PersistedOrderingRowsPart {
+  return {
+    maxSeq: args.maxSeq,
+    previousMaxSeq,
+    query: orderingQueryFingerprint(db),
+    rows: rows.map((row) => [
+      row.sequence,
+      row.type,
+      row.turnId,
+      row.parentToolCallId,
+      row.requestId,
+      row.clientRequestId,
+      row.expectedTurnId,
+      row.hasVisibleUserInput,
+    ]),
+    sequenceStart: args.sequenceStart,
+  };
+}
+
+function readPersistedOrderingRows(
+  db: DbConnection,
+  args: TimelineGroupingContextArgs,
+  current: { dataVersion: number; generation: number },
+): TimelineOrderingRowsEntry | undefined {
+  const persisted = readPersistedCheckpoint(
+    db,
+    {
+      kind: `${PERSISTED_ORDERING_ROWS_KIND}:${args.sequenceStart}`,
+      threadId: args.threadId,
+    },
+    persistedOrderingRowsPartSchema,
+  );
+  if (persisted === null) return undefined;
+  const query = orderingQueryFingerprint(db);
+  const rows: TimelineOrderingContextRow[] = [];
+  let maxSeq = args.sequenceStart - 1;
+  for (const part of persisted.parts) {
+    if (
+      part.query !== query ||
+      part.sequenceStart !== args.sequenceStart ||
+      part.previousMaxSeq !== maxSeq ||
+      part.maxSeq <= maxSeq
+    )
+      return undefined;
+    let previousSequence = maxSeq;
+    for (const value of part.rows) {
+      const row = decodeOrderingRow(value);
+      if (
+        row === null ||
+        row.sequence <= previousSequence ||
+        row.sequence > part.maxSeq
+      )
+        return undefined;
+      rows.push(row);
+      previousSequence = row.sequence;
+    }
+    maxSeq = part.maxSeq;
+  }
+  return {
+    chain: persisted.chain,
+    ...current,
+    maxSeq,
+    persistedMaxSeq: maxSeq,
+    rows,
+  };
+}
 
 const orderingContexts = new WeakMap<
   DbConnection,
@@ -81,7 +233,9 @@ function listTimelineOrderingContextIncrementally(
   const key = JSON.stringify([args.threadId, args.sequenceStart]);
   const generation = getThreadEventRewriteGeneration(args.threadId);
   const dataVersion = getDatabaseDataVersion(db);
-  const cached = cache.get(key);
+  const cached =
+    cache.get(key) ??
+    readPersistedOrderingRows(db, args, { dataVersion, generation });
   cache.delete(key);
   const usable =
     cached !== undefined &&
@@ -91,16 +245,45 @@ function listTimelineOrderingContextIncrementally(
     cache.set(key, cached);
     return cached.rows.filter((row) => row.sequence <= args.maxSeq);
   }
+  const appended = usable
+    ? listTimelineOrderingContext(db, {
+        ...args,
+        sequenceStart: cached.maxSeq + 1,
+      })
+    : [];
   const rows = usable
-    ? [
-        ...cached.rows,
-        ...listTimelineOrderingContext(db, {
-          ...args,
-          sequenceStart: cached.maxSeq + 1,
-        }),
-      ]
+    ? [...cached.rows, ...appended]
     : listTimelineOrderingContext(db, args);
-  cache.set(key, { dataVersion, generation, maxSeq: args.maxSeq, rows });
+  const persistedKey = {
+    kind: `${PERSISTED_ORDERING_ROWS_KIND}:${args.sequenceStart}`,
+    threadId: args.threadId,
+  };
+  const keepsChain = usable && (appended.length === 0 || cached.chain === null);
+  const chain = keepsChain
+    ? cached.chain
+    : writePersistedCheckpoint(db, persistedKey, {
+        chain: usable ? cached.chain : null,
+        full: () =>
+          toPersistedOrderingRowsPart(db, args, args.sequenceStart - 1, rows),
+        maxChars: PERSISTED_ORDERING_ROWS_MAX_CHARS,
+        part: usable
+          ? () =>
+              toPersistedOrderingRowsPart(
+                db,
+                args,
+                cached.persistedMaxSeq,
+                appended,
+              )
+          : null,
+      });
+  cache.set(key, {
+    chain,
+    dataVersion,
+    generation,
+    maxSeq: args.maxSeq,
+    persistedMaxSeq: keepsChain ? cached.persistedMaxSeq : args.maxSeq,
+    rows,
+  });
   if (cache.size > ORDERING_ROWS_KEY_LIMIT) {
     cache.delete(cache.keys().next().value!);
   }

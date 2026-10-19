@@ -3,11 +3,22 @@ import {
   getThreadEventRewriteGeneration,
   type DbConnection,
 } from "@bb/db";
-import type { ThreadConversationOutlineItem } from "@bb/server-contract";
+import {
+  threadConversationOutlineItemSchema,
+  type ThreadConversationOutlineItem,
+} from "@bb/server-contract";
 import {
   MIN_AGENT_MESSAGE_DELTAS_FOR_SUMMARY_COMPACTION,
   type ThreadEventWithMeta,
 } from "@bb/thread-view";
+import { z } from "zod";
+import {
+  clearPersistedCheckpoint,
+  persistedCheckpointChars,
+  readPersistedCheckpoint,
+  writePersistedCheckpoint,
+  type PersistedCheckpointChain,
+} from "./persisted-checkpoint.js";
 
 interface ProjectedOutlineItem {
   item: ThreadConversationOutlineItem;
@@ -43,16 +54,25 @@ interface Checkpoint extends ConversationOutlinePrefix {
   pendingSteerItems: ThreadConversationOutlineItem[];
 }
 
-interface Entry {
+export type ConversationOutlineCheckpointSource =
+  | "memory"
+  | "persisted"
+  | "full";
+
+interface EntryHeader {
   agentMessageDeltaCount: number;
-  checkpoint: Checkpoint;
   historySequenceStart: number;
-  dataVersion: number;
-  generation: number;
   key: string;
   maxSeq: number;
-  chars: number;
   projectionState: ConversationOutlineProjectionState;
+}
+
+interface Entry extends EntryHeader {
+  chain: PersistedCheckpointChain;
+  checkpoint: Checkpoint;
+  dataVersion: number;
+  generation: number;
+  source: Exclude<ConversationOutlineCheckpointSource, "full">;
 }
 
 interface OutlineCache {
@@ -63,6 +83,106 @@ interface OutlineCache {
 const caches = new WeakMap<DbConnection, OutlineCache>();
 const MAX_ENTRIES = 16;
 const MAX_CHARS = 8_000_000;
+const PERSISTED_CHECKPOINT_KIND = "conversation-outline";
+
+const persistedPartSchema = z.object({
+  agentMessageDeltaCount: z.number().int().nonnegative(),
+  checkpoint: z.object({
+    agentMessageDeltaCount: z.number().int().nonnegative(),
+    externalUserBoundarySeq: z.number().int().nullable(),
+    sequenceStart: z.number().int(),
+  }),
+  historySequenceStart: z.number().int(),
+  identities: z.array(z.string()),
+  items: z.array(threadConversationOutlineItemSchema),
+  key: z.string(),
+  maxSeq: z.number().int(),
+  pendingSteerItems: z.array(threadConversationOutlineItemSchema),
+  previousSequenceStart: z.number().int(),
+  projectionState: z.object({
+    includeNestedEvents: z.boolean(),
+    summaryCompactionEnabled: z.boolean(),
+  }),
+});
+
+type PersistedPart = z.infer<typeof persistedPartSchema>;
+
+function emptyCheckpoint(sequenceStart: number): Checkpoint {
+  return {
+    agentMessageDeltaCount: 0,
+    externalUserBoundarySeq: null,
+    identities: new Set(),
+    items: [],
+    pendingSteerItems: [],
+    sequenceStart,
+  };
+}
+
+function toPersistedPart(
+  header: EntryHeader,
+  previous: Checkpoint,
+  next: Checkpoint,
+): PersistedPart {
+  return {
+    ...header,
+    checkpoint: {
+      agentMessageDeltaCount: next.agentMessageDeltaCount,
+      externalUserBoundarySeq: next.externalUserBoundarySeq,
+      sequenceStart: next.sequenceStart,
+    },
+    identities: [...next.identities].slice(previous.identities.size),
+    items: next.items.slice(previous.items.length),
+    pendingSteerItems: next.pendingSteerItems.slice(
+      previous.pendingSteerItems.length,
+    ),
+    previousSequenceStart: previous.sequenceStart,
+  };
+}
+
+function readPersistedEntry(
+  db: DbConnection,
+  threadId: string,
+  current: { dataVersion: number; generation: number },
+): Entry | null {
+  const persisted = readPersistedCheckpoint(
+    db,
+    { kind: PERSISTED_CHECKPOINT_KIND, threadId },
+    persistedPartSchema,
+  );
+  if (persisted === null) return null;
+  const first = persisted.parts[0]!;
+  const checkpoint = emptyCheckpoint(first.historySequenceStart);
+  for (const part of persisted.parts) {
+    if (
+      part.key !== first.key ||
+      part.historySequenceStart !== first.historySequenceStart ||
+      part.previousSequenceStart !== checkpoint.sequenceStart ||
+      part.checkpoint.sequenceStart <= checkpoint.sequenceStart
+    )
+      return null;
+    for (const item of part.items) checkpoint.items.push(item);
+    for (const item of part.pendingSteerItems)
+      checkpoint.pendingSteerItems.push(item);
+    for (const identity of part.identities) checkpoint.identities.add(identity);
+    checkpoint.agentMessageDeltaCount = part.checkpoint.agentMessageDeltaCount;
+    checkpoint.externalUserBoundarySeq =
+      part.checkpoint.externalUserBoundarySeq;
+    checkpoint.sequenceStart = part.checkpoint.sequenceStart;
+  }
+  const last = persisted.parts.at(-1)!;
+  return {
+    agentMessageDeltaCount: last.agentMessageDeltaCount,
+    chain: persisted.chain,
+    checkpoint,
+    dataVersion: current.dataVersion,
+    generation: current.generation,
+    historySequenceStart: last.historySequenceStart,
+    key: last.key,
+    maxSeq: last.maxSeq,
+    projectionState: last.projectionState,
+    source: "persisted",
+  };
+}
 
 function eventIdentities(event: ThreadEventWithMeta["event"]): string[] {
   const identities: string[] = [];
@@ -248,27 +368,31 @@ export function projectConversationOutlineIncrementally(args: {
     prefix: ConversationOutlinePrefix,
     projectionState: ConversationOutlineProjectionState,
   ) => ConversationOutlineSelection;
-}): ThreadConversationOutlineItem[] {
+}): {
+  items: ThreadConversationOutlineItem[];
+  source: ConversationOutlineCheckpointSource;
+} {
   let cache = caches.get(args.db);
   if (cache === undefined) {
     cache = { entries: new Map(), chars: 0 };
     caches.set(args.db, cache);
   }
+  const persistedKey = {
+    kind: PERSISTED_CHECKPOINT_KIND,
+    threadId: args.threadId,
+  };
   const dataVersion = getDatabaseDataVersion(args.db);
   const generation = getThreadEventRewriteGeneration(args.threadId);
-  const entry = cache.entries.get(args.threadId);
-  if (entry !== undefined) {
+  const cached = cache.entries.get(args.threadId);
+  if (cached !== undefined) {
     cache.entries.delete(args.threadId);
-    cache.chars -= entry.chars;
+    cache.chars -= persistedCheckpointChars(cached.chain);
   }
-  const empty: Checkpoint = {
-    agentMessageDeltaCount: 0,
-    externalUserBoundarySeq: null,
-    identities: new Set(),
-    items: [],
-    pendingSteerItems: [],
-    sequenceStart: args.historySequenceStart,
-  };
+  const entry =
+    cached ??
+    readPersistedEntry(args.db, args.threadId, { dataVersion, generation }) ??
+    undefined;
+  const empty = emptyCheckpoint(args.historySequenceStart);
   const canReuseEntry =
     entry !== undefined &&
     entry.key === args.key &&
@@ -317,37 +441,48 @@ export function projectConversationOutlineIncrementally(args: {
     ...checkpoint.pendingSteerItems,
     ...projection.pendingSteerItems.map(({ item }) => item),
   ];
+  const source =
+    checkpoint === empty || entry === undefined ? "full" : entry.source;
   const next = nextCheckpoint(selection.events, projection, checkpoint);
-  if (next.sequenceStart > args.historySequenceStart) {
-    const chars =
-      next === entry?.checkpoint
-        ? entry.chars
-        : JSON.stringify(next.items).length +
-          JSON.stringify(next.pendingSteerItems).length +
-          [...next.identities].reduce(
-            (sum, identity) => sum + identity.length,
-            0,
-          );
-    if (chars <= MAX_CHARS) {
-      cache.entries.set(args.threadId, {
-        agentMessageDeltaCount,
-        checkpoint: next,
-        historySequenceStart: args.historySequenceStart,
-        dataVersion,
-        generation,
-        key: args.key,
-        maxSeq: args.maxSeq,
-        chars,
-        projectionState,
-      });
-      cache.chars += chars;
-    }
+  if (next.sequenceStart <= args.historySequenceStart) {
+    if (entry !== undefined) clearPersistedCheckpoint(args.db, persistedKey);
+    return { items, source };
+  }
+  const header: EntryHeader = {
+    agentMessageDeltaCount,
+    historySequenceStart: args.historySequenceStart,
+    key: args.key,
+    maxSeq: args.maxSeq,
+    projectionState,
+  };
+  const extendsEntry = entry !== undefined && checkpoint === entry.checkpoint;
+  const chain =
+    extendsEntry && next === checkpoint
+      ? entry.chain
+      : writePersistedCheckpoint(args.db, persistedKey, {
+          chain: extendsEntry ? entry.chain : null,
+          full: () => toPersistedPart(header, empty, next),
+          maxChars: MAX_CHARS,
+          part: extendsEntry
+            ? () => toPersistedPart(header, checkpoint, next)
+            : null,
+        });
+  if (chain !== null) {
+    cache.entries.set(args.threadId, {
+      ...header,
+      chain,
+      checkpoint: next,
+      dataVersion,
+      generation,
+      source: "memory",
+    });
+    cache.chars += persistedCheckpointChars(chain);
   }
   while (cache.entries.size > MAX_ENTRIES || cache.chars > MAX_CHARS) {
     const oldest = cache.entries.keys().next().value;
     if (oldest === undefined) break;
-    cache.chars -= cache.entries.get(oldest)!.chars;
+    cache.chars -= persistedCheckpointChars(cache.entries.get(oldest)!.chain);
     cache.entries.delete(oldest);
   }
-  return items;
+  return { items, source };
 }

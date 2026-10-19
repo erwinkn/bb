@@ -758,6 +758,21 @@ export const threadConversationOutlines = sqliteTable(
   },
 );
 
+export const threadTimelineCheckpoints = sqliteTable(
+  "thread_timeline_checkpoints",
+  {
+    threadId: text("thread_id")
+      .notNull()
+      .references(() => threads.id, { onDelete: "cascade" }),
+    kind: text("kind").notNull(),
+    part: integer("part").notNull(),
+    payload: text("payload").notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.threadId, table.kind, table.part] }),
+  ],
+);
+
 export const threadDynamicContextFileStates = sqliteTable(
   "thread_dynamic_context_file_states",
   {

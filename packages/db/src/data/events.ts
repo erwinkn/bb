@@ -68,6 +68,7 @@ import { createEventId } from "../ids.js";
 import { COMPLETED_EVENT_OUTPUT_TRUNCATION_THRESHOLD_CHARS } from "../retained-event-output.js";
 import { truncatedEventDataColumn } from "./event-output-truncation.js";
 import { bumpThreadEventRewriteGeneration } from "./event-rewrite-generation.js";
+import { deletePersistedThreadTimelineState } from "./thread-timeline-checkpoints.js";
 import { deriveStoredEventItemFieldsFromSource } from "../stored-event-item-fields.js";
 import {
   upsertThreadSearchSegments,
@@ -338,6 +339,7 @@ export function deleteThreadEventSuffixInTransaction(
     )
     .run();
   if (result.changes > 0) {
+    deletePersistedThreadTimelineState(db, args.threadId);
     bumpThreadEventRewriteGeneration(args.threadId);
     markThreadPruningWork(db, [args.threadId]);
   }
@@ -478,6 +480,7 @@ export function insertEvents(
           insertedInputIndexes.push(index);
           const highWaterMark = highWaterMarks[input.threadId];
           if (highWaterMark !== undefined && input.sequence <= highWaterMark) {
+            deletePersistedThreadTimelineState(tx, input.threadId);
             bumpThreadEventRewriteGeneration(input.threadId);
           }
           const eventTypes = eventTypesByThreadId.get(input.threadId);
@@ -2991,14 +2994,14 @@ export function listTimelineInterruptionRows(
     .all();
 }
 
-const TIMELINE_ORDERING_CONTEXT_EVENT_TYPES = [
+export const TIMELINE_ORDERING_CONTEXT_EVENT_TYPES = [
   "client/turn/requested",
   "turn/input/accepted",
   "turn/started",
   "turn/completed",
 ] as const satisfies readonly ThreadEventType[];
 
-export function listTimelineOrderingContext(
+function selectTimelineOrderingContext(
   db: DbConnection,
   args: { threadId: string; sequenceStart: number; maxSeq: number },
 ) {
@@ -3006,7 +3009,9 @@ export function listTimelineOrderingContext(
     .select({
       sequence: sql<number>`${events.sequence}`,
       turnId: sql<string | null>`${events.turnId}`,
-      type: sql<StoredEventRow["type"]>`${events.type}`,
+      type: sql<
+        (typeof TIMELINE_ORDERING_CONTEXT_EVENT_TYPES)[number]
+      >`${events.type}`,
       parentToolCallId: sql<string | null>`${events.parentToolCallId}`,
       requestId: sql<
         string | null
@@ -3033,8 +3038,22 @@ export function listTimelineOrderingContext(
         inArray(events.type, [...TIMELINE_ORDERING_CONTEXT_EVENT_TYPES]),
       ),
     )
-    .orderBy(events.sequence)
-    .all();
+    .orderBy(events.sequence);
+}
+
+export function listTimelineOrderingContext(
+  db: DbConnection,
+  args: { threadId: string; sequenceStart: number; maxSeq: number },
+) {
+  return selectTimelineOrderingContext(db, args).all();
+}
+
+export function getTimelineOrderingContextQuerySql(db: DbConnection): string {
+  return selectTimelineOrderingContext(db, {
+    maxSeq: 0,
+    sequenceStart: 0,
+    threadId: "",
+  }).toSQL().sql;
 }
 
 export function getTimelineGroupingContextChangesInRange(

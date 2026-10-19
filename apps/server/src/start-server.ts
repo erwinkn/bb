@@ -122,7 +122,7 @@ export async function runServer(serverConfig: ServerConfig): Promise<void> {
   let diagnosticsEnabled = () => false;
   const db = initDb(serverConfig.databasePath, {
     slowQueryThresholdMs: () => (diagnosticsEnabled() ? 25 : 100),
-    slowQueryDiagnosticsEnabled: () => diagnosticsEnabled(),
+    slowQueryDiagnosticsEnabled: () => true,
     dataDir: serverConfig.BB_DATA_DIR,
     logger,
   });

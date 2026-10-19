@@ -25,6 +25,10 @@ import {
 } from "../../src/data/events.js";
 import { advanceLiveEventPruning } from "../../src/data/resolved-item-pruning.js";
 import { getThreadEventRewriteGeneration } from "../../src/data/event-rewrite-generation.js";
+import {
+  listThreadTimelineCheckpointParts,
+  replaceThreadTimelineCheckpoint,
+} from "../../src/data/thread-timeline-checkpoints.js";
 import { THREAD_CONTEXT_CLEAR_OPERATION, turnScope } from "@bb/domain";
 import { createMigratedConnection } from "../../src/testing.js";
 
@@ -592,7 +596,7 @@ describe("thread pruning", () => {
     }
   });
 
-  it("rolls back the cursor and deletions together without publishing a rewrite generation", () => {
+  it("rolls back the cursor, deletions and persisted timeline state together without publishing a rewrite generation", () => {
     const f = setup();
     try {
       for (const sequence of [1, 2, 3])
@@ -613,6 +617,16 @@ describe("thread pruning", () => {
       });
       const before = f.db.select().from(threadPruningCursors).all();
       const generation = getThreadEventRewriteGeneration(f.thread.id);
+      replaceThreadTimelineCheckpoint(f.db, {
+        kind: "conversation-outline",
+        payload: "{}",
+        threadId: f.thread.id,
+      });
+      const persistedParts = () =>
+        listThreadTimelineCheckpointParts(f.db, {
+          kind: "conversation-outline",
+          threadId: f.thread.id,
+        }).length;
       f.db.run(
         sql`CREATE TRIGGER fail_pruning BEFORE UPDATE ON thread_pruning_cursors BEGIN SELECT RAISE(ABORT, 'injected failure'); END`,
       );
@@ -622,12 +636,14 @@ describe("thread pruning", () => {
       expect(sequences(f)).toEqual([1, 2, 3, 4]);
       expect(f.db.select().from(threadPruningCursors).all()).toEqual(before);
       expect(getThreadEventRewriteGeneration(f.thread.id)).toBe(generation);
+      expect(persistedParts()).toBe(1);
       f.db.run(sql`DROP TRIGGER fail_pruning`);
       expect(advanceThreadPruning(f.db, "resolved-items")).toMatchObject({
         removed: 2,
         historyRewritten: true,
       });
       expect(getThreadEventRewriteGeneration(f.thread.id)).toBe(generation + 1);
+      expect(persistedParts()).toBe(0);
     } finally {
       f.db.$client.close();
     }
