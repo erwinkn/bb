@@ -7,10 +7,11 @@ import {
   listThreadTimelineCheckpointParts,
   type DbConnection,
 } from "@bb/db";
-import type { Thread } from "@bb/domain";
+import { THREAD_CONTEXT_CLEAR_OPERATION, type Thread } from "@bb/domain";
 import { getTimelineGroupingContext } from "../../../src/services/threads/timeline-context-order.js";
 import {
   buildThreadConversationOutline,
+  buildThreadTimelineWithProfile,
   loadThreadConversationOutlineWithSource,
 } from "../../../src/services/threads/timeline.js";
 import {
@@ -64,6 +65,18 @@ function turn(index: number): RowSpec[] {
   ];
 }
 
+function contextClear(operationId: string): RowSpec {
+  return {
+    data: {
+      operation: THREAD_CONTEXT_CLEAR_OPERATION,
+      operationId,
+      status: "completed",
+      message: "Fresh context",
+    },
+    type: "system/operation",
+  };
+}
+
 function seed(testThread: TestThread, from: number, count: number): void {
   appendRows(
     testThread,
@@ -71,10 +84,14 @@ function seed(testThread: TestThread, from: number, count: number): void {
   );
 }
 
-function outlineOptions(db: DbConnection, threadId: string) {
+function outlineOptions(
+  db: DbConnection,
+  threadId: string,
+  includeClearedContextHistory = false,
+) {
   return {
     completedTurnDisplay: "collapse" as const,
-    includeClearedContextHistory: false,
+    includeClearedContextHistory,
     maxSeq: getLatestThreadSequence(db, { threadId }),
     outlineSequence: getLatestStoredConversationOutlineSequence(db, {
       threadId,
@@ -82,19 +99,27 @@ function outlineOptions(db: DbConnection, threadId: string) {
   };
 }
 
-function load(db: DbConnection, thread: Thread) {
+function load(
+  db: DbConnection,
+  thread: Thread,
+  includeClearedContextHistory = false,
+) {
   return loadThreadConversationOutlineWithSource(
     db,
     thread,
-    outlineOptions(db, thread.id),
+    outlineOptions(db, thread.id, includeClearedContextHistory),
   );
 }
 
-function fullOutline(testThread: TestThread, thread = testThread.thread) {
+function fullOutline(
+  testThread: TestThread,
+  thread = testThread.thread,
+  includeClearedContextHistory = false,
+) {
   return buildThreadConversationOutline(
     testThread.coldDb,
     thread,
-    outlineOptions(testThread.coldDb, thread.id),
+    outlineOptions(testThread.coldDb, thread.id, includeClearedContextHistory),
   );
 }
 
@@ -367,6 +392,175 @@ describe("persisted timeline checkpoints", () => {
           }),
         ).toBe(10 * 4);
       } finally {
+        restarted.$client.close();
+      }
+    });
+  });
+
+  const outlineCorruptions = {
+    "a gap in its parts":
+      "UPDATE thread_timeline_checkpoints SET part = 2 WHERE kind = 'conversation-outline' AND part = 1",
+    "broken linkage":
+      "UPDATE thread_timeline_checkpoints SET payload = json_set(payload, '$.previousSequenceStart', -1) WHERE kind = 'conversation-outline' AND part = 1",
+    "a mixed key":
+      "UPDATE thread_timeline_checkpoints SET payload = json_set(payload, '$.key', 'other') WHERE kind = 'conversation-outline' AND part = 1",
+  };
+
+  for (const [name, corruption] of Object.entries(outlineCorruptions))
+    it(`rebuilds and deletes an outline chain with ${name}, even when the checkpoint cannot advance`, () => {
+      withTestThread((testThread) => {
+        const threadId = testThread.thread.id;
+        seed(testThread, 0, 20);
+        load(testThread.db, testThread.thread);
+        seed(testThread, 20, 1);
+        load(testThread.db, testThread.thread);
+        expect(
+          parts(testThread.db, threadId, "conversation-outline"),
+        ).toHaveLength(2);
+        testThread.db.$client.prepare(corruption).run();
+        // A context clear followed by a turn still running leaves no completed
+        // turn after the new history start, so no checkpoint replaces the chain.
+        appendRows(testThread, [
+          contextClear("clear-1"),
+          turn(21)[0]!,
+          turn(21)[1]!,
+        ]);
+
+        const restarted = restart(testThread);
+        try {
+          const result = load(restarted, testThread.thread);
+          expect(result.source).toBe("full");
+          expect(result.response).toEqual(fullOutline(testThread));
+          expect(parts(restarted, threadId, "conversation-outline")).toEqual(
+            [],
+          );
+        } finally {
+          restarted.$client.close();
+        }
+      });
+    });
+
+  it("replaces an ordering chain with broken linkage on its first read", () => {
+    withTestThread((testThread) => {
+      const threadId = testThread.thread.id;
+      const kind = "timeline-ordering-rows:0";
+      const args = () => ({
+        maxSeq: getLatestThreadSequence(testThread.db, { threadId }),
+        sequenceStart: 0,
+        threadId,
+      });
+      seed(testThread, 0, 10);
+      getTimelineGroupingContext(testThread.db, args());
+      seed(testThread, 10, 1);
+      getTimelineGroupingContext(testThread.db, args());
+      expect(parts(testThread.db, threadId, kind)).toHaveLength(2);
+      testThread.db.$client
+        .prepare(
+          `UPDATE thread_timeline_checkpoints SET payload = json_set(payload, '$.previousMaxSeq', 0) WHERE kind = '${kind}' AND part = 1`,
+        )
+        .run();
+
+      const restarted = restart(testThread);
+      try {
+        expect(
+          countRowsRead(restarted, orderingQuery, () => {
+            getTimelineGroupingContext(restarted, args());
+          }),
+        ).toBe(11 * 4);
+        expect(parts(restarted, threadId, kind)).toHaveLength(1);
+      } finally {
+        restarted.$client.close();
+      }
+    });
+  });
+
+  it("restores the outline across a context clear that moves the history start", () => {
+    withTestThread((testThread) => {
+      const threadId = testThread.thread.id;
+      seed(testThread, 0, 20);
+      load(testThread.db, testThread.thread);
+      appendRows(testThread, [contextClear("clear-1")]);
+      seed(testThread, 20, 5);
+
+      let restarted = restart(testThread);
+      try {
+        const result = load(restarted, testThread.thread);
+        expect(result.source).toBe("full");
+        expect(result.response).toEqual(fullOutline(testThread));
+        expect(parts(restarted, threadId, "conversation-outline")).toHaveLength(
+          1,
+        );
+      } finally {
+        restarted.$client.close();
+      }
+
+      seed(testThread, 25, 2);
+      restarted = restart(testThread);
+      try {
+        const result = load(restarted, testThread.thread);
+        expect(result.source).toBe("persisted");
+        expect(result.response).toEqual(fullOutline(testThread));
+        const withHistory = load(restarted, testThread.thread, true);
+        expect(withHistory.response).toEqual(
+          fullOutline(testThread, testThread.thread, true),
+        );
+        expect(withHistory.response.items.length).toBeGreaterThan(
+          result.response.items.length,
+        );
+      } finally {
+        restarted.$client.close();
+      }
+    });
+  });
+
+  it("builds the same timeline after a restart as a cold build without persisted state", () => {
+    withTestThread((testThread) => {
+      const threadId = testThread.thread.id;
+      const build = (db: DbConnection) => {
+        const options = {
+          completedTurnDisplay: "collapse" as const,
+          eventBudget: 1_000_000,
+          includeClearedContextHistory: false,
+          includeDiagnosticOperations: false,
+          includeNestedRows: true,
+          maxInlineOutputChars: null,
+          maxSeq: getLatestThreadSequence(db, { threadId }),
+        };
+        const latest = buildThreadTimelineWithProfile(db, testThread.thread, {
+          ...options,
+          page: { kind: "latest", segmentLimit: 5 },
+        }).response;
+        const older = buildThreadTimelineWithProfile(db, testThread.thread, {
+          ...options,
+          page: {
+            kind: "older",
+            beforeCursor: latest.timelinePage.olderCursor!,
+            segmentLimit: 5,
+          },
+        }).response;
+        return JSON.stringify([latest, older]);
+      };
+      seed(testThread, 0, 30);
+      build(testThread.db);
+      appendRows(testThread, [contextClear("clear-1")]);
+      seed(testThread, 30, 20);
+      build(testThread.db);
+      seed(testThread, 50, 3);
+
+      const restarted = restart(testThread);
+      const cold = restart(testThread);
+      try {
+        let warm = "";
+        const rowsRead = countRowsRead(restarted, orderingQuery, () => {
+          warm = build(restarted);
+        });
+        expect(rowsRead).toBe(3 * 4);
+        testThread.db.$client
+          .prepare("DELETE FROM thread_timeline_checkpoints")
+          .run();
+        expect(build(cold)).toBe(warm);
+      } finally {
+        cold.$client.close();
         restarted.$client.close();
       }
     });

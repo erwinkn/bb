@@ -164,47 +164,50 @@ function readPersistedOrderingRows(
   args: TimelineGroupingContextArgs,
   current: { dataVersion: number; generation: number },
 ): TimelineOrderingRowsEntry | undefined {
-  const persisted = readPersistedCheckpoint(
-    db,
-    {
-      kind: `${PERSISTED_ORDERING_ROWS_KIND}:${args.sequenceStart}`,
-      threadId: args.threadId,
-    },
-    persistedOrderingRowsPartSchema,
-  );
-  if (persisted === null) return undefined;
   const query = orderingQueryFingerprint(db);
-  const rows: TimelineOrderingContextRow[] = [];
-  let maxSeq = args.sequenceStart - 1;
-  for (const part of persisted.parts) {
-    if (
-      part.query !== query ||
-      part.sequenceStart !== args.sequenceStart ||
-      part.previousMaxSeq !== maxSeq ||
-      part.maxSeq <= maxSeq
-    )
-      return undefined;
-    let previousSequence = maxSeq;
-    for (const value of part.rows) {
-      const row = decodeOrderingRow(value);
-      if (
-        row === null ||
-        row.sequence <= previousSequence ||
-        row.sequence > part.maxSeq
-      )
-        return undefined;
-      rows.push(row);
-      previousSequence = row.sequence;
-    }
-    maxSeq = part.maxSeq;
-  }
-  return {
-    chain: persisted.chain,
-    ...current,
-    maxSeq,
-    persistedMaxSeq: maxSeq,
-    rows,
-  };
+  return (
+    readPersistedCheckpoint(
+      db,
+      {
+        kind: `${PERSISTED_ORDERING_ROWS_KIND}:${args.sequenceStart}`,
+        threadId: args.threadId,
+      },
+      persistedOrderingRowsPartSchema,
+      (parts, chain) => {
+        const rows: TimelineOrderingContextRow[] = [];
+        let maxSeq = args.sequenceStart - 1;
+        for (const part of parts) {
+          if (
+            part.query !== query ||
+            part.sequenceStart !== args.sequenceStart ||
+            part.previousMaxSeq !== maxSeq ||
+            part.maxSeq <= maxSeq
+          )
+            return null;
+          let previousSequence = maxSeq;
+          for (const value of part.rows) {
+            const row = decodeOrderingRow(value);
+            if (
+              row === null ||
+              row.sequence <= previousSequence ||
+              row.sequence > part.maxSeq
+            )
+              return null;
+            rows.push(row);
+            previousSequence = row.sequence;
+          }
+          maxSeq = part.maxSeq;
+        }
+        return {
+          chain,
+          ...current,
+          maxSeq,
+          persistedMaxSeq: maxSeq,
+          rows,
+        };
+      },
+    ) ?? undefined
+  );
 }
 
 const orderingContexts = new WeakMap<

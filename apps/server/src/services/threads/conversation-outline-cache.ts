@@ -144,44 +144,47 @@ function readPersistedEntry(
   threadId: string,
   current: { dataVersion: number; generation: number },
 ): Entry | null {
-  const persisted = readPersistedCheckpoint(
+  return readPersistedCheckpoint(
     db,
     { kind: PERSISTED_CHECKPOINT_KIND, threadId },
     persistedPartSchema,
+    (parts, chain) => {
+      const first = parts[0]!;
+      const checkpoint = emptyCheckpoint(first.historySequenceStart);
+      for (const part of parts) {
+        if (
+          part.key !== first.key ||
+          part.historySequenceStart !== first.historySequenceStart ||
+          part.previousSequenceStart !== checkpoint.sequenceStart ||
+          part.checkpoint.sequenceStart <= checkpoint.sequenceStart
+        )
+          return null;
+        for (const item of part.items) checkpoint.items.push(item);
+        for (const item of part.pendingSteerItems)
+          checkpoint.pendingSteerItems.push(item);
+        for (const identity of part.identities)
+          checkpoint.identities.add(identity);
+        checkpoint.agentMessageDeltaCount =
+          part.checkpoint.agentMessageDeltaCount;
+        checkpoint.externalUserBoundarySeq =
+          part.checkpoint.externalUserBoundarySeq;
+        checkpoint.sequenceStart = part.checkpoint.sequenceStart;
+      }
+      const last = parts.at(-1)!;
+      return {
+        agentMessageDeltaCount: last.agentMessageDeltaCount,
+        chain,
+        checkpoint,
+        dataVersion: current.dataVersion,
+        generation: current.generation,
+        historySequenceStart: last.historySequenceStart,
+        key: last.key,
+        maxSeq: last.maxSeq,
+        projectionState: last.projectionState,
+        source: "persisted",
+      };
+    },
   );
-  if (persisted === null) return null;
-  const first = persisted.parts[0]!;
-  const checkpoint = emptyCheckpoint(first.historySequenceStart);
-  for (const part of persisted.parts) {
-    if (
-      part.key !== first.key ||
-      part.historySequenceStart !== first.historySequenceStart ||
-      part.previousSequenceStart !== checkpoint.sequenceStart ||
-      part.checkpoint.sequenceStart <= checkpoint.sequenceStart
-    )
-      return null;
-    for (const item of part.items) checkpoint.items.push(item);
-    for (const item of part.pendingSteerItems)
-      checkpoint.pendingSteerItems.push(item);
-    for (const identity of part.identities) checkpoint.identities.add(identity);
-    checkpoint.agentMessageDeltaCount = part.checkpoint.agentMessageDeltaCount;
-    checkpoint.externalUserBoundarySeq =
-      part.checkpoint.externalUserBoundarySeq;
-    checkpoint.sequenceStart = part.checkpoint.sequenceStart;
-  }
-  const last = persisted.parts.at(-1)!;
-  return {
-    agentMessageDeltaCount: last.agentMessageDeltaCount,
-    chain: persisted.chain,
-    checkpoint,
-    dataVersion: current.dataVersion,
-    generation: current.generation,
-    historySequenceStart: last.historySequenceStart,
-    key: last.key,
-    maxSeq: last.maxSeq,
-    projectionState: last.projectionState,
-    source: "persisted",
-  };
 }
 
 function eventIdentities(event: ThreadEventWithMeta["event"]): string[] {

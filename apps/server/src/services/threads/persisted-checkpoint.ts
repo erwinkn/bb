@@ -25,13 +25,27 @@ export function persistedCheckpointChars(
   return chain.baseChars + chain.appendedChars;
 }
 
-export function readPersistedCheckpoint<T>(
+// Reads a chain and hands its decoded parts to `assemble`, which checks
+// linkage across parts. A chain that fails any check is deleted, so a corrupt
+// or foreign chain is parsed once rather than on every load.
+export function readPersistedCheckpoint<T, R>(
   db: DbConnection,
   key: PersistedCheckpointKey,
   schema: z.ZodType<T>,
-): { chain: PersistedCheckpointChain; parts: T[] } | null {
+  assemble: (parts: T[], chain: PersistedCheckpointChain) => R | null,
+): R | null {
   const rows = listThreadTimelineCheckpointParts(db, key);
   if (rows.length === 0) return null;
+  const result = decodePersistedCheckpoint(rows, schema, assemble);
+  if (result === null) clearPersistedCheckpoint(db, key);
+  return result;
+}
+
+function decodePersistedCheckpoint<T, R>(
+  rows: { part: number; payload: string }[],
+  schema: z.ZodType<T>,
+  assemble: (parts: T[], chain: PersistedCheckpointChain) => R | null,
+): R | null {
   const parts: T[] = [];
   let appendedChars = 0;
   for (const [index, row] of rows.entries()) {
@@ -47,14 +61,11 @@ export function readPersistedCheckpoint<T>(
     parts.push(parsed.data);
     if (index > 0) appendedChars += row.payload.length;
   }
-  return {
-    chain: {
-      appendedChars,
-      baseChars: rows[0]!.payload.length,
-      parts: rows.length,
-    },
-    parts,
-  };
+  return assemble(parts, {
+    appendedChars,
+    baseChars: rows[0]!.payload.length,
+    parts: rows.length,
+  });
 }
 
 export function writePersistedCheckpoint(
