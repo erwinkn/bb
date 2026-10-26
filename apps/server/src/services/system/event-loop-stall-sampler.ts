@@ -36,11 +36,12 @@ const SAMPLER_WORKER_SOURCE = `
 const { parentPort, workerData } = require("node:worker_threads");
 const { readFileSync } = require("node:fs");
 const { Session } = require("node:inspector");
-const { heartbeat, modulo, startLagMs, settledLagMs, maxProfileMs, cooldownMs, pollMs, samplingIntervalUs, readingLimit } = workerData;
-const session = new Session();
-session.connectToMainThread();
+const { heartbeat, modulo, profile, startLagMs, settledLagMs, maxProfileMs, cooldownMs, pollMs, samplingIntervalUs, readingLimit } = workerData;
+const session = profile ? new Session() : null;
+session?.connectToMainThread();
 const post = (method, params) => new Promise((resolve, reject) =>
   session.post(method, params ?? {}, (error, result) => (error ? reject(error) : resolve(result))));
+const EMPTY_PROFILE = { nodes: [], samples: [], timeDeltas: [] };
 const lag = () => {
   const delta = (Date.now() % modulo) - Atomics.load(heartbeat, 0);
   return delta < 0 ? delta + modulo : delta;
@@ -134,16 +135,16 @@ setInterval(async () => {
         profilingSince = Date.now() - current;
         profilingBaseline = readingAtOrBefore(profilingSince);
         peakLag = current;
-        await post("Profiler.start");
+        if (profile) await post("Profiler.start");
       }
     } else {
       peakLag = Math.max(peakLag, current);
       if (current <= settledLagMs || Date.now() - profilingSince >= maxProfileMs) {
-        const { profile } = await post("Profiler.stop");
+        const sampled = profile ? (await post("Profiler.stop")).profile : EMPTY_PROFILE;
         const settled = readMainThread();
         lastSampleAt = Date.now();
         parentPort.postMessage({
-          ...summarize(profile, Date.now() - profilingSince),
+          ...summarize(sampled, Date.now() - profilingSince),
           mainThread: mainThreadBetween(profilingBaseline, settled),
           peakLagMs: peakLag,
           startedAt: profilingSince,
@@ -161,7 +162,7 @@ setInterval(async () => {
     busy = false;
   }
 }, pollMs);
-post("Profiler.enable").then(() => post("Profiler.setSamplingInterval", { interval: samplingIntervalUs }));
+if (profile) post("Profiler.enable").then(() => post("Profiler.setSamplingInterval", { interval: samplingIntervalUs }));
 `;
 
 function isStallSample(value: unknown): value is EventLoopStallSample {
@@ -177,6 +178,7 @@ function isStallSample(value: unknown): value is EventLoopStallSample {
 export function startEventLoopStallSampler(options: {
   logger: Pick<ServerLogger, "info" | "warn">;
   onSample?: (sample: SampledEventLoopStall) => void;
+  profile: boolean;
 }): EventLoopStallSampler {
   const heartbeat = new Int32Array(new SharedArrayBuffer(4));
   const beat = () => Atomics.store(heartbeat, 0, Date.now() % HEARTBEAT_MODULO);
@@ -191,6 +193,7 @@ export function startEventLoopStallSampler(options: {
       maxProfileMs: 10_000,
       modulo: HEARTBEAT_MODULO,
       pollMs: 50,
+      profile: options.profile,
       readingLimit: 40,
       samplingIntervalUs: 1_000,
       settledLagMs: 100,

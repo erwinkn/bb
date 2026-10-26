@@ -370,6 +370,7 @@ export async function runServer(serverConfig: ServerConfig): Promise<void> {
   const eventLoopStallSampler = startEventLoopStallSampler({
     logger,
     onSample: eventLoopStallMonitor.noteSampledStall,
+    profile: process.env.BB_STALL_PROFILER === "1",
   });
   const stopDaemonLivenessChecks = startDaemonLivenessChecks({
     config: runtimeConfig,

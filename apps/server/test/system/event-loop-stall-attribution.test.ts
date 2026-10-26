@@ -105,7 +105,11 @@ describe("event loop stall attribution", () => {
     async () => {
       const logger = { info: vi.fn(), warn: vi.fn() };
       const onSample = vi.fn();
-      const sampler = startEventLoopStallSampler({ logger, onSample });
+      const sampler = startEventLoopStallSampler({
+        logger,
+        onSample,
+        profile: true,
+      });
       try {
         await new Promise((resolve) => setTimeout(resolve, 500));
         const startedAt = Date.now();
@@ -138,6 +142,51 @@ describe("event loop stall attribution", () => {
           ).toBeGreaterThanOrEqual(900);
           expect(sample.mainThread.offCpuMs).toBeGreaterThanOrEqual(0);
           expect(sample.mainThread.majorFaults).toBeGreaterThanOrEqual(0);
+        } else {
+          expect(sample.mainThread).toBeNull();
+        }
+      } finally {
+        sampler.stop();
+      }
+    },
+  );
+
+  it(
+    "reports main-thread time without profiling unless asked to",
+    { timeout: 15_000 },
+    async () => {
+      const logger = { info: vi.fn(), warn: vi.fn() };
+      const onSample = vi.fn();
+      const sampler = startEventLoopStallSampler({
+        logger,
+        onSample,
+        profile: false,
+      });
+      try {
+        await new Promise((resolve) => setTimeout(resolve, 500));
+        const startedAt = Date.now();
+        burnTheEventLoop(1_200);
+        await vi.waitFor(
+          () => {
+            expect(onSample).toHaveBeenCalledTimes(1);
+          },
+          { timeout: 5_000, interval: 50 },
+        );
+        expect(logger.warn).not.toHaveBeenCalled();
+        const [sample] = onSample.mock.calls[0]!;
+        expect(sample).toMatchObject({
+          samples: 0,
+          spawnCount: 0,
+          topFunctions: [],
+          topStack: null,
+        });
+        expect(sample.peakLagMs).toBeGreaterThanOrEqual(250);
+        expect(Math.abs(sample.startedAt - startedAt)).toBeLessThan(150);
+        if (process.platform === "linux") {
+          expect(sample.mainThread.wallMs).toBeGreaterThanOrEqual(1_150);
+          expect(
+            sample.mainThread.cpuMs + sample.mainThread.runQueueMs,
+          ).toBeGreaterThanOrEqual(900);
         } else {
           expect(sample.mainThread).toBeNull();
         }
