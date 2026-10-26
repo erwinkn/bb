@@ -1216,6 +1216,122 @@ it("makes a new seed when a skill is added, edited or removed", async () => {
   }
 });
 
+it("reuses the seed after an idle Stop and resume and Claude Code's marketplace refresh, until it is an hour old", async () => {
+  const root = mkdtempSync(join(tmpdir(), "bb-seed-idle-"));
+  const now = Date.now();
+  let elapsed = 0;
+  const clock = vi.spyOn(Date, "now").mockImplementation(() => now + elapsed);
+  try {
+    const marketplaces = join(root, "config", "plugins", "known_marketplaces.json");
+    const refreshMarketplace = () =>
+      writeFileSync(
+        marketplaces,
+        JSON.stringify({
+          official: {
+            installLocation: join(root, "marketplace"),
+            lastUpdated: new Date(now + elapsed).toISOString(),
+          },
+        }),
+      );
+    mkdirSync(join(root, "config", "plugins"), { recursive: true });
+    refreshMarketplace();
+    const turnOptions = {
+      ...options(),
+      envVars: { CLAUDE_CONFIG_DIR: join(root, "config") },
+    };
+    const construction = {
+      cwd: join(root, "workspace"),
+      instructionMode: "append",
+      options: turnOptions,
+      threadId: THREAD_ID,
+      dynamicTools,
+    };
+    bridge.sendRequest("start", "thread/start", construction);
+    await bridge.waitForResponse("start");
+    await freshTurn("turn-2", "memory", FRESH_SESSION_ID, turnOptions);
+    expect(seedCalls()).toHaveLength(1);
+    const seed = seedCalls()[0]!.options.sessionId;
+
+    elapsed = 35 * 60_000;
+    bridge.sendRequest("release", "thread/stop", {
+      threadId: THREAD_ID,
+      providerThreadId: FRESH_SESSION_ID,
+      intent: "interrupt",
+      activeTurnId: null,
+    });
+    await bridge.waitForResponse("release");
+    refreshMarketplace();
+    bridge.sendRequest("resume", "thread/resume", {
+      ...construction,
+      providerThreadId: FRESH_SESSION_ID,
+    });
+    await bridge.waitForResponse("resume");
+    elapsed = 59 * 60_000;
+    const resumed = await freshTurn(
+      "turn-3",
+      "memory",
+      HANDOVER_SESSION_ID,
+      turnOptions,
+    );
+    expect(seedCalls()).toHaveLength(1);
+    expect(resumed.options.resume).toBe(seed);
+
+    elapsed = 60 * 60_000;
+    const expired = await freshTurn(
+      "turn-4",
+      "memory",
+      THIRD_SESSION_ID,
+      turnOptions,
+    );
+    expect(seedCalls()).toHaveLength(2);
+    expect(expired.options.resume).toBe(seedCalls()[1]!.options.sessionId);
+  } finally {
+    clock.mockRestore();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+it("logs one line naming why a seed is rebuilt, without the prompt", async () => {
+  const now = Date.now();
+  let elapsed = 0;
+  const clock = vi.spyOn(Date, "now").mockImplementation(() => now + elapsed);
+  const stderr = vi
+    .spyOn(process.stderr, "write")
+    .mockImplementation(() => true);
+  const rebuilt = () =>
+    stderr.mock.calls
+      .map(([line]) => String(line))
+      .filter((line) => line.includes("fresh session seed"));
+  try {
+    await startThread(bridge);
+    await freshTurn("turn-2", "secret memory v1", FRESH_SESSION_ID);
+    await freshTurn("turn-3", "secret memory v1", HANDOVER_SESSION_ID);
+    await freshTurn("turn-4", "secret memory v2", THIRD_SESSION_ID);
+    elapsed = 61 * 60_000;
+    await freshTurn("turn-5", "secret memory v2", FRESH_SESSION_ID);
+    elapsed = 122 * 60_000;
+    await freshTurn("turn-6", "secret memory v3", HANDOVER_SESSION_ID);
+    expect(rebuilt()).toEqual([
+      `claude-code bridge: fresh session seed for ${THREAD_ID} rebuilt: no seed\n`,
+      expect.stringMatching(
+        new RegExp(
+          `^claude-code bridge: fresh session seed for ${THREAD_ID} rebuilt: key changed: prompt [0-9a-f]{8}→[0-9a-f]{8}\\n$`,
+        ),
+      ),
+      `claude-code bridge: fresh session seed for ${THREAD_ID} rebuilt: expired after 61 min\n`,
+      expect.stringMatching(
+        new RegExp(
+          `^claude-code bridge: fresh session seed for ${THREAD_ID} rebuilt: key changed: prompt [0-9a-f]{8}→[0-9a-f]{8}; expired after 61 min\\n$`,
+        ),
+      ),
+    ]);
+    expect(rebuilt().join("")).not.toContain("secret");
+  } finally {
+    clock.mockRestore();
+    stderr.mockRestore();
+  }
+});
+
 it("runs a fresh session, and its seed, in the permission mode the turn asks for", async () => {
   bridge.sendRequest("start", "thread/start", {
     cwd: "/tmp/worktree",

@@ -28,7 +28,7 @@ import {
   type BridgeToolCallRequest,
   experimental_defineProviderBridge,
 } from "@get-bb/plugin-sdk/provider-bridge";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { join as joinPath, resolve as resolvePath } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import {
@@ -302,10 +302,15 @@ interface TurnContextState {
 }
 
 interface FreshSessionSeed {
-  key: string;
+  key: FreshSessionSeedKey;
   sessionId: string;
   createdAt: number;
 }
+
+type FreshSessionSeedKey = Record<
+  "options" | "prompt" | "tools" | "setup",
+  string
+>;
 
 interface CreateThreadAttachmentArgs {
   permissionEscalation: PermissionEscalation | null;
@@ -1193,7 +1198,7 @@ function createSdkSession(
 
 async function freshSessionSeedKey(
   attachment: ThreadAttachment,
-): Promise<string | null> {
+): Promise<FreshSessionSeedKey | null> {
   const { sessionId: _sessionId, ...options } = attachment.sessionOptions;
   const setup = await claudeSetupRevision({
     cwd: options.cwd,
@@ -1201,12 +1206,38 @@ async function freshSessionSeedKey(
     pluginPaths: (options.plugins ?? []).map((plugin) => plugin.path),
   });
   if (setup === null) return null;
-  return JSON.stringify({
-    options,
-    systemPromptExtra: attachment.turnContextState.systemPromptExtra,
-    dynamicTools: attachment.sessionConstructionConfig.dynamicTools,
+  const hash = (value: unknown) =>
+    createHash("sha256")
+      .update(JSON.stringify(value ?? null))
+      .digest("hex");
+  return {
+    options: hash(options),
+    prompt: hash(attachment.turnContextState.systemPromptExtra),
+    tools: hash(attachment.sessionConstructionConfig.dynamicTools),
     setup,
-  });
+  };
+}
+
+function freshSessionSeedMiss(
+  seed: FreshSessionSeed | null,
+  key: FreshSessionSeedKey,
+  now: number,
+): string | null {
+  if (seed === null) return "no seed";
+  const parts = Object.keys(key) as (keyof FreshSessionSeedKey)[];
+  const changed = parts
+    .filter((part) => seed.key[part] !== key[part])
+    .map(
+      (part) =>
+        `${part} ${seed.key[part].slice(0, 8)}→${key[part].slice(0, 8)}`,
+    );
+  const reasons =
+    changed.length === 0 ? [] : [`key changed: ${changed.join(", ")}`];
+  const age = now - seed.createdAt;
+  if (age >= FRESH_SESSION_SEED_MAX_AGE_MS) {
+    reasons.push(`expired after ${Math.floor(age / 60_000)} min`);
+  }
+  return reasons.length === 0 ? null : reasons.join("; ");
 }
 
 function runFreshSessionSeed(
@@ -1269,13 +1300,11 @@ async function freshSessionSeed(
     return null;
   }
   const now = Date.now();
-  if (
-    state.seed !== null &&
-    state.seed.key === key &&
-    now - state.seed.createdAt < FRESH_SESSION_SEED_MAX_AGE_MS
-  ) {
-    return state.seed.sessionId;
-  }
+  const miss = freshSessionSeedMiss(state.seed, key, now);
+  if (miss === null && state.seed !== null) return state.seed.sessionId;
+  logBridgeError(
+    `fresh session seed for ${attachment.threadIdRef.current} rebuilt: ${miss}`,
+  );
   state.seed = null;
   const sessionId = randomUUID();
   try {

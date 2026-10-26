@@ -69,7 +69,6 @@ export async function claudeSetupRevision(
   const installed = join(configDir, "plugins", "installed_plugins.json");
   const marketplaces = join(configDir, "plugins", "known_marketplaces.json");
   await fingerprint.file(installed);
-  await fingerprint.file(marketplaces);
   for (const location of await marketplaceLocations(marketplaces)) {
     await fingerprint.file(
       join(location, ".claude-plugin", "marketplace.json"),

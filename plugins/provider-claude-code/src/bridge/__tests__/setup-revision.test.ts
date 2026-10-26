@@ -3,6 +3,7 @@ import {
   mkdtempSync,
   rmSync,
   symlinkSync,
+  utimesSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -120,6 +121,40 @@ it.each([
   expect(edited).not.toBe(added);
   rmSync(join(root, file));
   expect(await revision()).not.toBe(edited);
+});
+
+function writeMarketplaces(lastUpdated: string, extra = {}): void {
+  write(
+    "config/plugins/known_marketplaces.json",
+    JSON.stringify({
+      local: {
+        source: { source: "directory", path: join(root, "marketplace") },
+        installLocation: join(root, "marketplace"),
+        lastUpdated,
+      },
+      ...extra,
+    }),
+  );
+}
+
+it("stays the same when Claude Code refreshes a marketplace's lastUpdated", async () => {
+  writeMarketplaces("2026-10-26T08:28:05.438Z");
+  const before = await revision();
+  writeMarketplaces("2026-10-26T08:28:54.011Z");
+  utimesSync(
+    join(root, "config/plugins/known_marketplaces.json"),
+    new Date(),
+    new Date(Date.now() + 60_000),
+  );
+  expect(await revision()).toBe(before);
+});
+
+it("changes when a marketplace is added", async () => {
+  const before = await revision();
+  writeMarketplaces("2026-10-26T08:28:05.438Z", {
+    team: { installLocation: join(root, "team-marketplace") },
+  });
+  expect(await revision()).not.toBe(before);
 });
 
 it("reads only each skill's SKILL.md, so a skill's own files neither count nor hide later changes", async () => {
