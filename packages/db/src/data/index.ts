@@ -304,6 +304,7 @@ export {
   getActiveStoredTurnId,
   hasRootStoredTurnStarted,
   hasStoredSpawnAgentToolCall,
+  hasStoredTerminalClientTurnRequestEvent,
   hasStoredTurnStarted,
   classifyStoredProviderThreadClaim,
   wouldRemoveSharedProviderSessionClaim,
