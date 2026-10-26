@@ -437,6 +437,30 @@ in-app updates stay opt-in.
   the table. If an older build ever runs against this database without a
   restore, run `DELETE FROM thread_timeline_checkpoints` before starting this
   build again: the older build rewrites history without deleting the parts.
+  Its journal `when` is `1792010323041`, upstream `0143`'s plus 1 ms (it was
+  `1792427699955` until W542, before any database applied it). Drizzle applies
+  a journal entry only when its `when` is above the newest applied
+  `created_at`, so the old value would have made a database that ran this
+  migration skip upstream 0.47's `0144` and `0145` (both earlier) after a
+  rebase, and BB would refuse to start ("Database migration history is
+  incomplete"). At the 0.47.x rebase, move it after upstream's last migration
+  like any new one: the next free number (`0147_thread_timeline_checkpoints`
+  on 0.47.1), a fresh `when` above upstream's last, a snapshot regenerated on
+  top of upstream's, and the same SQL. Upstream's own `0144` takes the `0144`
+  slot and `meta/0144_snapshot.json`. Every database then migrates: one that
+  ran this build applies upstream's `0144`-`0146` (all above `1792010323041`)
+  and then reruns this SQL, which is idempotent (`CREATE TABLE IF NOT EXISTS`,
+  and the `DELETE` only drops cached outlines); a fresh one, or one that ran
+  upstream 0.47 first, applies it once. The old `1792010323041` row stays in
+  `__drizzle_migrations`, which BB ignores (it checks only that each journal
+  entry is applied), so that database counts one more applied migration than
+  the journal has. Keeping `1792010323041` at the end of the journal instead
+  would break the journal test that requires strictly increasing `when`, and
+  a database that ran upstream 0.47 first would skip it and refuse to start.
+  A scratch or dev database that applied this migration at the old `when`
+  refuses to start on this build ("Missing applied migration timestamps");
+  the SQL is unchanged, so repair it with `UPDATE __drizzle_migrations SET
+  created_at = 1792010323041 WHERE created_at = 1792427699955`.
 - **Plugin SDK: 0.4.87 → 0.6.15.** All our plugins load and run. Against the
   0.6.15 types, five fail `npm run typecheck` (details in the next section).
   All but one failure are type-only, because 0.45.0 keeps the old APIs at
