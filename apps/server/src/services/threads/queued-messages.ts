@@ -70,6 +70,7 @@ import { hasMessageDispatchHooks } from "./dispatch-hooks.js";
 import { attemptDispatch } from "./dispatch-attempt.js";
 import { isErroredThreadQueueDrainable } from "./errored-thread-queue.js";
 import { deliverParentSystemMessage } from "./parent-system-messages.js";
+import { admitParentSystemNotice } from "./system-notice-admission.js";
 import {
   createQueuedMessageAutoSendPausedError,
   createQueuedMessageClaimLostError,
@@ -648,15 +649,6 @@ async function sendClaimedQueuedMessageForIdleProviderThread(
   return queuedMessage;
 }
 
-/**
- * Delivers a claimed row that is one of core's own system notices.
- *
- * Such a row is not a user dispatch and does not go through the checkpoint:
- * it is an `initiator: "system"` turn with its own taxonomy and its own
- * dispatch path, and the only reason it was on the queue at all is that the
- * queue is where a blocked dispatch waits. Null when the row is an ordinary
- * message, which is every row but these.
- */
 async function sendClaimedSystemNotice(
   deps: LoggedPendingInteractionWorkSessionDeps,
   args: SendClaimedQueuedMessageForThreadArgs,
@@ -669,9 +661,20 @@ async function sendClaimedSystemNotice(
     JSON.parse(lead.systemNotice),
   );
   const queuedMessage = toThreadQueuedMessage(lead);
+  const admission = args.sendNow
+    ? ({ kind: "deliver", thread: args.thread } as const)
+    : await admitParentSystemNotice(deps, {
+        claimed: args.queuedMessages,
+        input: queuedMessage.content,
+        systemMessageKind: notice.kind,
+        systemMessageSubject: notice.subject,
+        thread: args.thread,
+      });
+  if (admission.kind === "held") return queuedMessage;
+  if (admission.kind === "gone") throw createQueuedMessageClaimLostError();
   const delivered = await deliverParentSystemMessage(deps, {
     input: queuedMessage.content,
-    parentThread: args.thread,
+    parentThread: admission.thread,
     systemMessageKind: notice.kind,
     systemMessageSubject: notice.subject,
   });

@@ -54,6 +54,10 @@ import {
   withThreadSendGuard,
 } from "./thread-context-mutation-guard.js";
 import { requestQueuedMessageDispatch } from "./queued-message-dispatch.js";
+import {
+  admitParentSystemNotice,
+  isDispatchHookRefusal,
+} from "./system-notice-admission.js";
 
 const PARENT_SYSTEM_MESSAGE_SOURCE = "tell";
 
@@ -441,17 +445,29 @@ export async function queueParentSystemMessage(
   let hostUnavailable = false;
   if (!hasPendingInteraction) {
     try {
-      return await deliverParentSystemMessage(deps, {
-        input: args.input,
-        parentThread,
+      const taxonomy = {
         systemMessageKind: args.systemMessageKind,
         systemMessageSubject: args.systemMessageSubject,
+      };
+      const admission = await admitParentSystemNotice(deps, {
+        ...taxonomy,
+        claimed: null,
+        input: args.input,
+        thread: parentThread,
+      });
+      if (admission.kind === "held") return true;
+      if (admission.kind === "gone") return false;
+      return await deliverParentSystemMessage(deps, {
+        ...taxonomy,
+        input: args.input,
+        parentThread: admission.thread,
       });
     } catch (error) {
       hostUnavailable = isHostUnavailableApiError(error);
       if (
         !(error instanceof ThreadContextClearInProgressError) &&
-        !hostUnavailable
+        !hostUnavailable &&
+        !isDispatchHookRefusal(error)
       ) {
         throw error;
       }
