@@ -5,6 +5,19 @@ import { z } from "zod";
 export const TURN_CONTEXT_TOOL_NAME = "claude_code_turn_context";
 export const TURN_CONTEXT_PROTOCOL = 4;
 export const TURN_CONTEXT_TIMEOUT_MS = 120_000;
+/**
+ * W570: the Chat memory plugin's fixed failure when a reload of the plugin cut its wait short (BB
+ * aborts the old instance's tool calls with "plugin-disposed"). The bridge asks again, with
+ * `elapsedMs`, while TURN_CONTEXT_RETRY_WINDOW_MS since its first ask have not passed; the plugin
+ * ends its wait 90 s after that first ask. Otherwise it is the turn's visible failure (D458).
+ */
+export const TURN_CONTEXT_RESTARTING =
+  "OptChat memory unavailable for this turn: chat-memory is restarting. The message was not sent; send it again.";
+/** The plugin's own wait: a retry later than this could not be answered within TURN_CONTEXT_TIMEOUT_MS. */
+export const TURN_CONTEXT_RETRY_WINDOW_MS = 90_000;
+export const TURN_CONTEXT_RETRY_PAUSE_MS = 1_000;
+/** How long after that window the bridge ends a retry the plugin has not answered (an older plugin). */
+export const TURN_CONTEXT_RETRY_GRACE_MS = 2_000;
 export const FRESH_SESSION_INIT_TIMEOUT_MS = 30_000;
 export const MAX_RETAINED_TURN_CONTEXTS = 64;
 export const FRESH_SESSION_TITLE = "BB OptChat turn";
@@ -45,6 +58,17 @@ export function withoutTurnContextTool(
   dynamicTools: readonly DynamicTool[],
 ): DynamicTool[] {
   return dynamicTools.filter((tool) => tool.name !== TURN_CONTEXT_TOOL_NAME);
+}
+
+/**
+ * Whether a failed answer came from a reload of the plugin that serves the tool: its fixed
+ * restarting error, or BB's answer while no instance of it is loaded.
+ */
+export function isTurnContextRestart(error: string): boolean {
+  return (
+    error.includes(TURN_CONTEXT_RESTARTING) ||
+    error.includes(`Unsupported tool: ${TURN_CONTEXT_TOOL_NAME}`)
+  );
 }
 
 export function parseTurnContext(result: {

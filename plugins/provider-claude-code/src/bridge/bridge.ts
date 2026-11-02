@@ -115,10 +115,14 @@ import {
   FRESH_SESSION_TITLE,
   MAX_RETAINED_TURN_CONTEXTS,
   TURN_CONTEXT_PROTOCOL,
+  TURN_CONTEXT_RETRY_GRACE_MS,
+  TURN_CONTEXT_RETRY_PAUSE_MS,
+  TURN_CONTEXT_RETRY_WINDOW_MS,
   TURN_CONTEXT_TIMEOUT_MS,
   TURN_CONTEXT_TOOL_NAME,
   extendSystemPrompt,
   hasTurnContextTool,
+  isTurnContextRestart,
   parseTurnContext,
   withoutTurnContextTool,
   type TurnContext,
@@ -2829,29 +2833,86 @@ async function fetchTurnContext(args: {
 }): Promise<TurnContextAnswer> {
   const { preparation, threadId, threadSession } = args;
   const sessionId = currentSessionId(threadSession);
+  // Monotonic: a wall-clock step between asks must not shorten or stretch the plugin's 90 s.
+  const startedAt = performance.now();
+  const elapsed = () => performance.now() - startedAt;
+  let timedOut = false;
+  let retryExpired = false;
+  let retryTimer: ReturnType<typeof setTimeout> | undefined;
+  // One budget for every ask of this turn, counted from the first.
   const timer = setTimeout(() => {
+    timedOut = true;
     toolCallTracker.resolvePendingToolCalls(
       preparation,
       `no answer within ${TURN_CONTEXT_TIMEOUT_MS / 1000} s`,
     );
   }, TURN_CONTEXT_TIMEOUT_MS);
-  const result = await forwardToolCall({
-    arguments: {
-      protocol: TURN_CONTEXT_PROTOCOL,
-      input: args.promptText,
-      requestId: args.requestId,
-      sessionId,
-    },
-    providerThreadId: sessionId ?? threadId,
-    scope: preparation,
-    threadId,
-    toolName: TURN_CONTEXT_TOOL_NAME,
-  }).finally(() => clearTimeout(timer));
-  const answer = parseTurnContext(result);
-  if (!answer.ok) {
-    logBridgeError(`turn context for ${threadId} failed: ${answer.error}`);
+  let asked = false;
+  const ask = async () => {
+    // Asked again, the plugin ends its wait 90 s after the first ask, not after this one.
+    const again = asked ? { elapsedMs: Math.round(elapsed()) } : {};
+    asked = true;
+    return parseTurnContext(
+      await forwardToolCall({
+        arguments: {
+          protocol: TURN_CONTEXT_PROTOCOL,
+          input: args.promptText,
+          requestId: args.requestId,
+          sessionId,
+          ...again,
+        },
+        providerThreadId: sessionId ?? threadId,
+        scope: preparation,
+        threadId,
+        toolName: TURN_CONTEXT_TOOL_NAME,
+      }),
+    );
+  };
+  try {
+    let answer = await ask();
+    // W570: a reload of the memory plugin cut its wait short. Its new instance is asked again,
+    // within the same budget, unless the turn was stopped, interrupted or replaced meanwhile.
+    while (
+      !answer.ok &&
+      isTurnContextRestart(answer.error) &&
+      !timedOut &&
+      elapsed() + TURN_CONTEXT_RETRY_PAUSE_MS < TURN_CONTEXT_RETRY_WINDOW_MS
+    ) {
+      logBridgeError(
+        `turn context for ${threadId}: ${answer.error}; asking again`,
+      );
+      await new Promise((resolve) =>
+        setTimeout(resolve, TURN_CONTEXT_RETRY_PAUSE_MS),
+      );
+      if (timedOut || !isPreparedSessionOpen(threadSession)) break;
+      // A plugin older than this bridge ignores `elapsedMs` and would wait 90 s from this ask: the
+      // bridge ends every retry itself just after the first ask's 90 s, failing with the
+      // plugin's restarting error. A current plugin answers first, with its own reason.
+      retryTimer ??= setTimeout(
+        () => {
+          retryExpired = true;
+          toolCallTracker.resolvePendingToolCalls(
+            preparation,
+            "no answer within the plugin's 90 s",
+          );
+        },
+        TURN_CONTEXT_RETRY_WINDOW_MS + TURN_CONTEXT_RETRY_GRACE_MS - elapsed(),
+      );
+      const restart = answer;
+      answer = await ask();
+      if (retryExpired) {
+        answer = restart;
+        break;
+      }
+    }
+    if (!answer.ok) {
+      logBridgeError(`turn context for ${threadId} failed: ${answer.error}`);
+    }
+    return answer;
+  } finally {
+    clearTimeout(timer);
+    clearTimeout(retryTimer);
   }
-  return answer;
 }
 
 function currentSessionId(threadSession: ThreadSession): string | null {

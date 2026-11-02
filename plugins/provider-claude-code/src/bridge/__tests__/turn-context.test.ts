@@ -45,6 +45,9 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { handleLine } from "../bridge.js";
 import {
+  TURN_CONTEXT_RESTARTING,
+  TURN_CONTEXT_RETRY_GRACE_MS,
+  TURN_CONTEXT_RETRY_WINDOW_MS,
   TURN_CONTEXT_TIMEOUT_MS,
   extendSystemPrompt,
   parseTurnContext,
@@ -1474,4 +1477,152 @@ it("keeps the thread's tools when the fresh session with the turn's tools fails 
   });
   expect((await bridge.waitForResponse("resume")).error).toBeUndefined();
   expect(queryCalls()).toHaveLength(started);
+});
+
+// W570: a reload of the Chat memory plugin aborts its tool calls ("plugin-disposed"); the plugin
+// answers with its fixed restarting error, and the bridge asks the new instance again.
+const RESTARTING_ANSWER = `Tool "${TURN_CONTEXT_TOOL}" failed: ${TURN_CONTEXT_RESTARTING}`;
+
+function pendingToolCalls(): BridgeJsonRpcOutputMessage[] {
+  return bridge.messages.filter(
+    (message) =>
+      message.method === "item/tool/call" && !answered.has(message.id!),
+  );
+}
+
+async function settleTicks(): Promise<void> {
+  for (let tick = 0; tick < 30; tick++) await Promise.resolve();
+}
+
+it.each([
+  ["its fixed restarting error", RESTARTING_ANSWER],
+  ["no instance serves the tool yet", `Unsupported tool: ${TURN_CONTEXT_TOOL}`],
+])(
+  "asks a reloaded memory plugin again when %s, with the time since the first ask, and runs the turn it answers",
+  async (_, failure) => {
+    const first = await startThread(bridge);
+    const resident = queryCalls()[0]!;
+    vi.useFakeTimers();
+    try {
+      sendTurn(bridge, "turn-1", "Hello");
+      await settleTicks();
+      const [call] = pendingToolCalls();
+      await vi.advanceTimersByTimeAsync(30_000);
+      answerToolCall(call!, failure, false);
+      await vi.advanceTimersByTimeAsync(999);
+      expect(pendingToolCalls()).toHaveLength(0);
+      await vi.advanceTimersByTimeAsync(1);
+      const [again] = pendingToolCalls();
+      expect((again!.params as { arguments: unknown }).arguments).toEqual({
+        protocol: 4,
+        input: "Hello",
+        requestId: "creq_abcdefghjk",
+        sessionId: first,
+        elapsedMs: 31_000,
+      });
+      answerToolCall(again!, "{}");
+    } finally {
+      vi.useRealTimers();
+    }
+    expect(await nextPromptText(resident)).toBe("Hello");
+    expect((await bridge.waitForResponse("turn-1")).error).toBeUndefined();
+  },
+);
+
+it("fails the turn with the restarting error, asking no more, once the plugin's 90 s since the first ask are up", async () => {
+  await startThread(bridge);
+  vi.useFakeTimers();
+  try {
+    sendTurn(bridge, "turn-1", "Hello");
+    await settleTicks();
+    const [call] = pendingToolCalls();
+    await vi.advanceTimersByTimeAsync(TURN_CONTEXT_RETRY_WINDOW_MS - 1_000);
+    answerToolCall(call!, RESTARTING_ANSWER, false);
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(pendingToolCalls()).toHaveLength(0);
+  } finally {
+    vi.useRealTimers();
+  }
+  expect((await bridge.waitForResponse("turn-1")).error?.message).toBe(
+    `Claude Code could not get the turn's memory context: ${RESTARTING_ANSWER}`,
+  );
+  expect(queryCalls()).toHaveLength(1);
+});
+
+it("ends a retry the plugin leaves unanswered (one that ignores elapsedMs) just after the first ask's 90 s, failing with the restarting error", async () => {
+  await startThread(bridge);
+  vi.useFakeTimers();
+  try {
+    sendTurn(bridge, "turn-1", "Hello");
+    await settleTicks();
+    await vi.advanceTimersByTimeAsync(10_000);
+    answerToolCall(pendingToolCalls()[0]!, RESTARTING_ANSWER, false);
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(pendingToolCalls()).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(
+      TURN_CONTEXT_RETRY_WINDOW_MS + TURN_CONTEXT_RETRY_GRACE_MS - 11_001,
+    );
+    expect(bridge.messages.some((m) => m.id === "turn-1")).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(bridge.messages.some((m) => m.id === "turn-1")).toBe(true);
+  } finally {
+    vi.useRealTimers();
+  }
+  expect((await bridge.waitForResponse("turn-1")).error?.message).toBe(
+    `Claude Code could not get the turn's memory context: ${RESTARTING_ANSWER}`,
+  );
+  expect(
+    bridge.messages.filter((message) => message.method === "item/tool/call"),
+  ).toHaveLength(2);
+  expect(queryCalls()).toHaveLength(1);
+});
+
+it("counts the time since the first ask on a monotonic clock, unmoved by a wall-clock step back", async () => {
+  await startThread(bridge);
+  const resident = queryCalls()[0]!;
+  vi.useFakeTimers();
+  try {
+    sendTurn(bridge, "turn-1", "Hello");
+    await settleTicks();
+    await vi.advanceTimersByTimeAsync(30_000);
+    vi.setSystemTime(Date.now() - 60_000);
+    answerToolCall(pendingToolCalls()[0]!, RESTARTING_ANSWER, false);
+    await vi.advanceTimersByTimeAsync(1_000);
+    const [again] = pendingToolCalls();
+    expect(
+      (again!.params as { arguments: { elapsedMs: number } }).arguments
+        .elapsedMs,
+    ).toBe(31_000);
+    answerToolCall(again!, "{}");
+  } finally {
+    vi.useRealTimers();
+  }
+  expect(await nextPromptText(resident)).toBe("Hello");
+  expect((await bridge.waitForResponse("turn-1")).error).toBeUndefined();
+});
+
+it("asks no more once the turn is stopped while it waits to ask again", async () => {
+  await startThread(bridge);
+  vi.useFakeTimers();
+  try {
+    sendTurn(bridge, "turn-1", "Hello");
+    await settleTicks();
+    answerToolCall(pendingToolCalls()[0]!, RESTARTING_ANSWER, false);
+    await settleTicks();
+    bridge.sendRequest("interrupt", "thread/stop", {
+      threadId: THREAD_ID,
+      providerThreadId: THREAD_ID,
+      intent: "interrupt",
+      activeTurnId: null,
+    });
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(pendingToolCalls()).toHaveLength(0);
+  } finally {
+    vi.useRealTimers();
+  }
+  await bridge.waitForResponse("interrupt");
+  expect((await bridge.waitForResponse("turn-1")).error).toBeDefined();
+  expect(
+    bridge.messages.filter((message) => message.method === "item/tool/call"),
+  ).toHaveLength(1);
 });
