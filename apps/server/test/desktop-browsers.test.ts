@@ -1,4 +1,8 @@
-import { getStoredThreadTabs, markThreadDeleted } from "@bb/db";
+import {
+  getStoredThreadTabs,
+  markThreadDeleted,
+  replaceStoredThreadTabs,
+} from "@bb/db";
 import {
   desktopBrowserLeaseSchema,
   desktopBrowserResultSchemas,
@@ -12,7 +16,6 @@ import {
 import { z } from "zod";
 import { describe, expect, it, vi } from "vitest";
 import { revokeThreadDesktopBrowserControl } from "../src/services/desktop-browsers.js";
-import { setServerMoveSnapshotFence } from "../src/services/server-move/freeze-state.js";
 import { onDaemonSocketMessage } from "../src/ws/daemon-protocol.js";
 import {
   registerHostRpcResponder,
@@ -333,7 +336,7 @@ describe("desktop browser public API", () => {
     });
   });
 
-  it("creates a browser tab and persists its desktop target", async () => {
+  it("creates a browser tab and saves it without a desktop target", async () => {
     await withBrowserTest(async (test) => {
       const response = await test.post("create");
       expect(response.status).toBe(200);
@@ -355,13 +358,9 @@ describe("desktop browser public API", () => {
           id: tab.tabId,
           kind: "browser",
           url: "about:blank",
-          desktopTarget: {
-            hostId: test.scope.hostId,
-            instanceId: test.scope.instanceId,
-            generation: test.scope.generation,
-          },
         }),
       ]);
+      expect(test.stored()[0]).not.toHaveProperty("desktopTarget");
       expect(
         (
           await test.post("create", {
@@ -375,6 +374,45 @@ describe("desktop browser public API", () => {
         (await test.post("close", { ...test.scope, tabId: tab.tabId })).status,
       ).toBe(200);
       expect(test.stored()).toEqual([]);
+    });
+  });
+
+  it("saves the requested URL when a hidden tab is created before navigation commits", async () => {
+    await withBrowserTest(async (test) => {
+      test.intercept(({ command }) =>
+        command.type === "desktop.browser.create_tab"
+          ? {
+              ok: true,
+              result: {
+                tab: {
+                  tabId: command.tabId,
+                  threadId: command.threadId,
+                  url: "",
+                  title: "",
+                  presentation: command.presentation,
+                  control: null,
+                },
+              },
+            }
+          : null,
+      );
+      const response = await test.post("create", {
+        ...test.scope,
+        url: "https://example.com/docs",
+      });
+      expect(response.status).toBe(200);
+      const { tab } = desktopBrowserResultSchemas[
+        "desktop.browser.create_tab"
+      ].parse(await response.json());
+      test.change({}, [
+        { ...tab, url: "https://example.com/docs", title: "Docs" },
+      ]);
+      expect(test.stored()).toEqual([
+        expect.objectContaining({
+          id: tab.tabId,
+          url: "https://example.com/docs",
+        }),
+      ]);
     });
   });
 
@@ -810,60 +848,139 @@ describe("desktop browser public API", () => {
     });
   });
 
-  it("persists authenticated native snapshots without overwriting other windows or threads", async () => {
+  it("saves agent-controlled snapshot tabs from any window and never deletes", async () => {
     await withBrowserTest(async (test, harness) => {
       const other = seedThread(harness.deps, {
         projectId: test.project.id,
         environmentId: test.environment.id,
       });
+      const control = {
+        leaseId: "lease",
+        controllerLabel: "Agent",
+        expiresAt: Date.now() + 60_000,
+      };
       const original = test.tab();
-      expect(test.change({}, [original]).close).not.toHaveBeenCalled();
+      const controlled = { ...original, control };
+      test.change({}, [original]);
+      expect(test.stored()).toEqual([]);
+      expect(test.change({}, [controlled]).close).not.toHaveBeenCalled();
       expect(test.stored()).toEqual([
-        expect.objectContaining({
+        {
           id: original.tabId,
-          desktopTarget: {
-            hostId: test.scope.hostId,
-            instanceId: test.scope.instanceId,
-            generation: test.scope.generation,
-          },
-        }),
-      ]);
-      test.change({ instanceId: "other-window" }, [
-        { ...original, url: "https://wrong-window.example" },
+          kind: "browser",
+          environmentId: null,
+          title: "Example",
+          url: original.url,
+        },
       ]);
       const otherHost = seedHostSession(harness.deps);
       test.change(
-        { hostId: otherHost.host.id },
-        [{ ...original, url: "https://wrong-host.example" }],
+        { hostId: otherHost.host.id, instanceId: "other-window" },
+        [{ ...controlled, url: "https://other-mac.example", title: "Mac B" }],
         otherHost.session.id,
       );
-      expect(
-        test.stored().find((tab) => tab.id === original.tabId),
-      ).toMatchObject({ url: original.url });
-      test.change({}, [
-        { ...original, tabId: "foreign-tab", threadId: other.id },
-      ]);
-      expect(test.stored(other.id)).toEqual([]);
-      test.change({}, [original, { ...original, tabId: "second-tab" }]);
-      expect(
-        test.stored().find((tab) => tab.id === original.tabId),
-      ).toMatchObject({ url: original.url });
-      test.change({ instanceId: "other-window" }, []);
-      expect(test.stored()).toHaveLength(2);
-      test.change({}, [
-        { ...original, title: "Navigated", url: "https://next.example" },
-      ]);
       expect(test.stored()).toEqual([
         expect.objectContaining({
-          id: original.tabId,
-          title: "Navigated",
-          url: "https://next.example",
+          title: "Mac B",
+          url: "https://other-mac.example",
         }),
       ]);
+      test.change({}, [
+        { ...original, url: "https://stale.example" },
+        { ...controlled, tabId: "foreign-tab", threadId: other.id },
+        { ...controlled, tabId: "bad-url", url: "not a url" },
+        {
+          ...controlled,
+          tabId: "long-url",
+          url: `https://example.com/${"a".repeat(4096)}`,
+        },
+      ]);
       test.change({}, []);
+      expect(test.stored()).toEqual([
+        expect.objectContaining({ url: "https://other-mac.example" }),
+      ]);
+      expect(test.stored(other.id)).toEqual([]);
+    });
+  });
+
+  it("drops a legacy desktop target and keeps the environment when a snapshot updates a tab", async () => {
+    await withBrowserTest(async (test, harness) => {
+      const tab = test.tab();
+      const legacy = {
+        id: tab.tabId,
+        kind: "browser",
+        environmentId: test.environment.id,
+        title: null,
+        url: "https://old.example",
+        desktopTarget: {
+          hostId: "host_elsewhere",
+          instanceId: "old-window",
+          generation: "old-generation",
+        },
+      };
+      replaceStoredThreadTabs(harness.db, {
+        threadId: test.scope.threadId,
+        expectedRevision: 0,
+        tabsJson: JSON.stringify([legacy]),
+      });
+      test.change({}, [
+        {
+          ...tab,
+          control: {
+            leaseId: "lease",
+            controllerLabel: "Agent",
+            expiresAt: Date.now() + 60_000,
+          },
+        },
+      ]);
+      expect(test.stored()).toEqual([
+        {
+          id: tab.tabId,
+          kind: "browser",
+          environmentId: test.environment.id,
+          title: "Example",
+          url: tab.url,
+        },
+      ]);
+      expect(
+        (await test.post("close", { ...test.scope, tabId: tab.tabId })).status,
+      ).toBe(200);
       expect(test.stored()).toEqual([]);
     });
   });
+
+  it("closes a saved tab that another computer opened", async () => {
+    await withBrowserTest(async (test, harness) => {
+      replaceStoredThreadTabs(harness.db, {
+        threadId: test.scope.threadId,
+        expectedRevision: 0,
+        tabsJson: JSON.stringify([
+          {
+            id: "browser:elsewhere:none",
+            kind: "browser",
+            environmentId: null,
+            title: null,
+            url: "https://example.com",
+            desktopTarget: {
+              hostId: "host_elsewhere",
+              instanceId: "old-window",
+              generation: "old-generation",
+            },
+          },
+        ]),
+      });
+      expect(
+        (
+          await test.post("close", {
+            ...test.scope,
+            tabId: "browser:elsewhere:none",
+          })
+        ).status,
+      ).toBe(200);
+      expect(test.stored()).toEqual([]);
+    });
+  });
+
   it("drops snapshots for synthetic, missing, or deleted threads without closing the daemon session", async () => {
     await withBrowserTest(async (test, harness) => {
       const deleted = seedThread(harness.deps, {
@@ -871,16 +988,25 @@ describe("desktop browser public API", () => {
         environmentId: test.environment.id,
       });
       markThreadDeleted(harness.db, harness.hub, { threadId: deleted.id });
+      const control = {
+        leaseId: "lease",
+        controllerLabel: "Agent",
+        expiresAt: Date.now() + 60_000,
+      };
       for (const threadId of [
         "plugin-panel:cloud-sandbox:cloud-machines:pane-1",
         "thr_missing",
         deleted.id,
       ]) {
-        const socket = test.change({ threadId }, [{ ...test.tab(), threadId }]);
+        const socket = test.change({ threadId }, [
+          { ...test.tab(), threadId, control },
+        ]);
         expect(socket.close, threadId).not.toHaveBeenCalled();
         expect(test.stored(threadId), threadId).toEqual([]);
       }
-      expect(test.change({}, [test.tab()]).close).not.toHaveBeenCalled();
+      expect(
+        test.change({}, [{ ...test.tab(), control }]).close,
+      ).not.toHaveBeenCalled();
       expect(test.stored()).toEqual([
         expect.objectContaining({ id: test.tab().tabId }),
       ]);
@@ -940,236 +1066,6 @@ describe("desktop browser public API", () => {
         (await test.post("connection", test.leaseRequest(command.leaseId)))
           .status,
       ).toBe(409);
-    });
-  });
-
-  it.each(["closed", "updated"] as const)(
-    "ignores a pending restore snapshot after the native tab is %s",
-    async (change) => {
-      await withBrowserTest(async (test) => {
-        const tab = test.tab();
-        test.change({ instanceId: "closed-window" }, [tab]);
-        const listed = deferred<HostRpcHandlerResult>();
-        const list = vi.fn(() => listed.promise);
-        test.intercept(({ command }) =>
-          command.type === "desktop.browser.list_instances" ? list() : null,
-        );
-        test.change({}, [tab]);
-        await vi.waitFor(() => expect(list).toHaveBeenCalledTimes(1));
-        const updated = {
-          ...tab,
-          url: "https://example.com/new",
-          title: "New",
-        };
-        test.change({}, change === "closed" ? [] : [updated]);
-        listed.resolve({
-          ok: true,
-          result: {
-            instances: [
-              {
-                instanceId: test.scope.instanceId,
-                generation: test.scope.generation,
-                label: "Desktop",
-              },
-            ],
-          },
-        });
-        await new Promise<void>((resolve) => setImmediate(resolve));
-        expect(test.stored()).toEqual([
-          expect.objectContaining({
-            id: tab.tabId,
-            url: change === "closed" ? tab.url : updated.url,
-            title: change === "closed" ? tab.title : updated.title,
-            desktopTarget: expect.objectContaining({
-              instanceId:
-                change === "closed" ? "closed-window" : test.scope.instanceId,
-            }),
-          }),
-        ]);
-      });
-    },
-  );
-
-  it("moves a tab to the live window that reopened it after its old window closed", async () => {
-    await withBrowserTest(async (test) => {
-      const tab = test.tab();
-      test.change({ instanceId: "closed-window" }, [tab]);
-      expect(test.stored()).toEqual([
-        expect.objectContaining({
-          id: tab.tabId,
-          desktopTarget: expect.objectContaining({
-            instanceId: "closed-window",
-          }),
-        }),
-      ]);
-      test.change({}, [{ ...tab, title: "Reopened" }]);
-      await vi.waitFor(() =>
-        expect(test.stored()).toEqual([
-          expect.objectContaining({
-            id: tab.tabId,
-            title: "Reopened",
-            desktopTarget: {
-              hostId: test.scope.hostId,
-              instanceId: test.scope.instanceId,
-              generation: test.scope.generation,
-            },
-          }),
-        ]),
-      );
-    });
-  });
-  it("leaves saved tabs and native views alone when a server move fences snapshots during the window check", async () => {
-    await withBrowserTest(async (test, harness) => {
-      const listed = deferred<HostRpcHandlerResult>();
-      const list = vi.fn(() => listed.promise);
-      const closed = vi.fn();
-      test.intercept(({ command }) => {
-        if (command.type === "desktop.browser.list_instances") return list();
-        if (command.type === "desktop.browser.close_tab") closed(command);
-        return null;
-      });
-      const orphan = test.tab();
-      const owned = { ...test.tab(), tabId: "owned-tab" };
-      test.change({ instanceId: "closed-window" }, [orphan]);
-      test.change({ instanceId: "owner", generation: "owner-gen" }, [owned]);
-      const before = test.stored();
-      test.change({}, [orphan, owned]);
-      await vi.waitFor(() => expect(list).toHaveBeenCalledTimes(1));
-      setServerMoveSnapshotFence(harness.db, true);
-      try {
-        listed.resolve({
-          ok: true,
-          result: {
-            instances: [
-              {
-                instanceId: test.scope.instanceId,
-                generation: test.scope.generation,
-                label: "Desktop",
-              },
-              { instanceId: "owner", generation: "owner-gen", label: "Owner" },
-            ],
-          },
-        });
-        await new Promise<void>((resolve) => setImmediate(resolve));
-        expect(test.stored()).toEqual(before);
-        expect(closed).not.toHaveBeenCalled();
-      } finally {
-        setServerMoveSnapshotFence(harness.db, false);
-      }
-    });
-  });
-  it("keeps a tab with its live owner and closes a competing restored view", async () => {
-    await withBrowserTest(async (test) => {
-      const instances = vi.fn(() => ({
-        ok: true as const,
-        result: {
-          instances: [
-            {
-              instanceId: test.scope.instanceId,
-              generation: test.scope.generation,
-              label: "Desktop",
-            },
-            { instanceId: "owner", generation: "owner-gen", label: "Owner" },
-          ],
-        },
-      }));
-      const closed = vi.fn();
-      test.intercept((request) => {
-        if (request.command.type === "desktop.browser.list_instances")
-          return instances();
-        if (request.command.type === "desktop.browser.close_tab")
-          closed(request.command);
-        return null;
-      });
-      const tab = test.tab();
-      test.change({ instanceId: "owner", generation: "owner-gen" }, [tab]);
-      test.change({}, [{ ...tab, url: "https://clone.example" }]);
-      await vi.waitFor(() => expect(instances).toHaveBeenCalled());
-      await vi.waitFor(() =>
-        expect(closed).toHaveBeenCalledWith({
-          type: "desktop.browser.close_tab",
-          instanceId: test.scope.instanceId,
-          generation: test.scope.generation,
-          threadId: test.scope.threadId,
-          tabId: tab.tabId,
-        }),
-      );
-      expect(test.stored()).toEqual([
-        expect.objectContaining({
-          url: tab.url,
-          desktopTarget: expect.objectContaining({ instanceId: "owner" }),
-        }),
-      ]);
-    });
-  });
-  it("retains one owner when two windows restore the same orphan concurrently", async () => {
-    await withBrowserTest(async (test) => {
-      const tab = test.tab();
-      test.change({ instanceId: "closed-window" }, [tab]);
-      const listed = deferred<HostRpcHandlerResult>();
-      const list = vi.fn(() => listed.promise);
-      const closed = vi.fn();
-      test.intercept(({ command }) => {
-        if (command.type === "desktop.browser.list_instances") return list();
-        if (command.type === "desktop.browser.close_tab") closed(command);
-        return null;
-      });
-      test.change({}, [tab]);
-      test.change({ instanceId: "competing-window" }, [tab]);
-      await vi.waitFor(() => expect(list).toHaveBeenCalledTimes(2));
-      listed.resolve({
-        ok: true,
-        result: {
-          instances: [
-            {
-              instanceId: test.scope.instanceId,
-              generation: test.scope.generation,
-              label: "First",
-            },
-            {
-              instanceId: "competing-window",
-              generation: test.scope.generation,
-              label: "Second",
-            },
-          ],
-        },
-      });
-      await vi.waitFor(() => expect(closed).toHaveBeenCalledTimes(1));
-      const owner = test.stored().find((value) => value.id === tab.tabId);
-      expect(owner).toMatchObject({
-        desktopTarget: { instanceId: test.scope.instanceId },
-      });
-      expect(closed).toHaveBeenCalledWith(
-        expect.objectContaining({
-          instanceId: "competing-window",
-          tabId: tab.tabId,
-        }),
-      );
-    });
-  });
-
-  it("updates persisted targets after same-window reconnect and ignores deletion from its old generation", async () => {
-    await withBrowserTest(async (test) => {
-      const tab = test.tab();
-      test.change({}, [tab]);
-      test.change({ generation: "reconnected-generation" }, [
-        { ...tab, title: "Reconnected" },
-      ]);
-      expect(test.stored()).toEqual([
-        expect.objectContaining({
-          id: tab.tabId,
-          title: "Reconnected",
-          desktopTarget: {
-            hostId: test.scope.hostId,
-            instanceId: test.scope.instanceId,
-            generation: "reconnected-generation",
-          },
-        }),
-      ]);
-      test.change({}, []);
-      expect(test.stored()).toHaveLength(1);
-      test.change({ generation: "reconnected-generation" }, []);
-      expect(test.stored()).toEqual([]);
     });
   });
 });

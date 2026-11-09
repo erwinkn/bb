@@ -259,9 +259,11 @@ export function onDaemonSocketMessage(
             "Dropping desktop browser snapshot the server cannot apply",
           );
         };
-        void syncDesktopBrowserTabs(deps, scope, message.tabs).catch(
-          logDropped,
-        );
+        try {
+          syncDesktopBrowserTabs(deps, scope, message.tabs);
+        } catch (error) {
+          logDropped(error);
+        }
         return;
       }
       if (message.type === "plugin-host.worker-exited") {

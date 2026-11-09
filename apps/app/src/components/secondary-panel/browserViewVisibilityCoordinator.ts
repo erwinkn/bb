@@ -12,6 +12,7 @@ export interface BrowserViewVisibilityCoordinator {
 
 interface BrowserViewRecord {
   environmentId: string | null;
+  lastSeenUrl: string | null;
   tabId: string;
   threadId: string;
 }
@@ -78,8 +79,11 @@ export function registerBrowserView({
   environmentId,
   tabId,
   threadId,
-}: RegisterBrowserViewArgs): void {
-  browserViewRecords.set(tabId, { environmentId, tabId, threadId });
+}: RegisterBrowserViewArgs): BrowserViewRecord {
+  const lastSeenUrl = browserViewRecords.get(tabId)?.lastSeenUrl ?? null;
+  const record = { environmentId, lastSeenUrl, tabId, threadId };
+  browserViewRecords.set(tabId, record);
+  return record;
 }
 
 export function destroyPersistedBrowserView({

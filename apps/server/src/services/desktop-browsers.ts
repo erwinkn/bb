@@ -3,7 +3,6 @@ import { getStoredThreadTabs, replaceStoredThreadTabs } from "@bb/db";
 import type { DesktopBrowserTab } from "@bb/host-daemon-contract";
 import {
   threadTabsSchema,
-  type ThreadTab,
   type ExperimentalDesktopBrowserScope,
   type ExperimentalDesktopBrowserCreateRequest,
   type ExperimentalDesktopBrowserAcquireRequest,
@@ -23,7 +22,6 @@ import {
   callHostOnlineRpc,
   callHostOnlineRpcForWork,
 } from "./hosts/online-rpc.js";
-import { isServerMoveSnapshotFenced } from "./server-move/freeze-state.js";
 
 interface LeaseEntry {
   lease: ExperimentalDesktopBrowserLease;
@@ -101,34 +99,14 @@ function readStoredTabs(db: WorkSessionDeps["db"], threadId: string) {
   };
 }
 
-function toStoredBrowserTab(
-  scope: ExperimentalDesktopBrowserScope,
-  tab: DesktopBrowserTab,
-) {
+function toStoredBrowserTab(tab: DesktopBrowserTab) {
   return {
     id: tab.tabId,
     kind: "browser" as const,
     environmentId: null,
     title: tab.title.slice(0, 1024) || null,
     url: tab.url,
-    desktopTarget: {
-      hostId: scope.hostId,
-      instanceId: scope.instanceId,
-      generation: scope.generation,
-    },
   };
-}
-
-function sameDesktopTarget(
-  tab: ThreadTab,
-  scope: ExperimentalDesktopBrowserScope,
-) {
-  return (
-    tab.kind === "browser" &&
-    tab.desktopTarget?.hostId === scope.hostId &&
-    tab.desktopTarget.instanceId === scope.instanceId &&
-    tab.desktopTarget.generation === scope.generation
-  );
 }
 
 function assertTabsInThread(
@@ -169,7 +147,7 @@ export function persistDesktopBrowserTab(
   if (tab.threadId !== scope.threadId || tab.url.length > 4096) return;
   requirePublicThread(deps.db, scope.threadId);
   const { stored, tabs } = readStoredTabs(deps.db, scope.threadId);
-  const next = toStoredBrowserTab(scope, tab);
+  const next = toStoredBrowserTab(tab);
   const index = tabs.findIndex((value) => value.id === tab.tabId);
   if (index < 0) tabs.push(next);
   else tabs[index] = next;
@@ -189,9 +167,7 @@ export function removeDesktopBrowserTab(
 ) {
   const { stored, tabs } = readStoredTabs(deps.db, scope.threadId);
   if (!stored) return;
-  const filtered = tabs.filter(
-    (tab) => !(tab.id === tabId && sameDesktopTarget(tab, scope)),
-  );
+  const filtered = tabs.filter((tab) => tab.id !== tabId);
   if (filtered.length === tabs.length) return;
   replaceStoredThreadTabs(deps.db, {
     threadId: scope.threadId,
@@ -247,7 +223,10 @@ export async function createDesktopBrowserTab(
     },
   });
   try {
-    persistDesktopBrowserTab(deps, input, result.tab);
+    persistDesktopBrowserTab(deps, input, {
+      ...result.tab,
+      url: result.tab.url || input.url,
+    });
   } catch (error) {
     await desktopBrowserTabAction(
       deps,
@@ -491,51 +470,30 @@ export async function revokeThreadDesktopBrowserControl(
   );
 }
 
-const pendingTabAdoptions = new WeakMap<
-  WorkSessionDeps["hub"],
-  Map<string, symbol>
->();
-
-export async function syncDesktopBrowserTabs(
+export function syncDesktopBrowserTabs(
   deps: WorkSessionDeps,
   scope: ExperimentalDesktopBrowserScope,
   nativeTabs: DesktopBrowserTab[],
-): Promise<void> {
-  let pending = pendingTabAdoptions.get(deps.hub);
-  if (pending === undefined) {
-    pending = new Map();
-    pendingTabAdoptions.set(deps.hub, pending);
-  }
-  const key = JSON.stringify([scope.hostId, scope.instanceId, scope.threadId]);
-  pending.delete(key);
+) {
   requirePublicThread(deps.db, scope.threadId);
   const { stored, tabs } = readStoredTabs(deps.db, scope.threadId);
-  const ids = new Set(nativeTabs.map((tab) => tab.tabId));
-  const next = tabs.filter(
-    (tab) => !(sameDesktopTarget(tab, scope) && !ids.has(tab.id)),
-  );
-  let claimedByOtherWindow = false;
+  const next = [...tabs];
   for (const tab of nativeTabs) {
-    if (tab.threadId !== scope.threadId || tab.url.length > 4096) continue;
+    if (
+      tab.threadId !== scope.threadId ||
+      tab.control === null ||
+      tab.url.length > 4096 ||
+      !URL.canParse(tab.url)
+    )
+      continue;
     const index = next.findIndex((value) => value.id === tab.tabId);
     const previous = next[index];
-    if (
-      previous &&
-      (previous.kind !== "browser" ||
-        (previous.desktopTarget &&
-          (previous.desktopTarget.hostId !== scope.hostId ||
-            previous.desktopTarget.instanceId !== scope.instanceId)))
-    ) {
-      if (
-        previous.kind === "browser" &&
-        previous.desktopTarget?.hostId === scope.hostId
-      )
-        claimedByOtherWindow = true;
-      continue;
-    }
-    const value = toStoredBrowserTab(scope, tab);
-    if (index === -1) next.push(value);
-    else next[index] = value;
+    if (previous === undefined) next.push(toStoredBrowserTab(tab));
+    else if (previous.kind === "browser")
+      next[index] = {
+        ...toStoredBrowserTab(tab),
+        environmentId: previous.environmentId,
+      };
   }
   const tabsJson = JSON.stringify(threadTabsSchema.parse(next));
   if (tabsJson !== JSON.stringify(tabs)) {
@@ -545,61 +503,5 @@ export async function syncDesktopBrowserTabs(
       tabsJson,
     });
     deps.hub.notifyThread(scope.threadId, ["tabs-changed"]);
-  }
-  if (!claimedByOtherWindow) return;
-  const adoption = Symbol();
-  pending.set(key, adoption);
-  try {
-    const { instances } = await listDesktopBrowserInstances(deps, scope.hostId);
-    if (pending.get(key) !== adoption || isServerMoveSnapshotFenced(deps.db))
-      return;
-    const live = new Set(instances.map((instance) => instance.instanceId));
-    if (
-      !instances.some(
-        (instance) =>
-          instance.instanceId === scope.instanceId &&
-          instance.generation === scope.generation,
-      )
-    )
-      return;
-    requirePublicThread(deps.db, scope.threadId);
-    const { stored, tabs } = readStoredTabs(deps.db, scope.threadId);
-    if (!stored) return;
-    let adopted = false;
-    const duplicates: string[] = [];
-    const next = tabs.map((previous) => {
-      const tab = nativeTabs.find((value) => value.tabId === previous.id);
-      if (
-        tab === undefined ||
-        tab.threadId !== scope.threadId ||
-        tab.url.length > 4096 ||
-        previous.kind !== "browser" ||
-        previous.desktopTarget?.hostId !== scope.hostId
-      )
-        return previous;
-      if (previous.desktopTarget.instanceId === scope.instanceId)
-        return previous;
-      if (live.has(previous.desktopTarget.instanceId)) {
-        duplicates.push(tab.tabId);
-        return previous;
-      }
-      adopted = true;
-      return toStoredBrowserTab(scope, tab);
-    });
-    if (adopted) {
-      replaceStoredThreadTabs(deps.db, {
-        threadId: scope.threadId,
-        expectedRevision: stored.revision,
-        tabsJson: JSON.stringify(threadTabsSchema.parse(next)),
-      });
-      deps.hub.notifyThread(scope.threadId, ["tabs-changed"]);
-    }
-    await Promise.all(
-      duplicates.map((tabId) =>
-        desktopBrowserTabAction(deps, { ...scope, tabId }, "close"),
-      ),
-    );
-  } finally {
-    if (pending.get(key) === adoption) pending.delete(key);
   }
 }

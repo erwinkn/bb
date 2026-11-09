@@ -12,37 +12,40 @@
 - Use `curl` against the server API to isolate frontend issues from server behavior.
 - Use the CLI to inspect state: `pnpm bb thread show <id>`, `pnpm bb project list`, `pnpm bb status`. From source, use `pnpm bb:dev`.
 
-## Desktop Browser Tab Recovery
+## Desktop Browser Tabs
 
-Saved desktop browser tabs keep their URL and owning host/window. Opening one
-in the desktop app attaches the existing view when that window still owns it,
-including after its connection generation changes. While the desktop or host is
-reconnecting, the panel shows "Reconnecting to this tab" after 1.5 seconds and
-retries for about a minute, then offers Try again, which asks again. These
-timers do not cancel a slow lookup: an answer that arrives late still opens the
-tab. A tab already showing its page (for example a new tab whose owner was just
-saved) stays mounted while a lookup is unanswered, so its address draft and
-focus survive.
+A thread's browser tabs are one ordered list of `{id, url, title}` with no
+owner. Any bb window on any Mac opens any saved tab from its URL; a native view
+is that window's cache of the URL. The panel writes each open, close, navigation
+and reorder. The `create` and `close` API write directly.
 
-After a window closes or the app relaunches, the panel reopens the saved URL in
-the current window on the same host once the host confirms the old window is
-gone. Native history and unsaved page state are not restored. The desktop broker
-suppresses teardown snapshots from destroyed windows so closing a window does
-not delete its saved tabs before another window can recover them. The server
-deletes a tab as soon as its window's snapshot omits it, so a desktop build
-without this guard loses the tabs of every window it closes. The server adopts
-the restored tab from the window's browser snapshot and closes competing restored
-views if two windows reopen it concurrently. Snapshots from a stale restoring
-generation cannot adopt the tab. A newer snapshot from the same window and
-thread cancels a pending adoption, including when the newer snapshot is empty.
-A pending adoption that finishes after a server move fences snapshots changes
-nothing.
+A window's tab snapshot only adds or updates, and only for tabs an agent
+controls at that moment (`control` is set) with a valid URL of at most 4096
+characters: a missing id is added, an existing one gets the snapshot's URL and
+title. Snapshots ignore every other tab and never delete, so closing a window,
+quitting or relaunching loses nothing, and a stale cached view on one Mac never
+overwrites another Mac's navigation. Old rows may still carry a
+`desktopTarget`: it is ignored and dropped the next time that tab is written.
 
-Web clients, other hosts, and other live windows show the saved URL and its
-availability instead of attaching a native view. Copy link remains available;
-Open in browser accepts only HTTP(S) URLs. The panel's tab close control also
-works in this state. Selecting another saved tab rechecks its owning window;
-Try again also rechecks a window previously reported as live after it closes.
+Known costs:
+
+- A tab an agent closes over CDP stays listed until someone closes it.
+- An agent asking for a tab this Mac's window never opened gets "not found";
+  open the tab here first.
+- A close that lands within ~50 ms of another client's write is dropped (409),
+  as before; close it again.
+- Two Macs showing one tab at once: the last navigation saved wins.
+
+Showing a cached view (switching to the tab or the thread) loads the saved URL
+only if it changed since this view last reported its URL, meaning another window
+or Mac navigated the tab. Otherwise the page stays as it is, with its history and
+scroll, even if the page changed its own URL while hidden. The panel does not
+save the stale page's state events while that reload starts. A visible view
+never follows a navigation made elsewhere. After a panel reload the panel has no
+memory of what a view showed, so a cached view keeps its page.
+
+Web clients have no native view: they show "Browser tabs need the desktop app"
+with the saved URL, Copy link, and Open in browser for HTTP(S) URLs.
 Inspect the persisted owner with
 `bb thread tabs show <threadId> --json` or `sdk.threads.tabs.get`, and compare it
 with `bb browser instances --host <hostId> --json` or

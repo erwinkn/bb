@@ -1,5 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
-import type { BbDesktopBrowserTarget } from "@bb/desktop-contract";
+import { useMemo } from "react";
 import { COARSE_POINTER_TEXT_SM_CLASS } from "@bb/shared-ui/coarse-pointer-sizing";
 import { Button } from "@bb/shared-ui/button";
 import { Icon } from "@bb/shared-ui/icon";
@@ -7,7 +6,6 @@ import { cn } from "@bb/shared-ui/lib/utils";
 import type { BrowserFixedPanelTab } from "@/lib/fixed-panel-tabs-state";
 import { getDesktopBrowserApi } from "@/lib/bb-desktop";
 import { copyToClipboardWithToast } from "@/lib/clipboard";
-import { sdk } from "@/lib/sdk";
 import { openUrlInExternalBrowser } from "@/lib/url-open-routing";
 import {
   BrowserTabContent,
@@ -39,43 +37,6 @@ export function selectActiveBrowserTab(
   return browserTabs.find((tab) => tab.id === activeBrowserTabId) ?? null;
 }
 
-const WINDOW_CHECK_SETTLE_MS = 1500;
-const WINDOW_CHECK_BUDGET_MS = 60_000;
-const WINDOW_CHECK_MAX_RETRY_MS = 2000;
-
-function windowRetryDelay(attempt: number): number {
-  return Math.min(250 * 2 ** (attempt - 1), WINDOW_CHECK_MAX_RETRY_MS);
-}
-
-type WindowTargetCheck =
-  | { status: "pending" }
-  | { status: "ready"; target: BbDesktopBrowserTarget | null };
-
-type SavedWindowCheck = {
-  key: string;
-  status: "live" | "gone";
-};
-
-type BrowserTabPlacement =
-  | "open"
-  | "attach"
-  | "check-saved-window"
-  | "pending"
-  | "unavailable";
-
-function resolveBrowserTabPlacement(
-  saved: BbDesktopBrowserTarget | undefined,
-  windowTarget: WindowTargetCheck,
-): BrowserTabPlacement {
-  if (saved === undefined) return "open";
-  if (windowTarget.status === "pending") return "pending";
-  const actual = windowTarget.target;
-  if (actual === null || actual.hostId !== saved.hostId) return "unavailable";
-  return actual.instanceId === saved.instanceId
-    ? "attach"
-    : "check-saved-window";
-}
-
 export function BrowserTabDeck({
   browserTabs,
   activeBrowserTabId,
@@ -101,172 +62,11 @@ export function BrowserTabDeck({
     browserTabs,
     activeBrowserTabId,
   );
-  const target = activeBrowserTab?.desktopTarget;
-  const targetHostId = target?.hostId;
-  const [windowTarget, setWindowTarget] = useState<WindowTargetCheck>(() =>
-    desktopBrowser?.getTarget === undefined
-      ? { status: "ready", target: null }
-      : { status: "pending" },
-  );
-  const [checkRound, setCheckRound] = useState(0);
-  const checkKey =
-    target === undefined
-      ? null
-      : `${activeBrowserTab?.id}:${checkRound}:${target.hostId}:${target.instanceId}:${target.generation}`;
-  const [slowCheckKey, setSlowCheckKey] = useState<string | null>(null);
-  const [stoppedCheckKey, setStoppedCheckKey] = useState<string | null>(null);
-  useEffect(() => {
-    const getTarget = desktopBrowser?.getTarget?.bind(desktopBrowser);
-    if (getTarget === undefined) return;
-    let current = true;
-    let answered = false;
-    let budgetSpent = false;
-    let attempt = 0;
-    let retry: ReturnType<typeof setTimeout> | undefined;
-    const settle = setTimeout(() => {
-      if (!answered) setSlowCheckKey(checkKey);
-    }, WINDOW_CHECK_SETTLE_MS);
-    const budget = setTimeout(() => {
-      budgetSpent = true;
-      if (!answered) setStoppedCheckKey(checkKey);
-    }, WINDOW_CHECK_BUDGET_MS);
-    const check = () => {
-      void getTarget()
-        .catch(() => null)
-        .then((actual) => {
-          if (!current) return;
-          if (actual !== null) {
-            answered = true;
-            setWindowTarget({ status: "ready", target: actual });
-            return;
-          }
-          attempt += 1;
-          if (!budgetSpent)
-            retry = setTimeout(check, windowRetryDelay(attempt));
-        });
-    };
-    check();
-    return () => {
-      current = false;
-      clearTimeout(retry);
-      clearTimeout(settle);
-      clearTimeout(budget);
-    };
-  }, [
-    desktopBrowser,
-    targetHostId,
-    target?.instanceId,
-    target?.generation,
-    checkKey,
-  ]);
-
-  const placement = resolveBrowserTabPlacement(target, windowTarget);
-  const savedWindowKey = placement === "check-saved-window" ? checkKey : null;
-  const [savedWindowCheck, setSavedWindowCheck] =
-    useState<SavedWindowCheck | null>(null);
-  const savedInstanceId = target?.instanceId;
-  useEffect(() => {
-    if (
-      savedWindowKey === null ||
-      targetHostId === undefined ||
-      savedInstanceId === undefined
-    )
-      return;
-    let current = true;
-    let answered = false;
-    let budgetSpent = false;
-    let attempt = 0;
-    let retry: ReturnType<typeof setTimeout> | undefined;
-    const settle = setTimeout(() => {
-      if (!answered) setSlowCheckKey(checkKey);
-    }, WINDOW_CHECK_SETTLE_MS);
-    const budget = setTimeout(() => {
-      budgetSpent = true;
-      if (!answered) setStoppedCheckKey(checkKey);
-    }, WINDOW_CHECK_BUDGET_MS);
-    const check = () => {
-      void sdk.experimental_desktopBrowsers
-        .listInstances({ hostId: targetHostId })
-        .then(
-          ({ instances }) => {
-            if (!current) return;
-            answered = true;
-            const live = instances.some(
-              (instance) => instance.instanceId === savedInstanceId,
-            );
-            setSavedWindowCheck({
-              key: savedWindowKey,
-              status: live ? "live" : "gone",
-            });
-          },
-          () => {
-            if (!current) return;
-            attempt += 1;
-            if (!budgetSpent)
-              retry = setTimeout(check, windowRetryDelay(attempt));
-          },
-        );
-    };
-    check();
-    return () => {
-      current = false;
-      clearTimeout(retry);
-      clearTimeout(settle);
-      clearTimeout(budget);
-    };
-  }, [savedWindowKey, targetHostId, savedInstanceId, checkKey]);
-
-  const [contentTabId, setContentTabId] = useState<string | null>(null);
-  const savedWindowStatus =
-    savedWindowCheck?.key === savedWindowKey ? savedWindowCheck.status : null;
-  const unresolved =
-    placement === "pending" ||
-    (placement === "check-saved-window" && savedWindowStatus === null);
-  const slow = checkKey !== null && slowCheckKey === checkKey;
-  const view: "content" | "blank" | "elsewhere" = unresolved
-    ? contentTabId === activeBrowserTab?.id
-      ? "content"
-      : slow
-        ? "elsewhere"
-        : "blank"
-    : placement === "unavailable" || savedWindowStatus === "live"
-      ? "elsewhere"
-      : "content";
-  const nextContentTabId =
-    view === "content" ? (activeBrowserTab?.id ?? null) : null;
-  if (nextContentTabId !== contentTabId) setContentTabId(nextContentTabId);
-
   if (activeBrowserTab === null) {
     return null;
   }
-  const checksStopped = checkKey !== null && stoppedCheckKey === checkKey;
-  if (view === "blank") {
-    return <div className="flex min-h-0 flex-1 bg-sidebar" />;
-  }
-  if (view === "elsewhere") {
-    return (
-      <BrowserTabElsewhere
-        url={activeBrowserTab.url}
-        onRetry={
-          checksStopped || savedWindowStatus === "live"
-            ? () => setCheckRound((round) => round + 1)
-            : null
-        }
-        reason={
-          desktopBrowser === null
-            ? "desktop-required"
-            : savedWindowStatus === "live"
-              ? "other-window"
-              : windowTarget.status === "ready" &&
-                  windowTarget.target !== null &&
-                  windowTarget.target.hostId !== target?.hostId
-                ? "other-computer"
-                : checksStopped
-                  ? "unreachable"
-                  : "reconnecting"
-        }
-      />
-    );
+  if (desktopBrowser === null) {
+    return <BrowserTabNeedsDesktop url={activeBrowserTab.url} />;
   }
 
   return (
@@ -274,7 +74,6 @@ export function BrowserTabDeck({
       <BrowserTabContent
         key={activeBrowserTab.id}
         tabId={activeBrowserTab.id}
-        existingOnly={placement === "attach" ? true : undefined}
         initialUrl={activeBrowserTab.url}
         addressFocusRequest={
           addressFocusRequest?.tabId === activeBrowserTab.id
@@ -294,39 +93,7 @@ export function BrowserTabDeck({
   );
 }
 
-const BROWSER_TAB_ELSEWHERE_COPY = {
-  "desktop-required": {
-    title: "Browser tabs need the desktop app",
-    body: "This tab is open in the bb desktop app.",
-  },
-  "other-window": {
-    title: "This tab is open in another bb window",
-    body: "Switch to that window to keep browsing.",
-  },
-  "other-computer": {
-    title: "This tab is open on another computer",
-    body: "It was opened in bb on a different computer.",
-  },
-  reconnecting: {
-    title: "Reconnecting to this tab",
-    body: "The tab opens again as soon as bb reconnects.",
-  },
-  unreachable: {
-    title: "Can't reach this tab",
-    body: "bb couldn't reconnect. Try again in a moment.",
-  },
-} as const;
-
-function BrowserTabElsewhere({
-  url,
-  reason,
-  onRetry,
-}: {
-  url: string;
-  reason: keyof typeof BROWSER_TAB_ELSEWHERE_COPY;
-  onRetry: (() => void) | null;
-}) {
-  const copy = BROWSER_TAB_ELSEWHERE_COPY[reason];
+function BrowserTabNeedsDesktop({ url }: { url: string }) {
   const parsedUrl = URL.canParse(url) ? new URL(url) : null;
   const canOpenExternally =
     parsedUrl?.protocol === "https:" || parsedUrl?.protocol === "http:";
@@ -335,14 +102,16 @@ function BrowserTabElsewhere({
       <span className="flex size-11 items-center justify-center rounded-lg border border-border bg-card text-muted-foreground">
         <Icon name="Globe" className="size-6" aria-hidden />
       </span>
-      <div className="text-sm font-medium text-foreground">{copy.title}</div>
+      <div className="text-sm font-medium text-foreground">
+        Browser tabs need the desktop app
+      </div>
       <p
         className={cn(
           "max-w-xs text-muted-foreground",
           COARSE_POINTER_TEXT_SM_CLASS,
         )}
       >
-        {copy.body}
+        This tab is open in the bb desktop app.
       </p>
       {url.length > 0 ? (
         <p
@@ -356,18 +125,12 @@ function BrowserTabElsewhere({
         </p>
       ) : null}
       <div className="flex flex-wrap items-center justify-center gap-2">
-        {onRetry !== null ? (
-          <Button type="button" variant="outline" size="sm" onClick={onRetry}>
-            <Icon name="RotateCcw" aria-hidden />
-            Try again
-          </Button>
-        ) : null}
         {url.length > 0 ? (
           <>
             {canOpenExternally ? (
               <Button
                 type="button"
-                variant={onRetry !== null ? "ghost" : "outline"}
+                variant="outline"
                 size="sm"
                 onClick={() => openUrlInExternalBrowser(url)}
               >

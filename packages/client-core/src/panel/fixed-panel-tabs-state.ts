@@ -724,16 +724,12 @@ function normalizeFixedPanelTabId(tab: FixedPanelTab): FixedPanelTab {
       return tab.id === id ? tab : { ...tab, id };
     }
     case "browser": {
-      if (tab.desktopTarget !== undefined) return tab;
       const idSegments = tab.id.split(":");
-      const browserPath =
-        idSegments.length === 3 && idSegments[0] === "browser"
-          ? decodeStorageSegment(idSegments[1] ?? "")
-          : tab.id;
+      if (idSegments.length !== 3 || idSegments[0] !== "browser") return tab;
       const id = buildFixedPanelTabId({
         environmentId: tab.environmentId,
         kind: tab.kind,
-        path: browserPath,
+        path: decodeStorageSegment(idSegments[1] ?? ""),
       });
       return tab.id === id ? tab : { ...tab, id };
     }
@@ -1075,9 +1071,6 @@ export function areFixedPanelTabsEquivalent(
     case "browser":
       return (
         b.kind === "browser" &&
-        a.desktopTarget?.hostId === b.desktopTarget?.hostId &&
-        a.desktopTarget?.instanceId === b.desktopTarget?.instanceId &&
-        a.desktopTarget?.generation === b.desktopTarget?.generation &&
         a.environmentId === b.environmentId &&
         a.url === b.url &&
         a.title === b.title

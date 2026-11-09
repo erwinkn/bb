@@ -178,7 +178,11 @@ function seedDaemonChanges(harness: TestAppHarness, hostId: string) {
               url: "https://example.com",
               title: "Example",
               presentation: "hidden",
-              control: null,
+              control: {
+                leaseId: "frozen-lease",
+                controllerLabel: "Agent",
+                expiresAt: Date.now() + 60_000,
+              },
             },
           ],
         },

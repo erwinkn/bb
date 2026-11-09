@@ -1,13 +1,6 @@
 // @vitest-environment jsdom
 
-import {
-  act,
-  cleanup,
-  fireEvent,
-  render,
-  screen,
-  waitFor,
-} from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import type {
   BbDesktopBrowserApi,
   BbDesktopBrowserAttachRequest,
@@ -22,7 +15,6 @@ import {
   createNoopDesktopBrowserApi,
 } from "@/test/bb-desktop-test-utils";
 import { POINTER_COARSE_QUERY } from "@bb/shared-ui/hooks/use-pointer-coarse";
-import { sdk } from "@/lib/sdk";
 import { BrowserTabDeck } from "./BrowserTabDeck";
 import { BrowserTabLifecycleObserver } from "./BrowserTabLifecycleObserver";
 import { resetBrowserViewPersistence } from "./browserViewVisibilityCoordinator";
@@ -244,345 +236,180 @@ describe("BrowserTabDeck native browser first-show ordering", () => {
     });
   });
 
-  const desktopTarget = {
-    hostId: "host-1",
-    instanceId: "instance-1",
-    generation: "generation-1",
-  };
-  const renderTargetDeck = (browserTab: BrowserFixedPanelTab) => (
+  const renderTabDeck = (
+    browserTab: BrowserFixedPanelTab,
+    onUpdate: (args: { tabId: string; url: string }) => void = () => {},
+  ) => (
     <BrowserTabDeck
       browserTabs={[browserTab]}
       activeBrowserTabId={browserTab.id}
       environmentId="env-1"
       canShowNativeBrowserView
       threadId="thread-1"
-      onUpdate={() => {}}
+      onUpdate={onUpdate}
     />
   );
-  const savedTab = (saved: Partial<typeof desktopTarget>) => ({
-    ...makeBrowserTab("native-tab", "https://example.com/saved"),
-    desktopTarget: { ...desktopTarget, ...saved },
+  const viewState = (url: string): BbDesktopBrowserState => ({
+    tabId: "native-tab",
+    url,
+    title: null,
+    isLoading: false,
+    canGoBack: false,
+    canGoForward: false,
+    errorText: null,
   });
+  const savedTab = (url = "https://example.com/saved") =>
+    makeBrowserTab("native-tab", url);
 
-  it("reveals tabs without a saved owner on mount and return while ownership is unavailable", async () => {
-    const { api, visibilityWithoutFocus } = createRecordingBrowserApi();
-    api.getTarget = async () => null;
+  it("opens a tab saved by another computer here from its saved URL", async () => {
+    const { api, attachments, visibilityWithoutFocus } =
+      createRecordingBrowserApi();
     installDesktopBrowser(api);
-    const tab = makeBrowserTab("local-tab", "https://example.com/saved");
-
-    for (let visit = 0; visit < 2; visit += 1) {
-      visibilityWithoutFocus.length = 0;
-      const view = render(renderTargetDeck(tab));
-      await act(async () => {});
-      expect(visibilityWithoutFocus).toContainEqual({
-        tabId: tab.id,
-        visible: true,
-      });
-      view.unmount();
-    }
-  });
-
-  it("shows the saved URL instead of attaching a tab from another machine", async () => {
-    const { api, attachments } = createRecordingBrowserApi();
-    api.getTarget = async () => desktopTarget;
-    installDesktopBrowser(api);
-    const tab = savedTab({ hostId: "host-2" });
-    const view = render(renderTargetDeck(tab));
-    await screen.findByText("This tab is open on another computer");
-    expect(screen.getByText("https://example.com/saved")).not.toBeNull();
-    expect(
-      screen.getByRole("button", { name: "Open in browser" }),
-    ).not.toBeNull();
-    expect(screen.getByRole("button", { name: "Copy link" })).not.toBeNull();
-    expect(attachments).toEqual([]);
-    view.rerender(renderTargetDeck({ ...tab, desktopTarget }));
-    await waitFor(() => expect(attachments).toHaveLength(1));
-    expect(attachments[0]?.existingOnly).toBe(true);
-  });
-
-  it("does not clone a tab that another live window still owns", async () => {
-    const { api, attachments } = createRecordingBrowserApi();
-    api.getTarget = async () => desktopTarget;
-    installDesktopBrowser(api);
-    vi.spyOn(
-      sdk.experimental_desktopBrowsers,
-      "listInstances",
-    ).mockResolvedValue({
-      instances: [
-        { ...desktopTarget, label: "BB window 1" },
-        { ...desktopTarget, instanceId: "elsewhere", label: "BB window 2" },
-      ],
-    });
-    render(renderTargetDeck(savedTab({ instanceId: "elsewhere" })));
-    await screen.findByText("This tab is open in another bb window");
-    expect(attachments).toEqual([]);
-  });
-
-  it.each(["select another tab", "retry"] as const)(
-    "rechecks a previously live window when users %s after it closes",
-    async (action) => {
-      const { api, attachments } = createRecordingBrowserApi();
-      api.getTarget = async () => desktopTarget;
-      installDesktopBrowser(api);
-      const list = vi.spyOn(sdk.experimental_desktopBrowsers, "listInstances");
-      list.mockResolvedValue({
-        instances: [
-          { ...desktopTarget, label: "Current" },
-          { ...desktopTarget, instanceId: "elsewhere", label: "Other" },
-        ],
-      });
-      const tab = savedTab({ instanceId: "elsewhere" });
-      const view = render(renderTargetDeck(tab));
-      await screen.findByText("This tab is open in another bb window");
-      expect(attachments).toEqual([]);
-      list.mockResolvedValue({
-        instances: [{ ...desktopTarget, label: "Current" }],
-      });
-      const selected =
-        action === "retry" ? tab : { ...tab, id: "another-saved-tab" };
-      if (action === "retry")
-        fireEvent.click(screen.getByRole("button", { name: "Try again" }));
-      else view.rerender(renderTargetDeck(selected));
-      await waitFor(() => expect(attachments).toHaveLength(1));
-      expect(attachments[0]).toMatchObject({
-        tabId: selected.id,
-        url: selected.url,
-      });
-      expect(attachments[0]?.existingOnly).toBeUndefined();
-    },
-  );
-
-  it("reopens the saved URL when the window that owned the tab is gone", async () => {
-    const { api, attachments } = createRecordingBrowserApi();
-    api.getTarget = async () => desktopTarget;
-    installDesktopBrowser(api);
-    vi.spyOn(
-      sdk.experimental_desktopBrowsers,
-      "listInstances",
-    ).mockResolvedValue({
-      instances: [{ ...desktopTarget, label: "BB window 1" }],
-    });
-    render(renderTargetDeck(savedTab({ instanceId: "closed-window" })));
-    await waitFor(() => expect(attachments).toHaveLength(1));
-    expect(attachments[0]).toMatchObject({
-      tabId: "native-tab",
-      url: "https://example.com/saved",
-    });
-    expect(attachments[0]?.existingOnly).toBeUndefined();
-    expect(
-      screen.queryByText("This tab is open in another bb window"),
-    ).toBeNull();
-  });
-
-  it("keeps a reopened tab visible after the server moves it to this window", async () => {
-    const { api, calls } = createRecordingBrowserApi();
-    api.getTarget = async () => desktopTarget;
-    installDesktopBrowser(api);
-    vi.spyOn(
-      sdk.experimental_desktopBrowsers,
-      "listInstances",
-    ).mockResolvedValue({
-      instances: [{ ...desktopTarget, label: "BB window 1" }],
-    });
-    const orphan = savedTab({ instanceId: "closed-window" });
-    const view = render(renderTargetDeck(orphan));
-    await waitFor(() =>
-      expect(
-        calls.some(
-          (call) =>
-            call.type === "setVisibleWithoutFocus" && call.request.visible,
-        ),
-      ).toBe(true),
+    render(
+      renderTabDeck({
+        ...savedTab(),
+        desktopTarget: {
+          hostId: "host-other-mac",
+          instanceId: "old-window",
+          generation: "old-generation",
+        },
+      }),
     );
-    const shownAt = calls.length;
-    view.rerender(renderTargetDeck({ ...orphan, desktopTarget }));
-    await act(async () => {});
-    const after = calls.slice(shownAt);
-    expect(after.some((call) => call.type === "attach")).toBe(false);
-    expect(
-      after.some(
-        (call) =>
-          (call.type === "setVisible" ||
-            call.type === "setVisibleWithoutFocus") &&
-          !call.request.visible,
-      ),
-    ).toBe(false);
-  });
-
-  it("waits for the desktop connection after a relaunch instead of falling back", async () => {
-    const { api, attachments } = createRecordingBrowserApi();
-    const getTarget = vi
-      .fn<() => Promise<typeof desktopTarget | null>>()
-      .mockResolvedValueOnce(null)
-      .mockResolvedValueOnce(null)
-      .mockResolvedValue(desktopTarget);
-    api.getTarget = getTarget;
-    installDesktopBrowser(api);
-    vi.spyOn(
-      sdk.experimental_desktopBrowsers,
-      "listInstances",
-    ).mockResolvedValue({
-      instances: [{ ...desktopTarget, label: "BB window 1" }],
-    });
-    render(renderTargetDeck(savedTab({ instanceId: "closed-window" })));
-    expect(screen.queryByText("Reconnecting to this tab")).toBeNull();
-    await waitFor(() => expect(attachments).toHaveLength(1), { timeout: 3000 });
-    expect(getTarget).toHaveBeenCalledTimes(3);
-    expect(attachments[0]?.existingOnly).toBeUndefined();
-    expect(screen.queryByText("Reconnecting to this tab")).toBeNull();
-  });
-
-  it("retries a rejected window check instead of treating it as a mismatch", async () => {
-    const { api, attachments } = createRecordingBrowserApi();
-    const getTarget = vi
-      .fn<() => Promise<typeof desktopTarget | null>>()
-      .mockRejectedValueOnce(new Error("ipc unavailable"))
-      .mockResolvedValue(desktopTarget);
-    api.getTarget = getTarget;
-    installDesktopBrowser(api);
-    render(renderTargetDeck(savedTab({})));
-    await waitFor(() => expect(attachments).toHaveLength(1), { timeout: 3000 });
-    expect(getTarget).toHaveBeenCalledTimes(2);
-    expect(attachments[0]?.existingOnly).toBe(true);
-  });
-
-  it("says it is reconnecting, not that the tab is elsewhere, while the desktop stays offline", async () => {
-    const { api, attachments } = createRecordingBrowserApi();
-    api.getTarget = async () => null;
-    installDesktopBrowser(api);
-    render(renderTargetDeck(savedTab({})));
-    await screen.findByText("Reconnecting to this tab", undefined, {
-      timeout: 4000,
-    });
-    expect(
-      screen.queryByText("This tab is open on another computer"),
-    ).toBeNull();
-    expect(attachments).toEqual([]);
-  });
-
-  it("stops checking after about a minute and lets the user try again", async () => {
-    vi.useFakeTimers();
-    try {
-      const { api } = createRecordingBrowserApi();
-      const getTarget = vi.fn(async () => null);
-      api.getTarget = getTarget;
-      installDesktopBrowser(api);
-      render(renderTargetDeck(savedTab({})));
-      await act(() => vi.advanceTimersByTimeAsync(70_000));
-      const stoppedAt = getTarget.mock.calls.length;
-      await act(() => vi.advanceTimersByTimeAsync(30_000));
-      expect(getTarget).toHaveBeenCalledTimes(stoppedAt);
-      expect(screen.getByText("Can't reach this tab")).not.toBeNull();
-      fireEvent.click(screen.getByRole("button", { name: "Try again" }));
-      await act(() => vi.advanceTimersByTimeAsync(1_000));
-      expect(getTarget.mock.calls.length).toBeGreaterThan(stoppedAt);
-      expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  it.each(["window", "open-window"] as const)(
-    "offers Try again when the %s check never answers, then asks again",
-    async (check) => {
-      vi.useFakeTimers();
-      try {
-        const { api, attachments } = createRecordingBrowserApi();
-        const getTarget = vi.fn(() =>
-          check === "window"
-            ? new Promise<typeof desktopTarget | null>(() => {})
-            : Promise.resolve(desktopTarget),
-        );
-        api.getTarget = getTarget;
-        installDesktopBrowser(api);
-        const listInstances = vi
-          .spyOn(sdk.experimental_desktopBrowsers, "listInstances")
-          .mockImplementation(() => new Promise(() => {}));
-        const lookup = check === "window" ? getTarget : listInstances;
-        render(
-          renderTargetDeck(
-            savedTab(check === "window" ? {} : { instanceId: "closed-window" }),
-          ),
-        );
-        await act(() => vi.advanceTimersByTimeAsync(0));
-        await act(() => vi.advanceTimersByTimeAsync(1_000));
-        expect(screen.queryByText("Reconnecting to this tab")).toBeNull();
-        await act(() => vi.advanceTimersByTimeAsync(1_000));
-        expect(screen.getByText("Reconnecting to this tab")).not.toBeNull();
-        await act(() => vi.advanceTimersByTimeAsync(60_000));
-        expect(screen.getByText("Can't reach this tab")).not.toBeNull();
-        expect(lookup).toHaveBeenCalledTimes(1);
-        fireEvent.click(screen.getByRole("button", { name: "Try again" }));
-        await act(() => vi.advanceTimersByTimeAsync(0));
-        expect(lookup).toHaveBeenCalledTimes(2);
-        expect(attachments).toEqual([]);
-      } finally {
-        vi.useRealTimers();
-      }
-    },
-  );
-
-  it.each(["window", "open-window"] as const)(
-    "recovers the tab when a slow %s check succeeds",
-    async (check) => {
-      vi.useFakeTimers();
-      try {
-        const { api, attachments } = createRecordingBrowserApi();
-        const slowly = <T,>(value: T) =>
-          new Promise<T>((resolve) => setTimeout(() => resolve(value), 5_000));
-        api.getTarget = () =>
-          check === "window"
-            ? slowly(desktopTarget)
-            : Promise.resolve(desktopTarget);
-        installDesktopBrowser(api);
-        const listInstances = vi
-          .spyOn(sdk.experimental_desktopBrowsers, "listInstances")
-          .mockImplementation(() =>
-            slowly({ instances: [{ ...desktopTarget, label: "BB window 1" }] }),
-          );
-        render(renderTargetDeck(savedTab({ instanceId: "closed-window" })));
-        await act(() => vi.advanceTimersByTimeAsync(0));
-        await act(() => vi.advanceTimersByTimeAsync(2_000));
-        expect(screen.getByText("Reconnecting to this tab")).not.toBeNull();
-        expect(attachments).toEqual([]);
-        for (let step = 0; step < 10; step += 1)
-          await act(() => vi.advanceTimersByTimeAsync(1_000));
-        expect(attachments).toHaveLength(1);
-        expect(attachments[0]).toMatchObject({
+    await waitFor(() =>
+      expect(attachments).toEqual([
+        expect.objectContaining({
           tabId: "native-tab",
           url: "https://example.com/saved",
-        });
-        expect(listInstances).toHaveBeenCalledTimes(1);
-      } finally {
-        vi.useRealTimers();
-      }
-    },
-  );
-
-  it("retries the open-window check when it fails", async () => {
-    const { api, attachments } = createRecordingBrowserApi();
-    api.getTarget = async () => desktopTarget;
-    installDesktopBrowser(api);
-    const listInstances = vi
-      .spyOn(sdk.experimental_desktopBrowsers, "listInstances")
-      .mockRejectedValueOnce(new Error("host busy"))
-      .mockRejectedValueOnce(new Error("host busy"))
-      .mockResolvedValue({
-        instances: [{ ...desktopTarget, label: "BB window 1" }],
-      });
-    render(renderTargetDeck(savedTab({ instanceId: "closed-window" })));
-    await waitFor(() => expect(attachments).toHaveLength(1), { timeout: 3000 });
-    expect(listInstances).toHaveBeenCalledTimes(3);
-    expect(attachments[0]?.existingOnly).toBeUndefined();
+        }),
+      ]),
+    );
+    expect(attachments[0]).not.toHaveProperty("existingOnly");
+    await waitFor(() =>
+      expect(visibilityWithoutFocus).toContainEqual({
+        tabId: "native-tab",
+        visible: true,
+      }),
+    );
+    expect(screen.queryByText(/another computer|another bb window/)).toBeNull();
   });
 
-  it("reattaches its own window's tab after a reconnect rotates the generation", async () => {
-    const { api, attachments } = createRecordingBrowserApi();
-    api.getTarget = async () => desktopTarget;
+  it("keeps the saved URL while a new view's first load has not committed", async () => {
+    const { api, emitState } = createRecordingBrowserApi();
+    const navigate = vi.spyOn(api, "navigate");
     installDesktopBrowser(api);
-    render(renderTargetDeck(savedTab({ generation: "before-reconnect" })));
-    await waitFor(() => expect(attachments).toHaveLength(1));
-    expect(attachments[0]?.existingOnly).toBe(true);
+    const onUpdate = vi.fn();
+    const first = render(
+      renderTabDeck(savedTab("https://a.example/"), onUpdate),
+    );
+    await act(async () => emitState({ ...viewState(""), isLoading: true }));
+    expect(onUpdate).not.toHaveBeenCalled();
+    first.unmount();
+    render(renderTabDeck(savedTab("https://a.example/"), onUpdate));
+    expect(navigate).not.toHaveBeenCalled();
+    await act(async () => emitState(viewState("https://a.example/")));
+    expect(onUpdate).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ url: "https://a.example/" }),
+    );
+  });
+
+  it("reloads a cached view on reveal when another computer navigated the tab", async () => {
+    const { api, emitState } = createRecordingBrowserApi();
+    const navigate = vi.spyOn(api, "navigate");
+    installDesktopBrowser(api);
+    const first = render(renderTabDeck(savedTab("https://a.example/")));
+    await act(async () => emitState(viewState("https://a.example/")));
+    first.unmount();
+
+    const onUpdate = vi.fn();
+    render(renderTabDeck(savedTab("https://b.example/"), onUpdate));
+    await act(async () => emitState(viewState("https://a.example/")));
+    await act(async () =>
+      emitState({ ...viewState("https://a.example/"), isLoading: true }),
+    );
+    expect(navigate).toHaveBeenCalledExactlyOnceWith({
+      tabId: "native-tab",
+      url: "https://b.example/",
+    });
+    await act(async () => emitState(viewState("https://b.example/")));
+    expect(onUpdate.mock.calls.map(([update]) => update.url)).toEqual([
+      "https://b.example/",
+    ]);
+  });
+
+  it("keeps a cached page on reveal when only this view moved since it last saw the tab", async () => {
+    const { api, emitState } = createRecordingBrowserApi();
+    const navigate = vi.spyOn(api, "navigate");
+    installDesktopBrowser(api);
+    const first = render(renderTabDeck(savedTab("https://a.example/")));
+    await act(async () => emitState(viewState("https://a.example/")));
+    first.unmount();
+
+    const onUpdate = vi.fn();
+    render(renderTabDeck(savedTab("https://a.example/"), onUpdate));
+    await act(async () => emitState(viewState("https://a.example/form")));
+    expect(navigate).not.toHaveBeenCalled();
+    expect(onUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({ url: "https://a.example/form" }),
+    );
+  });
+
+  it("never navigates a visible view when the saved URL changes elsewhere", async () => {
+    const { api, emitState } = createRecordingBrowserApi();
+    const navigate = vi.spyOn(api, "navigate");
+    installDesktopBrowser(api);
+    const view = render(renderTabDeck(savedTab("https://a.example/")));
+    await act(async () => emitState(viewState("https://a.example/")));
+    view.rerender(renderTabDeck(savedTab("https://b.example/")));
+    await act(async () => emitState(viewState("https://a.example/next")));
+    expect(navigate).not.toHaveBeenCalled();
+  });
+
+  it("keeps a locally navigated page when the thread changes environments", async () => {
+    const { api, emitState } = createRecordingBrowserApi();
+    const navigate = vi.spyOn(api, "navigate");
+    installDesktopBrowser(api);
+    const deck = (url: string, environmentId: string) => (
+      <BrowserTabDeck
+        browserTabs={[savedTab(url)]}
+        activeBrowserTabId="native-tab"
+        environmentId={environmentId}
+        canShowNativeBrowserView
+        threadId="thread-1"
+        onUpdate={() => {}}
+      />
+    );
+    const view = render(deck("https://a.example/", "env-1"));
+    await act(async () => emitState(viewState("https://a.example/")));
+    await act(async () => emitState(viewState("https://a.example/form")));
+    view.rerender(deck("https://a.example/form", "env-1"));
+    view.rerender(deck("https://a.example/form", "env-2"));
+    await act(async () => emitState(viewState("https://a.example/form")));
+    expect(navigate).not.toHaveBeenCalled();
+  });
+
+  it("accepts a reload that redirects back to the cached page", async () => {
+    const { api, emitState } = createRecordingBrowserApi();
+    const navigate = vi.spyOn(api, "navigate");
+    installDesktopBrowser(api);
+    const first = render(renderTabDeck(savedTab("https://a.example/")));
+    await act(async () => emitState(viewState("https://a.example/")));
+    first.unmount();
+
+    const onUpdate = vi.fn();
+    render(renderTabDeck(savedTab("https://b.example/"), onUpdate));
+    await act(async () => emitState(viewState("https://a.example/")));
+    await act(async () => emitState(viewState("https://a.example/")));
+    await act(async () =>
+      emitState({ ...viewState("https://a.example/"), isLoading: true }),
+    );
+    expect(onUpdate).not.toHaveBeenCalled();
+    await act(async () => emitState(viewState("https://a.example/")));
+    expect(navigate).toHaveBeenCalledOnce();
+    expect(onUpdate).toHaveBeenCalledExactlyOnceWith({
+      tabId: "native-tab",
+      url: "https://a.example/",
+      title: null,
+    });
   });
 
   it.each([
@@ -592,7 +419,7 @@ describe("BrowserTabDeck native browser first-show ordering", () => {
   ])(
     "shows a saved %s URL without offering to open it externally",
     async (url) => {
-      render(renderTargetDeck({ ...savedTab({}), url }));
+      render(renderTabDeck({ ...savedTab(), url }));
       await screen.findByText("Browser tabs need the desktop app");
       expect(screen.getByText(url)).not.toBeNull();
       expect(
@@ -603,7 +430,7 @@ describe("BrowserTabDeck native browser first-show ordering", () => {
   );
 
   it("explains that desktop tabs need the desktop app on web", async () => {
-    render(renderTargetDeck(savedTab({})));
+    render(renderTabDeck(savedTab()));
     await screen.findByText("Browser tabs need the desktop app");
     expect(screen.getByText("https://example.com/saved")).not.toBeNull();
   });
@@ -806,99 +633,6 @@ describe("BrowserTabDeck native browser first-show ordering", () => {
     expect(screen.getByLabelText("Address and search bar")).toBeTruthy();
     expect(focusSpy).toHaveBeenCalled();
   });
-
-  it("preserves address focus and typed text when a new tab's ownership is saved", async () => {
-    const { api } = createRecordingBrowserApi();
-    api.getTarget = async () => desktopTarget;
-    installDesktopBrowser(api);
-    const consumed = vi.fn();
-    const tab = makeBrowserTab("tab-new", "");
-    const renderTab = (saved: boolean) => (
-      <BrowserTabDeck
-        browserTabs={[saved ? { ...tab, desktopTarget } : tab]}
-        activeBrowserTabId={tab.id}
-        addressFocusRequest={saved ? null : { requestId: 1, tabId: tab.id }}
-        onAddressFocusRequestConsumed={consumed}
-        environmentId="env-1"
-        canShowNativeBrowserView
-        threadId="thread-1"
-        onUpdate={() => {}}
-      />
-    );
-    const view = render(renderTab(false));
-    await waitFor(() => expect(consumed).toHaveBeenCalled());
-    const address = screen.getByRole("textbox", {
-      name: /Address and search bar/,
-    });
-    expect(document.activeElement).toBe(address);
-    fireEvent.change(address, { target: { value: "google.co" } });
-
-    view.rerender(renderTab(true));
-
-    await waitFor(() =>
-      expect(
-        screen.getByRole("textbox", { name: /Address and search bar/ }),
-      ).toBe(document.activeElement),
-    );
-    expect(screen.getByDisplayValue("google.co")).toBe(document.activeElement);
-  });
-
-  it.each(["first", "refreshed"] as const)(
-    "keeps a new tab's typed address while its %s window check outlasts the owner save",
-    async (lookup) => {
-      vi.useFakeTimers();
-      try {
-        const { api } = createRecordingBrowserApi();
-        let answer: (target: typeof desktopTarget) => void = () => {};
-        const getTarget = vi.fn(() =>
-          lookup === "refreshed" && getTarget.mock.calls.length === 1
-            ? Promise.resolve(desktopTarget)
-            : new Promise<typeof desktopTarget>((resolve) => {
-                answer = resolve;
-              }),
-        );
-        api.getTarget = getTarget;
-        installDesktopBrowser(api);
-        const consumed = vi.fn();
-        const tab = makeBrowserTab("tab-new", "");
-        const renderTab = (saved: boolean) => (
-          <BrowserTabDeck
-            browserTabs={[saved ? { ...tab, desktopTarget } : tab]}
-            activeBrowserTabId={tab.id}
-            addressFocusRequest={saved ? null : { requestId: 1, tabId: tab.id }}
-            onAddressFocusRequestConsumed={consumed}
-            environmentId="env-1"
-            canShowNativeBrowserView
-            threadId="thread-1"
-            onUpdate={() => {}}
-          />
-        );
-        const view = render(renderTab(false));
-        await act(() => vi.advanceTimersByTimeAsync(100));
-        expect(consumed).toHaveBeenCalled();
-        const address = screen.getByRole("textbox", {
-          name: /Address and search bar/,
-        });
-        fireEvent.change(address, { target: { value: "google.co" } });
-
-        view.rerender(renderTab(true));
-        await act(() => vi.advanceTimersByTimeAsync(0));
-        expect(getTarget).toHaveBeenCalledTimes(2);
-        expect(screen.getByDisplayValue("google.co")).toBe(address);
-        expect(document.activeElement).toBe(address);
-
-        await act(() => vi.advanceTimersByTimeAsync(5_000));
-        expect(screen.getByDisplayValue("google.co")).toBe(address);
-        expect(document.activeElement).toBe(address);
-
-        await act(async () => answer(desktopTarget));
-        expect(screen.getByDisplayValue("google.co")).toBe(address);
-        expect(document.activeElement).toBe(address);
-      } finally {
-        vi.useRealTimers();
-      }
-    },
-  );
 
   it("shows a neutral page state and hides the native view after a main-frame load error", async () => {
     const { api, emitState, visibility, visibilityWithoutFocus } =

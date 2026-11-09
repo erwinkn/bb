@@ -39,7 +39,14 @@ function makeInitialState(): FixedPanelTabsState {
 }
 
 describe("fixed-panel-tabs-state", () => {
-  it("preserves native browser identities and detects a reconnected desktop generation", () => {
+  it("keeps native browser ids and reads but ignores a legacy desktop owner", () => {
+    const legacyServerTab = {
+      ...createBrowserFixedPanelTab({
+        environmentId: null,
+        url: "https://example.org",
+      }),
+      id: "6f1c1e3e-58f4-4f5e-9a39-0d3c2d1b8e57",
+    };
     const tab = {
       ...createBrowserFixedPanelTab({
         environmentId: null,
@@ -54,21 +61,21 @@ describe("fixed-panel-tabs-state", () => {
     };
     const state = createEmptyFixedPanelTabsState({
       lastUsedAt: NOW,
-      secondary: { activeTabId: tab.id, isOpen: true, tabs: [tab] },
+      secondary: {
+        activeTabId: tab.id,
+        isOpen: true,
+        tabs: [tab, legacyServerTab],
+      },
     });
     const parsed = parseFixedPanelTabsState({
       initialValue: makeInitialState(),
       now: NOW,
       storedValue: JSON.stringify(state),
     });
-    expect(parsed.secondary.tabs).toEqual([tab]);
+    expect(parsed.secondary.tabs).toEqual([tab, legacyServerTab]);
     expect(parsed.secondary.activeTabId).toBe(tab.id);
-    expect(
-      areFixedPanelTabsEquivalent(tab, {
-        ...tab,
-        desktopTarget: { ...tab.desktopTarget, generation: "generation-2" },
-      }),
-    ).toBe(false);
+    const { desktopTarget: _owner, ...ownerless } = tab;
+    expect(areFixedPanelTabsEquivalent(tab, ownerless)).toBe(true);
   });
 
   it("parses current secondary tab state", () => {

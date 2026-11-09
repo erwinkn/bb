@@ -60,7 +60,6 @@ import { PluginBrowserToolbarActions } from "@/components/plugin/PluginBrowserTo
 
 interface BrowserTabContentProps {
   tabId: string;
-  existingOnly?: true;
   initialUrl: string;
   addressFocusRequest: BrowserAddressFocusRequest | null;
   onAddressFocusRequestConsumed?: (request: BrowserAddressFocusRequest) => void;
@@ -380,7 +379,6 @@ function BrowserPageLoadError({
 
 export function BrowserTabContent({
   tabId,
-  existingOnly,
   initialUrl,
   addressFocusRequest,
   onAddressFocusRequestConsumed,
@@ -459,7 +457,7 @@ export function BrowserTabContent({
   onUpdateRef.current = onUpdate;
   recordVisitRef.current = recordVisit;
   const initialUrlRef = useRef(initialUrl);
-  const existingOnlyRef = useRef(existingOnly);
+  initialUrlRef.current = initialUrl;
   const [attachedBrowserViewIdentity, setAttachedBrowserViewIdentity] =
     useState<BrowserViewAttachIdentity | null>(null);
   const isBrowserViewAttached =
@@ -536,15 +534,21 @@ export function BrowserTabContent({
     }
     const initialBounds = syncInitialBounds();
     const mountUrl = initialUrlRef.current;
-    registerBrowserView({ environmentId, tabId, threadId });
+    const record = registerBrowserView({ environmentId, tabId, threadId });
+    const changedElsewhere =
+      record.lastSeenUrl !== null && record.lastSeenUrl !== mountUrl;
+    let staleUrl: string | null | undefined = changedElsewhere
+      ? undefined
+      : null;
+    let reloadStarted = false;
     desktopBrowser.attach({
       tabId,
       threadId,
-      ...(existingOnlyRef.current === true ? { existingOnly: true } : {}),
       url: mountUrl,
       bounds: initialBounds,
       visible: false,
     });
+    if (changedElsewhere) desktopBrowser.navigate({ tabId, url: mountUrl });
     setAttachedBrowserViewIdentity({ environmentId, tabId, threadId });
 
     let lastSeenState: BbDesktopBrowserState | null = null;
@@ -552,6 +556,15 @@ export function BrowserTabContent({
       if (nextState.tabId !== tabId) {
         return;
       }
+      if (nextState.url !== "") record.lastSeenUrl = nextState.url;
+      if (staleUrl === undefined)
+        staleUrl = nextState.url === mountUrl ? null : nextState.url;
+      if (
+        staleUrl !== null &&
+        (nextState.url !== staleUrl || (reloadStarted && !nextState.isLoading))
+      )
+        staleUrl = null;
+      reloadStarted ||= nextState.isLoading;
       if (
         lastSeenState !== null &&
         (lastSeenState.url !== nextState.url ||
@@ -562,6 +575,7 @@ export function BrowserTabContent({
       lastSeenState = nextState;
       setState(nextState);
       setCurrentUrl(nextState.url);
+      if (staleUrl !== null || nextState.url === "") return;
       onUpdateRef.current({
         tabId,
         url: nextState.url,
