@@ -133,6 +133,11 @@
       "types": "./src/machine-service.ts",
       "default": "./src/machine-service.ts"
     },
+    "./thread-cgroups": {
+      "source": "./src/thread-cgroups.ts",
+      "types": "./src/thread-cgroups.ts",
+      "default": "./src/thread-cgroups.ts"
+    },
     "./child-process-exit": {
       "source": "./src/child-process-exit.ts",
       "types": "./src/child-process-exit.ts",

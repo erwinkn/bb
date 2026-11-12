@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { resolveAppServerLaunch } from "./bridge.js";
+import { buildAppServerEnv, resolveAppServerLaunch } from "./bridge.js";
 
 afterEach(() => vi.unstubAllEnvs());
 
@@ -60,4 +60,15 @@ describe("Codex Account Pool isolation", () => {
       );
     },
   );
+});
+
+describe("Codex app-server environment", () => {
+  it("tags a thread's app-server with its BB_THREAD_ID and nothing else from BB", () => {
+    vi.stubEnv("BB_THREAD_ID", "thr_bridge_worker");
+    vi.stubEnv("BB_SERVER_URL", "http://127.0.0.1:1");
+    const env = buildAppServerEnv(undefined, "thr_codex_1");
+    expect(env.BB_THREAD_ID).toBe("thr_codex_1");
+    expect(env.BB_SERVER_URL).toBeUndefined();
+    expect(buildAppServerEnv(undefined, null).BB_THREAD_ID).toBeUndefined();
+  });
 });

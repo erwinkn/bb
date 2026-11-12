@@ -189,6 +189,7 @@ export async function startHostDaemon(
       hostWatcher,
       closeMachineAuthProxy: machineAuthProxy?.close,
       exitProcess: (code) => process.exit(code),
+      threadCgroups: true,
     });
     const startedApp = app;
     handleDaemonLockLost = () => {

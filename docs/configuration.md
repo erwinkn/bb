@@ -81,6 +81,54 @@ Use `--host-id` when the server has more than one machine; copy the ID from
 `bb machine list`. Omit it to preserve the single-machine auto-selection for
 `set`, or to remove every mapping for that server with `remove`.
 
+## Thread resource limits (Linux)
+
+When the host daemon runs as a systemd user service (`bb-app.service`), it
+moves every process that carries a thread's `BB_THREAD_ID` (the provider CLI,
+its shells, test runs, dev servers, subagents) into a scope for
+that thread, `bb-thread-<thread id>.scope` under `app-bb.slice`. It checks for
+new processes once a second; anything a moved process starts is born inside
+the scope. BB terminals carry no `BB_THREAD_ID` and stay in the service.
+Each scope gets `CPUQuota=800%` (8 cores) and `MemoryHigh=16G`, a
+soft ceiling that slows the thread down with reclaim instead of killing it.
+Elsewhere (macOS, Windows) the daemon does nothing; on Linux without a user
+systemd it logs once and does nothing.
+
+- Change the limits for every thread on a machine with a drop-in, then reload:
+  `~/.config/systemd/user/bb-thread-.scope.d/10-limits.conf` containing
+  `[Scope]`, `CPUQuota=1200%`, `MemoryHigh=24G`, then
+  `systemctl --user daemon-reload`. An empty `CPUQuota=` and
+  `MemoryHigh=infinity` keep accounting without limits.
+- Change one running thread:
+  `systemctl --user set-property --runtime bb-thread-<id>.scope CPUQuota=2400%`.
+- Give one command more than the thread's quota by running it in its own scope
+  named after the thread, so `bb thread usage` still counts it, and stopped
+  with the service like the thread's own scope:
+  `systemd-run --user --scope -q --slice=app-bb.slice --unit="bb-boost-$BB_THREAD_ID-$RANDOM" -p StopPropagatedFrom=bb-app.service -p Before=bb-app.service -p CPUQuota=2400% -- <command>`
+  (use the daemon's unit name if it is not `bb-app.service`).
+- `BB_THREAD_CGROUPS=0` in the daemon's environment turns the feature off.
+- `bb thread usage` shows CPU, quota, memory, soft limit and process count
+  per thread.
+
+Memory and task limits set on `bb-app.service` stop covering agents once they
+move out. Keep one ceiling over the daemon and every thread by moving them to
+the slice and running the service there: `app-bb.slice.d/50-limits.conf` with
+`[Slice]` and the `MemoryMax=`, `MemoryHigh=`, `TasksMax=` lines, plus a
+`bb-app.service.d/` drop-in with `[Service]` and `Slice=app-bb.slice`. Clear
+the service's own limits with
+`systemctl --user set-property bb-app.service MemoryMax=infinity MemoryHigh=infinity TasksMax=infinity`
+(a drop-in would only shadow them), then `systemctl --user daemon-reload` and a
+restart.
+
+Stopping or restarting the service stops every thread scope once the daemon
+has exited (`StopPropagatedFrom=` and `Before=`), as `KillMode=mixed` did
+before. Scope processes get SIGTERM and, 2 s later, SIGKILL, so a full restart
+can take up to 2 s longer than before.
+A server-only restart leaves the scopes running. A scope disappears when its last
+process exits. Docker containers run under the system Docker daemon, outside
+these scopes; limit them in compose (`cpus:`, `mem_limit:`) or with
+`docker run --cpus --memory`.
+
 ## Precedence
 
 Configuration is resolved in this order:

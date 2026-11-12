@@ -194,6 +194,14 @@ Listing:
   prints one number; with --by it prints a count per group (threads with no
   host/provider/project group under "-") followed by the total.
 
+  bb thread usage                          Show CPU and memory per thread on this machine
+
+  Linux only. Samples each thread's cgroup for one second and prints CPU
+  cores in use, CPU quota, memory, soft memory limit, and process count,
+  busiest first. Each thread's processes run under a quota of
+  8 cores by default; for one heavier command, run it with
+  `systemd-run --user --scope -q --slice=app-bb.slice --unit="bb-boost-$BB_THREAD_ID-$RANDOM" -p StopPropagatedFrom=bb-app.service -p Before=bb-app.service -p CPUQuota=2400% -- <command>`.
+
 Sections:
 
   bb thread section list

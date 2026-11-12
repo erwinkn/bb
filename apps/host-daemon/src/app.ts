@@ -52,6 +52,7 @@ import {
   type HostWatcher,
 } from "@bb/host-watcher";
 import { PluginHostManager } from "./plugin-host-manager.js";
+import { startThreadCgroups } from "./thread-cgroups.js";
 import { writeMachineSuspensionMarker } from "./suspension-marker.js";
 import {
   defaultServerMoveServiceOptions,
@@ -123,6 +124,7 @@ interface CreateHostDaemonAppOptions {
   createWebSocket?: CreateReconnectingWebSocket;
   closeMachineAuthProxy?: () => Promise<void>;
   exitProcess?: (code: number) => void;
+  threadCgroups?: boolean;
 }
 
 export interface HostDaemonApp {
@@ -904,6 +906,9 @@ export async function createHostDaemonApp(
   const eventLoopStallMonitor = startEventLoopStallMonitor({
     logger: options.logger,
   });
+  const threadCgroups = options.threadCgroups
+    ? startThreadCgroups({ logger: options.logger })
+    : null;
   const hostDaemonHealthMonitor = startHostDaemonHealthMonitor({
     logger: options.logger,
     getWatchCounts: () => ({
@@ -929,6 +934,7 @@ export async function createHostDaemonApp(
       idleProviderSessionReaper.stop();
       eventLoopStallMonitor.stop();
       hostDaemonHealthMonitor.stop();
+      threadCgroups?.stop();
       await pluginHostManager.shutdown();
       await options.closeMachineAuthProxy?.();
       await localApi?.close();

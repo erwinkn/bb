@@ -395,14 +395,18 @@ function appServerLaunchEnv(
   };
 }
 
-function buildAppServerEnv(
+export function buildAppServerEnv(
   envVars: Readonly<Record<string, string>> | undefined,
+  threadId: string | null,
 ): NodeJS.ProcessEnv {
-  return withoutBridgeRuntimeEnv(
-    sanitizeInheritedChildProcessEnv({
-      env: appServerLaunchEnv(envVars),
-    }),
-  );
+  return {
+    ...withoutBridgeRuntimeEnv(
+      sanitizeInheritedChildProcessEnv({
+        env: appServerLaunchEnv(envVars),
+      }),
+    ),
+    ...(threadId === null ? {} : { BB_THREAD_ID: threadId }),
+  };
 }
 
 function isCodexSpawnFailure(error: unknown): boolean {
@@ -972,7 +976,7 @@ function spawnChildConnection(callbacks: {
   ) => void;
   onExit: (info: CodexAppServerExitInfo) => void;
 }): CodexAppServerConnection {
-  const env = buildAppServerEnv(callbacks.envVars);
+  const env = buildAppServerEnv(callbacks.envVars, callbacks.recordThreadId);
   const launch = resolveAppServerLaunch(appServerLaunchEnv(callbacks.envVars));
   const { envVars: _envVars, ...connectionCallbacks } = callbacks;
   return createCodexAppServerConnection({
