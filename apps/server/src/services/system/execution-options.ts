@@ -51,6 +51,7 @@ interface ResolveSystemProviderModelsArgs {
   cwd?: string;
   hostId: string;
   providerId: string;
+  requiredModel?: string;
 }
 
 type ModelListResult = Pick<
@@ -318,7 +319,7 @@ export async function resolveSystemProviderModels(
     cwd: args.cwd ?? null,
     hostId: args.hostId,
     provider,
-    access: { kind: "validation", requiredModel: null },
+    access: { kind: "validation", requiredModel: args.requiredModel ?? null },
   });
   const { models, selectedOnlyModels } = appendCustomModels(
     deps.providerRegistry,

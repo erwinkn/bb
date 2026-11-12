@@ -25,7 +25,8 @@ Spawning:
     --parent-notices <mode>        Whether turn ends notify the parent: turns (default) or explicit
     --final-reports-only           Same as --parent-notices explicit
     --lifecycle-owner-thread <id>  Archive/delete with this owner
-    --provider <id>                Provider override
+    --provider <id>                Provider (bb provider list); an unknown id is refused.
+                                   Omitted: the provider whose models include --model
     --model <model>                Model override
     --reasoning-level <level>      Reasoning level: low, medium, high, xhigh, max (provider-dependent)
     --environment <id-or-path>     Attach to an existing environment (ID or workspace path)

@@ -186,6 +186,20 @@ export function resolveCreateThreadExecutionDefaults(
   args: ResolveCreateThreadExecutionDefaultsArgs,
 ): CreateThreadExecutionDefaultsResolved {
   const disabled = registry.disabledProviderIds();
+  if (
+    args.requestedProviderId !== undefined &&
+    registry.get(args.requestedProviderId) === null
+  ) {
+    const known = registry
+      .list()
+      .map((entry) => entry.info.id)
+      .filter((id) => !disabled.has(id));
+    throw new ApiError(
+      400,
+      "unknown_provider",
+      `Unknown provider "${args.requestedProviderId}". Valid providers: ${known.join(", ")}.`,
+    );
+  }
   const storedProviderId =
     args.storedDefaults !== null &&
     !disabled.has(args.storedDefaults.providerId)

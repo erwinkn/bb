@@ -25,10 +25,11 @@ interface ResolveProjectExecutionDefaultsForCreateArgs {
   providerId?: ThreadCreateServiceRequestInput["providerId"];
 }
 
-interface ResolvedProjectExecutionDefaultsForCreate {
+export interface ResolvedProjectExecutionDefaultsForCreate {
   executionDefaults: ProjectExecutionDefaults | null;
   providerId: string;
   providerFallbackCandidates: readonly string[];
+  providerRequested: boolean;
   requestedModel: string | null;
 }
 
@@ -106,6 +107,7 @@ export function resolveProjectExecutionDefaultsForCreate(
     executionDefaults,
     providerId,
     providerFallbackCandidates,
+    providerRequested: requestedProviderId !== undefined,
     requestedModel: requestedModel ?? null,
   };
 }

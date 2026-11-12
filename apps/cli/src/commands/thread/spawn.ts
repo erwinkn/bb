@@ -45,7 +45,7 @@ import {
 } from "./parent-notices.js";
 
 const PROVIDER_HELP =
-  "Provider ID for the thread. Omit to use the project's remembered provider choice";
+  "Provider ID for the thread (`bb provider list`). Omit to use the provider that offers --model, else the project's remembered provider choice";
 
 interface ThreadSpawnCommandOptions {
   prompt?: string;

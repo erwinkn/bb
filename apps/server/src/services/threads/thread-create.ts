@@ -66,6 +66,7 @@ import { resolveDispatchAuthor } from "./dispatch-author.js";
 import { deriveForkTitle, deriveTitleFallback } from "./title-generation.js";
 import type { ThreadProvisionEnvironmentIntent } from "./thread-startup-store.js";
 import { resolveSystemProviderModels } from "../system/execution-options.js";
+import { resolveCreateExecutionForModel } from "./thread-create-model-provider.js";
 import {
   getEnvironmentProvider,
   listEnvironmentCompositions,
@@ -630,12 +631,7 @@ export async function createThreadFromRequest(
     projectId: requestInput.projectId,
   });
   await deps.providerRegistry.whenRegistrationsSettled();
-  const {
-    executionDefaults,
-    providerId,
-    providerFallbackCandidates,
-    requestedModel,
-  } = resolveProjectExecutionDefaultsForCreate(deps, {
+  const createExecution = resolveProjectExecutionDefaultsForCreate(deps, {
     executionInputSources: requestInput.executionInputSources,
     model: requestInput.model,
     projectId: requestInput.projectId,
@@ -680,7 +676,7 @@ export async function createThreadFromRequest(
       requestedVisibility: requestInput.visibility,
     }),
     environment: requestedEnvironment,
-    providerId,
+    providerId: createExecution.providerId,
     titleFallback: deriveTitleFallback(requestInput.input),
   };
   if (
@@ -731,15 +727,22 @@ export async function createThreadFromRequest(
             request.environment.machine.hostId,
           )
         : undefined;
+  const execution = await resolveCreateExecutionForModel(deps, {
+    ...(modelCatalogCwd !== undefined ? { cwd: modelCatalogCwd } : {}),
+    execution: createExecution,
+    hostId: childHostId,
+    projectId: request.projectId,
+  });
+  request.providerId = execution.providerId;
   const resolvedExecutionDefaults = await resolveCatalogExecutionDefaults(
     deps,
     {
       ...(modelCatalogCwd !== undefined ? { cwd: modelCatalogCwd } : {}),
-      executionDefaults,
+      executionDefaults: execution.executionDefaults,
       hostId: childHostId,
-      providerId,
-      providerFallbackCandidates,
-      requestedModel,
+      providerId: execution.providerId,
+      providerFallbackCandidates: execution.providerFallbackCandidates,
+      requestedModel: execution.requestedModel,
     },
   );
   if (
