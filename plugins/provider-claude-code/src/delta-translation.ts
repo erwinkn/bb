@@ -60,6 +60,8 @@ import {
 } from "./tool-classification.js";
 import {
   hasCompletionBlockingClaudeTasks,
+  listRunningBackgroundClaudeTasks,
+  type RunningBackgroundClaudeTask,
   buildInterruptedClaudeTaskDeltas,
   runningClaudeTaskGeneration,
   listRunningClaudeTaskKeysAbsentFrom,
@@ -1379,6 +1381,12 @@ export function createClaudeDeltaTranslator(
     );
   }
 
+  function listRunningBackgroundTasks(
+    threadId: string,
+  ): RunningBackgroundClaudeTask[] {
+    return listRunningBackgroundClaudeTasks(stateFor({ threadId }).tasksById);
+  }
+
   function listBackgroundTasksMissingFromLiveSet(threadId: string): string[] {
     const state = stateFor({ threadId });
     return state.liveTaskIds === null
@@ -1453,6 +1461,7 @@ export function createClaudeDeltaTranslator(
     buildSessionSettlementDeltas,
     configureInjectedTools,
     hasOpenTurn,
+    listRunningBackgroundTasks,
     runningBackgroundTaskGeneration,
     listBackgroundTasksMissingFromLiveSet,
     settleBackgroundTasks,

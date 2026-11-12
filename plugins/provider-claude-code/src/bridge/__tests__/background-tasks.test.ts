@@ -66,6 +66,10 @@ function scriptedQuery(sessionId: string) {
       queued.push({ ...message, session_id: sessionId });
       release();
     },
+    end() {
+      closed = true;
+      release();
+    },
     [Symbol.asyncIterator]() {
       return {
         next: async (): Promise<IteratorResult<unknown>> => {
@@ -94,10 +98,14 @@ function seededQuery(call: QueryCall) {
 }
 
 const queries: ScriptedQuery[] = [];
+const prompts: Array<{ sessionId: string; content: unknown }> = [];
 
-async function drain(prompt: AsyncIterable<SDKUserMessage>): Promise<void> {
-  for await (const _message of prompt) {
-    continue;
+async function drain(
+  sessionId: string,
+  prompt: AsyncIterable<SDKUserMessage>,
+): Promise<void> {
+  for await (const message of prompt) {
+    prompts.push({ sessionId, content: message.message.content });
   }
 }
 
@@ -184,7 +192,21 @@ async function answerFresh(sessionId: string): Promise<void> {
   );
 }
 
-function startBackgroundCommand(query: ScriptedQuery, taskId: string): void {
+interface TaskShape {
+  backgrounded?: boolean;
+  taskType?: string;
+  description?: string;
+}
+
+function startBackgroundCommand(
+  query: ScriptedQuery,
+  taskId: string,
+  {
+    backgrounded = true,
+    taskType = "local_bash",
+    description = "Collect slots",
+  }: TaskShape = {},
+): void {
   query.push({
     type: "assistant",
     message: {
@@ -209,10 +231,25 @@ function startBackgroundCommand(query: ScriptedQuery, taskId: string): void {
     subtype: "task_started",
     task_id: taskId,
     tool_use_id: `toolu_${taskId}`,
-    description: "Collect slots",
-    task_type: "local_bash",
-    is_backgrounded: true,
+    description,
+    task_type: taskType,
+    is_backgrounded: backgrounded,
   });
+}
+
+function warnings() {
+  return assembleCapturedThreadEvents(bridge.messages, "claude-code").flatMap(
+    (event) =>
+      event.type === "provider/warning"
+        ? [
+            {
+              scope: event.scope.kind,
+              summary: event.summary,
+              details: event.details,
+            },
+          ]
+        : [],
+  );
 }
 
 function taskEvents(taskId: string) {
@@ -250,10 +287,11 @@ let bridge: Harness;
 beforeEach(() => {
   vi.clearAllMocks();
   queries.length = 0;
+  prompts.length = 0;
   queryMock.mockImplementation((call: QueryCall) => {
     const query = scriptedQuery(call.options.sessionId ?? THREAD_ID);
     queries.push(query);
-    void drain(call.prompt);
+    void drain(query.sessionId, call.prompt);
     return query;
   });
   seedQueryMock.mockImplementation((call: QueryCall) => seededQuery(call));
@@ -451,7 +489,9 @@ it("settles a command Claude Code stops listing once no finish event follows", a
   ]);
 });
 
-it("settles the old session's background commands when a turn swaps in a fresh session", async () => {
+async function freshSessionWithRunningCommand(
+  shape: TaskShape = {},
+): Promise<ScriptedQuery> {
   await startThread(true);
   sendTurn("turn-1", "clean up slots", "creq_abcdefghjk");
   await answerFresh(FRESH_SESSION_A);
@@ -459,9 +499,157 @@ it("settles the old session's background commands when a turn swaps in a fresh s
   const sessionA = queries.find(
     (query) => query.sessionId === FRESH_SESSION_A,
   )!;
-  startBackgroundCommand(sessionA, "bslotgc1");
+  startBackgroundCommand(sessionA, "bslotgc1", shape);
   await waitForTaskStart("bslotgc1");
   sessionA.push({ type: "result", subtype: "success", is_error: false });
+  return sessionA;
+}
+
+it("keeps the session that runs a background command when the next turn asks for a fresh one", async () => {
+  const sessionA = await freshSessionWithRunningCommand();
+
+  sendTurn("turn-2", "and now?", "creq_bcdefghjkm");
+  await answerFresh(FRESH_SESSION_B);
+  expect((await bridge.waitForResponse("turn-2")).error).toBeUndefined();
+
+  await vi.waitFor(() =>
+    expect(prompts.at(-1)).toEqual({
+      sessionId: FRESH_SESSION_A,
+      content: "and now?",
+    }),
+  );
+  expect(queries.some((query) => query.sessionId === FRESH_SESSION_B)).toBe(
+    false,
+  );
+  expect(sessionA.close).not.toHaveBeenCalled();
+  expect(taskEvents("bslotgc1")).toEqual([
+    { type: "item/started", taskStatus: "running" },
+  ]);
+  expect(
+    bridge.messages.some(
+      (message) =>
+        message.method === "thread/identity" &&
+        JSON.stringify(message.params).includes(FRESH_SESSION_B),
+    ),
+  ).toBe(false);
+  expect(warnings()).toEqual([
+    {
+      scope: "turn",
+      summary: "Kept the running session for background work",
+      details:
+        'A fresh session would stop "Collect slots". Turns keep this session, without a new memory view, until that work ends.',
+    },
+  ]);
+
+  sessionA.push({ type: "result", subtype: "success", is_error: false });
+  sendTurn("turn-3", "still there?", "creq_cdefghjkmn");
+  await answerFresh(FRESH_SESSION_B);
+  expect((await bridge.waitForResponse("turn-3")).error).toBeUndefined();
+  await vi.waitFor(() =>
+    expect(prompts.at(-1)).toEqual({
+      sessionId: FRESH_SESSION_A,
+      content: "still there?",
+    }),
+  );
+  expect(warnings()).toHaveLength(1);
+
+  startBackgroundCommand(sessionA, "bdevsrv1", { description: "Run dev" });
+  await waitForTaskStart("bdevsrv1");
+  sessionA.push({
+    type: "system",
+    subtype: "task_notification",
+    task_id: "bslotgc1",
+    tool_use_id: "toolu_bslotgc1",
+    status: "completed",
+    output_file: "",
+    summary: "done",
+  });
+  sessionA.push({ type: "result", subtype: "success", is_error: false });
+  await vi.waitFor(() =>
+    expect(taskEvents("bslotgc1")).toContainEqual(
+      expect.objectContaining({ type: "item/backgroundTask/completed" }),
+    ),
+  );
+  sendTurn("turn-4", "and the server?", "creq_defghjkmnp");
+  await answerFresh(FRESH_SESSION_B);
+  expect((await bridge.waitForResponse("turn-4")).error).toBeUndefined();
+  await vi.waitFor(() =>
+    expect(prompts.at(-1)).toEqual({
+      sessionId: FRESH_SESSION_A,
+      content: "and the server?",
+    }),
+  );
+  expect(warnings().at(-1)).toEqual({
+    scope: "turn",
+    summary: "Kept the running session for background work",
+    details:
+      'A fresh session would stop "Run dev". Turns keep this session, without a new memory view, until that work ends.',
+  });
+  expect(warnings()).toHaveLength(2);
+});
+
+it("keeps the session that runs a workflow, backgrounded or not", async () => {
+  const sessionA = await freshSessionWithRunningCommand({
+    backgrounded: false,
+    taskType: "local_workflow",
+  });
+
+  sendTurn("turn-2", "and now?", "creq_bcdefghjkm");
+  await answerFresh(FRESH_SESSION_B);
+  expect((await bridge.waitForResponse("turn-2")).error).toBeUndefined();
+
+  expect(sessionA.close).not.toHaveBeenCalled();
+  expect(queries.some((query) => query.sessionId === FRESH_SESSION_B)).toBe(
+    false,
+  );
+});
+
+it("swaps in the fresh session when the old session's stream ends while the turn asks for its context", async () => {
+  const sessionA = await freshSessionWithRunningCommand();
+
+  sendTurn("turn-2", "and now?", "creq_bcdefghjkm");
+  await waitForToolCall();
+  sessionA.end();
+  await answerFresh(FRESH_SESSION_B);
+  expect((await bridge.waitForResponse("turn-2")).error).toBeUndefined();
+
+  expect(queries.some((query) => query.sessionId === FRESH_SESSION_B)).toBe(
+    true,
+  );
+  expect(warnings()).toEqual([]);
+});
+
+it("swaps in the fresh session once the background command has finished", async () => {
+  const sessionA = await freshSessionWithRunningCommand();
+  sessionA.push({
+    type: "system",
+    subtype: "task_notification",
+    task_id: "bslotgc1",
+    tool_use_id: "toolu_bslotgc1",
+    status: "completed",
+    output_file: "",
+    summary: "done",
+  });
+  await vi.waitFor(() => expect(taskEvents("bslotgc1")).toHaveLength(2));
+
+  sendTurn("turn-2", "and now?", "creq_bcdefghjkm");
+  await answerFresh(FRESH_SESSION_B);
+  expect((await bridge.waitForResponse("turn-2")).error).toBeUndefined();
+
+  expect(sessionA.close).toHaveBeenCalled();
+  expect(queries.some((query) => query.sessionId === FRESH_SESSION_B)).toBe(
+    true,
+  );
+  expect(taskEvents("bslotgc1")).toEqual([
+    { type: "item/started", taskStatus: "running" },
+    { type: "item/backgroundTask/completed", taskStatus: "completed" },
+  ]);
+});
+
+it("settles the old session's leftover foreground task before a fresh session's identity", async () => {
+  const sessionA = await freshSessionWithRunningCommand({
+    backgrounded: false,
+  });
 
   sendTurn("turn-2", "and now?", "creq_bcdefghjkm");
   await answerFresh(FRESH_SESSION_B);

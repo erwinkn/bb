@@ -400,6 +400,23 @@ export function runningClaudeTaskGeneration(
   return task.generation;
 }
 
+export interface RunningBackgroundClaudeTask {
+  taskId: string;
+  description: string;
+}
+
+export function listRunningBackgroundClaudeTasks(
+  tasks: ClaudeTaskMap,
+): RunningBackgroundClaudeTask[] {
+  return [...tasks.values()]
+    .filter(
+      (task) =>
+        !task.terminal &&
+        (task.backgrounded || task.taskType === LOCAL_WORKFLOW_TASK_TYPE),
+    )
+    .map(({ taskId, description }) => ({ taskId, description }));
+}
+
 export function listRunningClaudeTaskKeysAbsentFrom(
   tasks: ClaudeTaskMap,
   liveTaskIds: ReadonlySet<string>,

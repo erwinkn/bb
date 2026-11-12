@@ -43,6 +43,7 @@ import {
   createClaudeDeltaTranslator,
   type ClaudeDeltaTranslator,
 } from "../delta-translation.js";
+import type { RunningBackgroundClaudeTask } from "../task-translation.js";
 import {
   buildClaudeApprovalInteractionPayload,
   buildClaudeInteractiveResponse,
@@ -271,6 +272,7 @@ interface ThreadSession {
   permissionEscalationByToolUseId: Map<string, PermissionEscalation | null>;
   turnPreparation: TurnPreparation | null;
   turnPreparationFailure: string | null;
+  backgroundKeepWarned: { sessionSerial: number; taskIds: Set<string> } | null;
 }
 
 interface TurnPreparation {
@@ -1366,6 +1368,7 @@ function createThreadSession(attachment: ThreadAttachment): ThreadSession {
     permissionEscalationByToolUseId: new Map(),
     turnPreparation: null,
     turnPreparationFailure: null,
+    backgroundKeepWarned: null,
   };
   seedModelContextWindowHint(
     threadSession,
@@ -3090,11 +3093,17 @@ async function prepareTurnSession(
   preparation: TurnPreparation,
   context: TurnContext | null,
   tools: SessionConstructionConfig["dynamicTools"],
-): Promise<void> {
+): Promise<boolean> {
   const { attachment } = threadSession;
   const threadId = attachment.threadIdRef.current;
   if (!isPreparedSessionOpen(threadSession)) {
     throw new Error("Claude session closed before the turn started");
+  }
+  const backgroundWork =
+    context === null ? [] : runningBackgroundWork(threadSession);
+  if (backgroundWork.length > 0) {
+    warnKeptForBackgroundWork(threadSession, backgroundWork);
+    return false;
   }
   if (context !== null) {
     try {
@@ -3105,7 +3114,7 @@ async function prepareTurnSession(
           context.systemPrompt.length > 0 ? context.systemPrompt : null,
         tools,
       });
-      return;
+      return true;
     } catch (error) {
       if (!isPreparedSessionOpen(threadSession)) throw error;
       const message = error instanceof Error ? error.message : String(error);
@@ -3129,6 +3138,42 @@ async function prepareTurnSession(
       tools,
     });
   }
+  return false;
+}
+
+function runningBackgroundWork(
+  threadSession: ThreadSession,
+): RunningBackgroundClaudeTask[] {
+  if (threadSession.streamEnded) return [];
+  return threadSession.translator.listRunningBackgroundTasks(
+    threadSession.attachment.threadIdRef.current,
+  );
+}
+
+function warnKeptForBackgroundWork(
+  threadSession: ThreadSession,
+  tasks: readonly RunningBackgroundClaudeTask[],
+): void {
+  const threadId = threadSession.attachment.threadIdRef.current;
+  logBridgeError(
+    `kept the running session of ${threadId} for this turn: its background tasks would die with a fresh session`,
+  );
+  const { sessionSerial } = threadSession;
+  const warned =
+    threadSession.backgroundKeepWarned?.sessionSerial === sessionSerial
+      ? threadSession.backgroundKeepWarned.taskIds
+      : new Set<string>();
+  if (tasks.every((task) => warned.has(task.taskId))) return;
+  for (const task of tasks) warned.add(task.taskId);
+  threadSession.backgroundKeepWarned = { sessionSerial, taskIds: warned };
+  sendThreadDeltas(threadId, [
+    {
+      kind: "provider.warning",
+      summary: "Kept the running session for background work",
+      details: `A fresh session would stop ${tasks.map((task) => `"${task.description}"`).join(", ")}. Turns keep this session, without a new memory view, until that work ends.`,
+      vouchedTurn: true,
+    },
+  ]);
 }
 
 async function deliverHeldSteers(
@@ -3190,7 +3235,7 @@ async function runTurnWithContext(args: {
       );
     }
     const { context } = answer;
-    await prepareTurnSession(
+    const fresh = await prepareTurnSession(
       threadSession,
       preparation,
       context,
@@ -3198,7 +3243,7 @@ async function runTurnWithContext(args: {
     );
     input = pushPromptInput(
       threadSession,
-      context ? context.input : promptText,
+      fresh && context ? context.input : promptText,
       params.permissionEscalation,
     );
   } catch (error) {
