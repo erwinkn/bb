@@ -36,6 +36,7 @@ describe("bb thread list command output", () => {
       query: {
         projectId: "proj-1",
         parentThreadId: "thread-manager-1",
+        limit: "101",
       },
     });
   });
@@ -53,7 +54,9 @@ describe("bb thread list command output", () => {
       register,
     );
 
-    expect(list).toHaveBeenCalledWith({ query: { hostId: "host_removed123" } });
+    expect(list).toHaveBeenCalledWith({
+      query: { hostId: "host_removed123", limit: "101" },
+    });
     expect(hosts).not.toHaveBeenCalled();
   });
 
@@ -64,7 +67,7 @@ describe("bb thread list command output", () => {
     await runCommand(["thread", "list", "--include-hidden"], register);
 
     expect(list).toHaveBeenCalledWith({
-      query: { includeHidden: "true" },
+      query: { includeHidden: "true", limit: "101" },
     });
   });
 
@@ -127,7 +130,7 @@ describe("bb thread list command output", () => {
       await runCommand(["thread", "list"], register);
 
       expect(list).toHaveBeenCalledWith({
-        query: {},
+        query: { limit: "101" },
       });
       expect(collectLogPayloads(vi.mocked(console.log))).toEqual([
         "",
@@ -157,7 +160,7 @@ describe("bb thread list command output", () => {
     await runCommand(["thread", "list"], register);
 
     expect(list).toHaveBeenCalledWith({
-      query: {},
+      query: { limit: "101" },
     });
     expect(collectLogPayloads(vi.mocked(console.log))).toEqual([
       "",
@@ -242,7 +245,63 @@ describe("bb thread list command output", () => {
     await runCommand(["thread", "list"], register);
 
     expect(list).toHaveBeenCalledWith({
-      query: {},
+      query: { limit: "101" },
     });
   });
+
+  it("bb thread list caps the result and says so on stderr", async () => {
+    const list = vi.fn(async () =>
+      ["a", "b", "c"].map((id) =>
+        fixtures.makeThread({
+          id: `thr_${id}`,
+          projectId: "proj-1",
+          providerId: "codex",
+        }),
+      ),
+    );
+    stubServerApi({ "v1.threads.$get": list });
+
+    await runCommand(
+      ["thread", "list", "--project", "proj-1", "--limit", "2", "--json"],
+      register,
+    );
+
+    expect(list).toHaveBeenCalledWith({
+      query: { projectId: "proj-1", limit: "3" },
+    });
+    const printed = JSON.parse(
+      collectLogPayloads(vi.mocked(console.log)).join("\n"),
+    ) as Array<{ id: string }>;
+    expect(printed.map((thread) => thread.id)).toEqual(["thr_a", "thr_b"]);
+    expect(console.error).toHaveBeenCalledWith(
+      "Showing the first 2 threads; more match. Pass --limit <n> or --all to see more.",
+    );
+  });
+
+  it("bb thread list --all asks for every thread", async () => {
+    const list = vi.fn(async () => []);
+    stubServerApi({ "v1.threads.$get": list });
+
+    await runCommand(["thread", "list", "--all", "--json"], register);
+
+    expect(list).toHaveBeenCalledWith({ query: {} });
+    expect(console.error).not.toHaveBeenCalled();
+  });
+
+  it.each([["0"], ["-3"], ["1.5"], ["many"]])(
+    "bb thread list rejects --limit %s",
+    async (value) => {
+      const list = vi.fn(async () => []);
+      stubServerApi({ "v1.threads.$get": list });
+
+      await expect(
+        runCommand(["thread", "list", `--limit=${value}`], register),
+      ).rejects.toThrow("process.exit:1");
+
+      expect(console.error).toHaveBeenCalledWith(
+        "Error: --limit must be a positive integer.",
+      );
+      expect(list).not.toHaveBeenCalled();
+    },
+  );
 });

@@ -25,6 +25,27 @@ interface ThreadListCommandOptions {
   unsectioned?: boolean;
   json?: boolean;
   includeHidden?: boolean;
+  limit?: string;
+  all?: boolean;
+}
+
+const DEFAULT_THREAD_LIST_LIMIT = 100;
+
+function resolveThreadListLimit(
+  opts: Pick<ThreadListCommandOptions, "all" | "limit">,
+): number | undefined {
+  if (opts.all) {
+    if (opts.limit !== undefined) {
+      throw new Error("Cannot combine --limit with --all.");
+    }
+    return undefined;
+  }
+  if (opts.limit === undefined) return DEFAULT_THREAD_LIST_LIMIT;
+  const limit = Number(opts.limit);
+  if (!/^\d+$/.test(opts.limit) || !Number.isSafeInteger(limit) || limit < 1) {
+    throw new Error("--limit must be a positive integer.");
+  }
+  return limit;
 }
 
 export function registerListCommand(
@@ -33,7 +54,9 @@ export function registerListCommand(
 ): void {
   parent
     .command("list")
-    .description("List threads")
+    .description(
+      `List threads, at most ${DEFAULT_THREAD_LIST_LIMIT} unless --limit or --all says otherwise. Order: by project, pinned first, then newest`,
+    )
     .option("--project <id>", "Filter by project ID (defaults to all projects)")
     .option("--environment <id>", "Filter by environment ID")
     .option(
@@ -46,6 +69,11 @@ export function registerListCommand(
     .option("--unsectioned", "Show only threads outside sections")
     .option("--archived", "Show only archived threads")
     .option("--include-hidden", "Include hidden threads")
+    .option(
+      "--limit <n>",
+      `Show at most n threads (default ${DEFAULT_THREAD_LIST_LIMIT})`,
+    )
+    .option("--all", "Show every matching thread")
     .option("--json", "Print machine-readable JSON output")
     .action(
       action(async (opts: ThreadListCommandOptions) => {
@@ -82,7 +110,8 @@ export function registerListCommand(
           flagName: "--section",
           value: opts.section,
         });
-        const threads = await sdk.threads.list({
+        const limit = resolveThreadListLimit(opts);
+        const page = await sdk.threads.list({
           ...(projectId ? { projectId } : {}),
           ...(environmentId ? { environmentId } : {}),
           ...(hostId ? { hostId } : {}),
@@ -91,7 +120,17 @@ export function registerListCommand(
           ...(sectionId ? { sectionId } : {}),
           ...(opts.unsectioned ? { unsectioned: true } : {}),
           ...(opts.includeHidden ? { includeHidden: true } : {}),
+          ...(limit !== undefined ? { limit: limit + 1 } : {}),
         });
+        const threads =
+          limit !== undefined && page.length > limit
+            ? page.slice(0, limit)
+            : page;
+        if (threads.length < page.length) {
+          console.error(
+            `Showing the first ${limit} threads; more match. Pass --limit <n> or --all to see more.`,
+          );
+        }
         if (outputJson(opts, threads)) return;
         if (threads.length === 0) {
           console.log("No threads found");

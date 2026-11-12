@@ -170,7 +170,11 @@ Listing:
     --section <id>                         Filter by section
     --unsectioned                          Show only threads outside sections
     --include-hidden                       Include hidden threads
+    --limit <n>                            Show at most n threads (default 100)
+    --all                                  Show every matching thread
 
+  Threads come by project, pinned first, then newest. When more threads match
+  than the limit, a note on stderr says so; the JSON stays a bare array.
   The table prints ID, Title, Project, and Status. Title uses the thread
   title, then the fallback title from the first prompt, then "-". Long
   titles are cut at 60 characters. Project shows the project name; the
