@@ -28,6 +28,7 @@ export async function resolvePermissionMode(
   providerId: string,
   requested: PermissionMode | undefined,
   routing: ProviderRouting = {},
+  preferred?: PermissionMode,
 ): Promise<PermissionMode> {
   const providers = await bb.sdk.providers.list(routing);
   const provider = providers.find((candidate) => candidate.id === providerId);
@@ -43,6 +44,12 @@ export async function resolvePermissionMode(
     );
   }
   if (requested !== undefined) return requested;
+  if (
+    preferred !== undefined &&
+    provider.capabilities.permissionModes.includes(preferred)
+  ) {
+    return preferred;
+  }
   if (provider.capabilities.permissionModes.includes("auto")) {
     return "auto";
   }

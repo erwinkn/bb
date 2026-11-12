@@ -325,9 +325,27 @@ export type AgentExecutionUpdate = z.infer<typeof agentExecutionUpdateSchema>;
 
 const scriptExecutionUpdateSchema = z
   .object({
-    workingDirectory: automationScriptWorkingDirectorySchema,
+    script: automationScriptExecutionFields.script,
+    scriptFile: automationScriptExecutionFields.scriptFile,
+    interpreter: automationScriptExecutionFields.interpreter,
+    timeoutMs: automationScriptExecutionFields.timeoutMs
+      .removeDefault()
+      .optional(),
+    env: automationScriptExecutionFields.env,
+    workingDirectory: automationScriptWorkingDirectorySchema.optional(),
   })
-  .strict();
+  .strict()
+  .refine((value) => Object.values(value).some((v) => v !== undefined), {
+    message: "at least one script execution field is required",
+  })
+  .refine(
+    (value) => value.scriptFile === undefined || value.script !== undefined,
+    {
+      message: "scriptFile names new script content and needs script",
+      path: ["scriptFile"],
+    },
+  );
+export type ScriptExecutionUpdate = z.infer<typeof scriptExecutionUpdateSchema>;
 
 export const automationResponseSchema = z
   .object({

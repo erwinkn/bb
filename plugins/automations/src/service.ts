@@ -1,4 +1,4 @@
-import { isAbsolute, join } from "node:path";
+import { extname, isAbsolute, join } from "node:path";
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 import {
@@ -25,7 +25,10 @@ import {
   resolvePermissionMode,
 } from "./provider-permissions.js";
 import { publishAutomationChange } from "./realtime.js";
-import { isPrintableWorkingDirectoryPath } from "./limits.js";
+import {
+  AUTOMATION_SCRIPT_TIMEOUT_DEFAULT_MS,
+  isPrintableWorkingDirectoryPath,
+} from "./limits.js";
 import {
   AUTOMATION_RUNS_LIMIT_MAX,
   WORKING_DIRECTORY_CONTROL_CHARACTER_MESSAGE,
@@ -46,6 +49,7 @@ import {
   type ResolvedCreateAutomationInput,
   type ResolvedAutomationRunsInput,
   type RunAutomationInput,
+  type ScriptExecutionUpdate,
   type UpdateAutomationInput,
 } from "./rpc-types.js";
 import {
@@ -200,6 +204,57 @@ async function resolveStoredExecution(args: {
     };
   }
   return { execution };
+}
+
+function definedScriptFields(update: ScriptExecutionUpdate) {
+  return {
+    ...(update.script !== undefined ? { script: update.script } : {}),
+    ...(update.scriptFile !== undefined
+      ? { scriptFile: update.scriptFile }
+      : {}),
+    ...(update.interpreter !== undefined
+      ? { interpreter: update.interpreter }
+      : {}),
+    ...(update.timeoutMs !== undefined ? { timeoutMs: update.timeoutMs } : {}),
+    ...(update.env !== undefined ? { env: update.env } : {}),
+    ...(update.workingDirectory !== undefined
+      ? { workingDirectory: update.workingDirectory }
+      : {}),
+  };
+}
+
+function scriptUpdateAsExecution(
+  current: AutomationExecution,
+  update: ScriptExecutionUpdate,
+): AutomationExecutionRequest | undefined {
+  if (update.script === undefined) return undefined;
+  if (current.mode !== "script") {
+    return {
+      mode: "script",
+      timeoutMs: AUTOMATION_SCRIPT_TIMEOUT_DEFAULT_MS,
+      ...definedScriptFields(update),
+    };
+  }
+  const keptExtension =
+    current.scriptFile === undefined
+      ? {}
+      : { scriptFile: `script${extname(current.scriptFile)}` };
+  return { ...current, ...keptExtension, ...definedScriptFields(update) };
+}
+
+function applyScriptFieldUpdate(
+  current: AutomationExecution,
+  update: ScriptExecutionUpdate,
+): AutomationExecution {
+  if (current.mode !== "script") {
+    throw new Error(
+      "Script execution options can only update script automations",
+    );
+  }
+  if (update.workingDirectory !== undefined) {
+    validateScriptWorkingDirectory(update.workingDirectory);
+  }
+  return { ...current, ...definedScriptFields(update) };
 }
 
 async function discardUncommittedScript(args: {
@@ -443,6 +498,9 @@ function applyAgentExecutionUpdate(
     );
   }
 
+  const providerChanged =
+    update.providerId !== undefined &&
+    update.providerId !== execution.providerId;
   const next = {
     ...execution,
     ...(update.prompt !== undefined ? { prompt: update.prompt } : {}),
@@ -457,7 +515,10 @@ function applyAgentExecutionUpdate(
       ? { permissionMode: update.permissionMode }
       : {}),
   };
-  if (update.serviceTier === null) {
+  if (
+    update.serviceTier === null ||
+    (update.serviceTier === undefined && providerChanged)
+  ) {
     delete next.serviceTier;
   } else if (update.serviceTier !== undefined) {
     next.serviceTier = update.serviceTier;
@@ -683,6 +744,11 @@ export function createAutomationService(args: {
       }
       const now = Date.now();
       const currentExecution = currentAutomation.execution;
+      const executionRequest =
+        input.execution ??
+        (input.script === undefined
+          ? undefined
+          : scriptUpdateAsExecution(currentExecution, input.script));
       let stagedScriptFile: string | undefined;
       const patch: Parameters<typeof updateAutomation>[1]["patch"] = {};
       if (input.name !== undefined) patch.name = input.name;
@@ -693,24 +759,24 @@ export function createAutomationService(args: {
           ? computeNextRunAt(input.trigger, now)
           : null;
       }
-      if (input.execution !== undefined) {
-        if (input.execution.mode === "agent") {
+      if (executionRequest !== undefined) {
+        if (executionRequest.mode === "agent") {
           await resolvePermissionMode(
             bb,
-            input.execution.providerId,
-            input.execution.permissionMode,
-            providerRoutingForEnvironment(input.execution.environment),
+            executionRequest.providerId,
+            executionRequest.permissionMode,
+            providerRoutingForEnvironment(executionRequest.environment),
           );
         }
         const stored = await resolveStoredExecution({
           pluginDataDir,
           automationId: current.id,
-          execution: input.execution,
+          execution: executionRequest,
           defaultWorkingDirectory:
             currentExecution.mode === "script"
               ? currentExecution.workingDirectory
-              : input.execution.mode === "script" &&
-                  input.execution.workingDirectory === undefined
+              : executionRequest.mode === "script" &&
+                  executionRequest.workingDirectory === undefined
                 ? defaultScriptWorkingDirectory(
                     project,
                     (await bb.sdk.system.config()).primaryHostId,
@@ -725,31 +791,31 @@ export function createAutomationService(args: {
           currentExecution,
           input.agent,
         );
+        const providerChanged =
+          currentExecution.mode === "agent" &&
+          updatedExecution.providerId !== currentExecution.providerId;
         if (
           input.agent.providerId !== undefined ||
           input.agent.permissionMode !== undefined ||
           input.agent.target?.type === "environment"
         ) {
-          await resolvePermissionMode(
+          updatedExecution.permissionMode = await resolvePermissionMode(
             bb,
             updatedExecution.providerId,
-            updatedExecution.permissionMode,
+            providerChanged
+              ? input.agent.permissionMode
+              : updatedExecution.permissionMode,
             providerRoutingForEnvironment(updatedExecution.environment),
+            updatedExecution.permissionMode,
           );
         }
         patch.execution = updatedExecution;
       }
-      if (input.script !== undefined) {
-        if (currentExecution.mode !== "script") {
-          throw new Error(
-            "Script execution options can only update script automations",
-          );
-        }
-        validateScriptWorkingDirectory(input.script.workingDirectory);
-        patch.execution = {
-          ...currentExecution,
-          workingDirectory: input.script.workingDirectory,
-        };
+      if (input.script !== undefined && executionRequest === undefined) {
+        patch.execution = applyScriptFieldUpdate(
+          currentExecution,
+          input.script,
+        );
       }
       if (
         "problem" in currentAutomation &&

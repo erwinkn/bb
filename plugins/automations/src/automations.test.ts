@@ -216,6 +216,7 @@ function createAutomationServiceBb() {
                 permissionModes: ["accept-edits", "auto", "full"],
               },
             },
+            { id: "pi", capabilities: { permissionModes: ["full"] } },
           ] as never,
       },
       threads: {
@@ -2009,6 +2010,485 @@ describe("automation CLI --script-file", () => {
       expect(emptyReplacement.stderr).toContain(
         "Missing required option --working-directory <value>.",
       );
+    } finally {
+      await t.cleanup();
+    }
+  });
+
+  it("keeps the stored script's extension when --script replaces its content (T164)", async () => {
+    const t = await setup();
+    const sourcePath = join(t.srcDir, "run.py");
+    await writeFile(sourcePath, "print(1)\n");
+    try {
+      const created = await t.cli.run(
+        [
+          "create",
+          "--project",
+          "proj_test",
+          "--name",
+          "py",
+          "--in",
+          "30m",
+          "--script-file",
+          sourcePath,
+          "--json",
+        ],
+        {},
+      );
+      expect(created.exitCode).toBe(0);
+      const automation = JSON.parse(created.stdout ?? "");
+      expect(automation.execution.storedScriptPath).toMatch(/\/run\.py$/);
+
+      for (const content of ["print(2)", "print(3)"]) {
+        const updated = await t.cli.run(
+          [
+            "update",
+            automation.id,
+            "--project",
+            "proj_test",
+            "--script",
+            content,
+            "--json",
+          ],
+          {},
+        );
+        expect(updated.exitCode).toBe(0);
+        const { storedScriptPath } = JSON.parse(updated.stdout ?? "").execution;
+        expect(storedScriptPath).toMatch(/\/script(\.[0-9a-f-]+)?\.py$/);
+        await expect(readFile(storedScriptPath, "utf8")).resolves.toBe(content);
+      }
+    } finally {
+      await t.cleanup();
+    }
+  });
+
+  it("keeps every omitted script field on update (T164)", async () => {
+    const t = await setup();
+    const sourcePath = join(t.srcDir, "watch");
+    await writeFile(sourcePath, "print('v1')\n");
+    try {
+      const created = await t.cli.run(
+        [
+          "create",
+          "--project",
+          "proj_test",
+          "--name",
+          "watcher",
+          "--in",
+          "30m",
+          "--script-file",
+          sourcePath,
+          "--interpreter",
+          "python3",
+          "--timeout",
+          "600000",
+          "--env-json",
+          '{"CHANNEL":"prod"}',
+          "--working-directory",
+          "automation-storage",
+          "--json",
+        ],
+        {},
+      );
+      expect(created.exitCode).toBe(0);
+      const automation = JSON.parse(created.stdout ?? "");
+      const kept = {
+        mode: "script",
+        interpreter: "python3",
+        env: { CHANNEL: "prod" },
+        workingDirectory: { type: "automation-storage" },
+      };
+
+      const retimed = await t.cli.run(
+        [
+          "update",
+          automation.id,
+          "--project",
+          "proj_test",
+          "--timeout",
+          "300000",
+          "--json",
+        ],
+        {},
+      );
+      expect(retimed.exitCode).toBe(0);
+      expect(JSON.parse(retimed.stdout ?? "").execution).toMatchObject({
+        ...kept,
+        timeoutMs: 300_000,
+        storedScriptPath: automation.execution.storedScriptPath,
+      });
+      await expect(
+        readFile(automation.execution.storedScriptPath, "utf8"),
+      ).resolves.toBe("print('v1')\n");
+
+      await writeFile(sourcePath, "print('v2')\n");
+      const refreshed = await t.cli.run(
+        [
+          "update",
+          automation.id,
+          "--project",
+          "proj_test",
+          "--script-file",
+          sourcePath,
+          "--json",
+        ],
+        {},
+      );
+      expect(refreshed.exitCode).toBe(0);
+      const refreshedExecution = JSON.parse(refreshed.stdout ?? "").execution;
+      expect(refreshedExecution).toMatchObject({ ...kept, timeoutMs: 300_000 });
+      await expect(
+        readFile(refreshedExecution.storedScriptPath, "utf8"),
+      ).resolves.toBe("print('v2')\n");
+    } finally {
+      await t.cleanup();
+    }
+  });
+
+  it("patches an agent automation even when --prompt --provider --model are all given (T164)", async () => {
+    const t = await setup();
+    try {
+      const created = await t.cli.run(
+        [
+          "create",
+          "--project",
+          "proj_test",
+          "--name",
+          "agent",
+          "--in",
+          "30m",
+          "--prompt",
+          "Check the build",
+          "--provider",
+          "codex",
+          "--model",
+          "test-model",
+          "--reasoning",
+          "high",
+          "--permission-mode",
+          "auto",
+          "--target-thread",
+          "thr_env",
+          "--service-tier",
+          "fast",
+          "--json",
+        ],
+        {},
+      );
+      expect(created.exitCode).toBe(0);
+      const automation = JSON.parse(created.stdout ?? "");
+
+      const updated = await t.cli.run(
+        [
+          "update",
+          automation.id,
+          "--project",
+          "proj_test",
+          "--prompt",
+          "Check the deploy",
+          "--provider",
+          "codex",
+          "--model",
+          "test-model-2",
+          "--json",
+        ],
+        {},
+      );
+      expect(updated.exitCode).toBe(0);
+      expect(JSON.parse(updated.stdout ?? "").execution).toEqual({
+        ...automation.execution,
+        prompt: "Check the deploy",
+        model: "test-model-2",
+      });
+    } finally {
+      await t.cleanup();
+    }
+  });
+
+  it("updates a script automation whose stored file is gone, keeping its interpreter (T164)", async () => {
+    const t = await setup();
+    const sourcePath = join(t.srcDir, "watch.py");
+    await writeFile(sourcePath, "print('v1')\n");
+    try {
+      const created = await t.cli.run(
+        [
+          "create",
+          "--project",
+          "proj_test",
+          "--name",
+          "watcher",
+          "--in",
+          "30m",
+          "--script-file",
+          sourcePath,
+          "--timeout",
+          "600000",
+          "--json",
+        ],
+        {},
+      );
+      expect(created.exitCode).toBe(0);
+      const automation = JSON.parse(created.stdout ?? "");
+      await rm(automation.execution.storedScriptPath);
+
+      const renamed = await t.cli.run(
+        ["update", automation.id, "--project", "proj_test", "--name", "w2"],
+        {},
+      );
+      expect(renamed.exitCode).toBe(0);
+
+      const repairPath = join(t.srcDir, "repair");
+      await writeFile(repairPath, "print('v2')\n");
+      const repaired = await t.cli.run(
+        [
+          "update",
+          automation.id,
+          "--project",
+          "proj_test",
+          "--script-file",
+          repairPath,
+          "--json",
+        ],
+        {},
+      );
+      expect(repaired.exitCode).toBe(0);
+      const execution = JSON.parse(repaired.stdout ?? "").execution;
+      expect(execution).toMatchObject({
+        interpreter: "python3",
+        timeoutMs: 600_000,
+      });
+      await expect(readFile(execution.storedScriptPath, "utf8")).resolves.toBe(
+        "print('v2')\n",
+      );
+    } finally {
+      await t.cleanup();
+    }
+  });
+
+  it("patches a legacy inline script and a missing-prompt agent in place (T164)", async () => {
+    const t = await setup();
+    try {
+      const create = (args: string[]) =>
+        t.cli.run(
+          [
+            "create",
+            "--project",
+            "proj_test",
+            "--in",
+            "30m",
+            "--json",
+            ...args,
+          ],
+          {},
+        );
+      const script = JSON.parse(
+        (await create(["--name", "inline", "--script", "echo hi"])).stdout ??
+          "",
+      );
+      const agent = JSON.parse(
+        (
+          await create([
+            "--name",
+            "agent",
+            "--prompt",
+            "p",
+            "--provider",
+            "codex",
+            "--model",
+            "m",
+          ])
+        ).stdout ?? "",
+      );
+      const setExecution = t.db.prepare(
+        "UPDATE automations SET execution = ? WHERE id = ?",
+      );
+      setExecution.run(
+        JSON.stringify({
+          mode: "script",
+          script: "echo hi",
+          interpreter: "sh",
+          timeoutMs: 5000,
+          workingDirectory: { type: "project" },
+        }),
+        script.id,
+      );
+      const { storedScriptPath: _path, ...agentExecution } = agent.execution;
+      setExecution.run(
+        JSON.stringify({ ...agentExecution, prompt: "" }),
+        agent.id,
+      );
+
+      const retimed = await t.cli.run(
+        [
+          "update",
+          script.id,
+          "--project",
+          "proj_test",
+          "--timeout",
+          "9000",
+          "--working-directory",
+          "automation-storage",
+          "--json",
+        ],
+        {},
+      );
+      expect(retimed.exitCode).toBe(0);
+      expect(JSON.parse(retimed.stdout ?? "").execution).toMatchObject({
+        mode: "script",
+        interpreter: "sh",
+        timeoutMs: 9000,
+        workingDirectory: { type: "automation-storage" },
+      });
+
+      const prompted = await t.cli.run(
+        [
+          "update",
+          agent.id,
+          "--project",
+          "proj_test",
+          "--prompt",
+          "fixed",
+          "--provider",
+          "codex",
+          "--model",
+          "m2",
+          "--json",
+        ],
+        {},
+      );
+      expect(prompted.exitCode).toBe(0);
+      expect(JSON.parse(prompted.stdout ?? "").execution).toEqual({
+        ...agent.execution,
+        prompt: "fixed",
+        model: "m2",
+      });
+    } finally {
+      await t.cleanup();
+    }
+  });
+
+  it("drops the tier and adapts the permission mode when the provider changes (T164)", async () => {
+    const t = await setup();
+    try {
+      const created = await t.cli.run(
+        [
+          "create",
+          "--project",
+          "proj_test",
+          "--name",
+          "agent",
+          "--in",
+          "30m",
+          "--prompt",
+          "p",
+          "--provider",
+          "codex",
+          "--model",
+          "m",
+          "--reasoning",
+          "high",
+          "--permission-mode",
+          "accept-edits",
+          "--service-tier",
+          "fast",
+          "--json",
+        ],
+        {},
+      );
+      const { serviceTier: _tier, ...execution } = JSON.parse(
+        created.stdout ?? "",
+      ).execution;
+      const switched = await t.cli.run(
+        [
+          "update",
+          JSON.parse(created.stdout ?? "").id,
+          "--project",
+          "proj_test",
+          "--provider",
+          "pi",
+          "--model",
+          "pm",
+          "--json",
+        ],
+        {},
+      );
+      expect(switched.exitCode).toBe(0);
+      expect(JSON.parse(switched.stdout ?? "").execution).toEqual({
+        ...execution,
+        providerId: "pi",
+        model: "pm",
+        permissionMode: "full",
+      });
+    } finally {
+      await t.cleanup();
+    }
+  });
+
+  it("switches an agent automation to a script with defaults, and refuses mixed flags (T164)", async () => {
+    const t = await setup();
+    const sourcePath = join(t.srcDir, "job.sh");
+    await writeFile(sourcePath, "echo hi\n");
+    try {
+      const created = await t.cli.run(
+        [
+          "create",
+          "--project",
+          "proj_test",
+          "--name",
+          "agent",
+          "--in",
+          "30m",
+          "--prompt",
+          "p",
+          "--provider",
+          "codex",
+          "--model",
+          "m",
+          "--json",
+        ],
+        {},
+      );
+      const id = JSON.parse(created.stdout ?? "").id;
+      const mixed = await t.cli.run(
+        [
+          "update",
+          id,
+          "--project",
+          "proj_test",
+          "--model",
+          "x",
+          "--timeout",
+          "9000",
+        ],
+        {},
+      );
+      expect(mixed.exitCode).not.toBe(0);
+      expect(mixed.stderr).toContain("not both");
+
+      const timeoutOnly = await t.cli.run(
+        ["update", id, "--project", "proj_test", "--timeout", "9000"],
+        {},
+      );
+      expect(timeoutOnly.exitCode).not.toBe(0);
+
+      const switched = await t.cli.run(
+        [
+          "update",
+          id,
+          "--project",
+          "proj_test",
+          "--script-file",
+          sourcePath,
+          "--json",
+        ],
+        {},
+      );
+      expect(switched.exitCode).toBe(0);
+      expect(JSON.parse(switched.stdout ?? "").execution).toMatchObject({
+        mode: "script",
+        interpreter: "bash",
+        timeoutMs: 120_000,
+      });
     } finally {
       await t.cleanup();
     }

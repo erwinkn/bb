@@ -23,6 +23,7 @@ import type {
   PermissionMode,
   ReasoningLevel,
   ResolvedCreateAutomationInput,
+  ScriptExecutionUpdate,
   UpdateAutomationInput,
 } from "./rpc-types.js";
 import {
@@ -718,13 +719,63 @@ async function buildExecution(
   };
 }
 
-const COMPLETE_EXECUTION_OPTION_NAMES = [
+const SCRIPT_UPDATE_OPTION_NAMES = [
   "script",
   "script-file",
   "interpreter",
   "timeout",
   "env-json",
+  "working-directory",
 ] as const;
+
+async function buildScriptExecutionUpdate(
+  bb: Pick<BbPluginApi, "sdk">,
+  options: ExecutionOptionValues,
+  ctx: Pick<PluginCliContext, "cwd" | "threadId">,
+): Promise<
+  { update: ScriptExecutionUpdate; scriptSource?: ScriptFileSource } | undefined
+> {
+  if (!SCRIPT_UPDATE_OPTION_NAMES.some((name) => options[name] !== undefined)) {
+    return undefined;
+  }
+  if (options.script !== undefined && options["script-file"] !== undefined) {
+    throw cliError(
+      "Provide exactly one of --script or --script-file.",
+      "unexpected_argument",
+    );
+  }
+  const scriptSource = await loadScriptFileSource(bb, options, ctx);
+  const content = scriptSource ? scriptSource.content : options.script;
+  if (content === "")
+    throw cliError("Missing script content.", "invalid_value");
+  const interpreter =
+    options.interpreter ??
+    (scriptSource ? interpreterForPath(scriptSource.path) : undefined);
+  const env = parseScriptEnv(options["env-json"]);
+  const workingDirectory = options["working-directory"];
+  const update: ScriptExecutionUpdate = {
+    ...(content !== undefined ? { script: content } : {}),
+    ...(scriptSource ? { scriptFile: scriptSource.path } : {}),
+    ...(interpreter ? { interpreter } : {}),
+    ...(options.timeout !== undefined ? { timeoutMs: options.timeout } : {}),
+    ...(env ? { env } : {}),
+    ...(workingDirectory !== undefined
+      ? { workingDirectory: parseScriptWorkingDirectory(workingDirectory) }
+      : {}),
+  };
+  return { update, ...(scriptSource ? { scriptSource } : {}) };
+}
+
+function storedExecutionMode(
+  service: Pick<AutomationService, "list">,
+  projectId: string,
+  automationId: string,
+): "agent" | "script" | undefined {
+  const stored = service
+    .list({ projectId })
+    .find((automation) => automation.id === automationId);
+  return stored && "execution" in stored ? stored.execution.mode : undefined;
+}
 
 async function buildAgentExecutionUpdate(
   bb: Pick<BbPluginApi, "sdk">,
@@ -787,6 +838,7 @@ async function buildAgentExecutionUpdate(
 
 async function buildUpdateRequest(
   bb: Pick<BbPluginApi, "sdk">,
+  service: Pick<AutomationService, "list">,
   options: UpdateOptionValues,
   automationId: string,
   ctx: Pick<PluginCliContext, "cwd" | "projectId" | "threadId">,
@@ -805,39 +857,26 @@ async function buildUpdateRequest(
   ) {
     request.trigger = buildTrigger(options);
   }
-  let scriptSource: ScriptFileSource | undefined;
-  const replacesAgentExecution =
-    options.prompt !== undefined &&
-    options.provider !== undefined &&
-    options.model !== undefined;
-  if (
-    replacesAgentExecution ||
-    COMPLETE_EXECUTION_OPTION_NAMES.some((name) => options[name] !== undefined)
-  ) {
-    const built = await buildExecution(bb, options, ctx);
-    request.execution = built.execution;
-    scriptSource = built.scriptSource;
-  } else {
-    const agentUpdate = await buildAgentExecutionUpdate(bb, options);
-    if (agentUpdate !== undefined) {
-      request.agent = agentUpdate;
-    }
-  }
-  const workingDirectoryOption = options["working-directory"];
-  if (request.agent !== undefined && workingDirectoryOption !== undefined) {
+  const scriptUpdate = await buildScriptExecutionUpdate(bb, options, ctx);
+  const agentUpdate = await buildAgentExecutionUpdate(bb, options);
+  if (scriptUpdate !== undefined && agentUpdate !== undefined) {
     throw cliError(
-      "Cannot combine agent execution flags with --working-directory.",
+      "Provide either agent flags (--prompt, --provider, ...) or script flags (--script, --timeout, --working-directory, ...), not both.",
       "unexpected_argument",
     );
   }
-  if (
-    request.execution === undefined &&
-    request.agent === undefined &&
-    workingDirectoryOption !== undefined
-  ) {
-    request.script = {
-      workingDirectory: parseScriptWorkingDirectory(workingDirectoryOption),
-    };
+  if (scriptUpdate !== undefined) request.script = scriptUpdate.update;
+  if (agentUpdate !== undefined) {
+    const replacesExecution =
+      options.prompt !== undefined &&
+      options.provider !== undefined &&
+      options.model !== undefined &&
+      storedExecutionMode(service, projectId, automationId) !== "agent";
+    if (replacesExecution) {
+      request.execution = (await buildExecution(bb, options, ctx)).execution;
+    } else {
+      request.agent = agentUpdate;
+    }
   }
   if (
     request.name === undefined &&
@@ -851,7 +890,12 @@ async function buildUpdateRequest(
       "missing_required",
     );
   }
-  return { request, ...(scriptSource ? { scriptSource } : {}) };
+  return {
+    request,
+    ...(scriptUpdate?.scriptSource
+      ? { scriptSource: scriptUpdate.scriptSource }
+      : {}),
+  };
 }
 
 function formatTimestamp(value: number | null): string {
@@ -1159,7 +1203,7 @@ export function registerAutomationCli(args: {
         update: cliCommand({
           summary: "Update automation configuration",
           description:
-            "Replace the execution with a complete agent (--prompt --provider --model) or script (--script/--script-file), or patch an existing agent with any subset of its flags.",
+            "Patch the automation: flags you omit keep their stored value. A new --provider drops the old service tier and keeps the permission mode only if the new provider supports it. To switch modes, give a script automation --prompt --provider --model, or an agent one --script/--script-file.",
           positionals: [AUTOMATION_ID_POSITIONAL],
           options: {
             project: PROJECT_OPTION,
@@ -1182,6 +1226,7 @@ export function registerAutomationCli(args: {
             attempt(async () => {
               const { request, scriptSource } = await buildUpdateRequest(
                 bb,
+                service,
                 input.options,
                 input.positionals.automationId,
                 ctx,
