@@ -105,6 +105,7 @@ done
 step "Sanitize the copy"
 run_sh "sqlite3 '$D/data/bb.db' <<'SQL'
 DELETE FROM plugin_kv WHERE plugin_id IN ('connect','push-notifications','account-pool','account-pool-local','executor');
+DELETE FROM environment_variables; -- encrypted with data/machine-environment-key, which the copy does not get
 UPDATE plugins SET enabled=0 WHERE id IN ('connect','push-notifications','provider-codex','provider-claude-code',
   'provider-pi','provider-acp','automations','scheduled-send','provider-retry','account-pool');
 UPDATE plugins SET source=replace(source,':/',':$D/src/'), root_dir='$D/src'||root_dir,
