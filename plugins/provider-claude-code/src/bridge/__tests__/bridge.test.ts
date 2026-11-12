@@ -2,6 +2,7 @@ import {
   chmodSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   readlinkSync,
   rmSync,
@@ -115,10 +116,12 @@ interface ClaudeQueryCallOptions {
   hooks?: BridgeSessionHooks;
   model?: string;
   permissionMode?: ClaudePermissionMode;
+  plugins?: { type: string; path: string }[];
   resume?: string;
   sandbox?: BridgeSessionOptions["sandbox"];
   sessionId?: string;
   settingSources?: string[];
+  settings?: Record<string, unknown>;
   stderr?: (data: string) => void;
 }
 
@@ -5746,6 +5749,221 @@ describe("canonical model context-window hint", () => {
       await bridge.flushWork();
       queries[1]?.finish();
       await bridge.waitForResponse(3);
+    } finally {
+      queries.forEach((query) => query.finish());
+      bridge.restore();
+    }
+  });
+
+  it("applies the thread's BB_CLAUDE_CODE_SETTINGS under bb's own, hiding bb's skills too", async () => {
+    const bridge = createBridgeJsonRpcTestHarness(handleLine);
+    const queries: ControlledClaudeQuery[] = [];
+    queryMock.mockImplementation(() => {
+      const query = createControlledClaudeQuery();
+      queries.push(query);
+      return query;
+    });
+    const stagedRoot = mkdtempSync(join(tmpdir(), "bb-claude-skill-roots-"));
+    const root = join(stagedRoot, "skills");
+    const secondRoot = join(stagedRoot, "more-skills");
+    for (const [dir, skill] of [[root, "hidden"], [root, "kept"], [secondRoot, "hidden"]] as const) {
+      mkdirSync(join(dir, skill), { recursive: true });
+      writeFileSync(join(dir, skill, "SKILL.md"), `---\nname: ${skill}\n---\n`);
+    }
+    const threadSettings = {
+      permissions: { deny: ["Workflow", "ScheduleWakeup"] },
+      skillOverrides: {
+        dataviz: "user-invocable-only",
+        "bb-global-skills:hidden": "off",
+        "bb-global-skills:kept": "name-only",
+      },
+    };
+
+    try {
+      bridge.sendRequest(1, "skills/configure", {
+        roots: [
+          { id: "root", path: root, skills: [] },
+          { id: "second", path: secondRoot, skills: [] },
+        ],
+      });
+      await bridge.waitForResponse(1);
+      const threadId = "thread-settings-env";
+      bridge.sendRequest(2, "thread/start", {
+        threadId,
+        cwd: "/tmp/worktree",
+        instructionMode: "append",
+        options: {
+          ...canonicalOptions,
+          envVars: { BB_CLAUDE_CODE_SETTINGS: JSON.stringify(threadSettings) },
+          providerOptions: { workflowsEnabled: true },
+        },
+      });
+      const providerThreadId = getProviderThreadIdFromResult(
+        await bridge.waitForResponse(2),
+      );
+
+      const started = getLatestQueryOptions();
+      expect(started.settings).toMatchObject({
+        permissions: threadSettings.permissions,
+        skillOverrides: threadSettings.skillOverrides,
+        enableWorkflows: true,
+      });
+      expect(started.env).not.toHaveProperty("BB_CLAUDE_CODE_SETTINGS");
+      // A second root's plugin is named bb-global-skills-<hash>: it hides the skill too.
+      const [trimmed, second] = started.plugins ?? [];
+      expect(readdirSync(join(trimmed!.path, "skills"))).toEqual(["kept"]);
+      expect(readdirSync(join(second!.path, "skills"))).toEqual([]);
+
+      bridge.sendRequest(3, "turn/start", {
+        threadId,
+        providerThreadId,
+        clientRequestId: "creq_23456789ab",
+        input: [{ type: "text", text: "continue", mentions: [] }],
+        options: {
+          ...canonicalOptions,
+          envVars: {
+            BB_CLAUDE_CODE_SETTINGS: JSON.stringify({ ...threadSettings, hooks: {} }),
+          },
+        },
+      });
+      await bridge.flushWork();
+
+      // A value setting anything but deny rules and skillOverrides counts as
+      // none: the rebuilt session has every skill again.
+      expect(queries).toHaveLength(2);
+      const rebuilt = getLatestQueryOptions();
+      expect(rebuilt.settings).not.toHaveProperty("permissions");
+      expect(rebuilt.settings).not.toHaveProperty("skillOverrides");
+      const [full] = rebuilt.plugins ?? [];
+      expect(readlinkSync(join(full!.path, "skills"))).toBe(root);
+      await expect(readNextPromptText(getLatestQueryCall())).resolves.toBe(
+        "continue",
+      );
+      await bridge.waitForResponse(3);
+
+      bridge.sendRequest(4, "thread/stop", {
+        threadId,
+        providerThreadId,
+        intent: "interrupt",
+        activeTurnId: null,
+      });
+      await bridge.flushWork();
+      queries[1]?.finish();
+      await bridge.waitForResponse(4);
+    } finally {
+      bridge.sendRequest(99, "skills/configure", { roots: [] });
+      queries.forEach((query) => query.finish());
+      bridge.restore();
+      rmSync(stagedRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps Workflow in a trimmed session only under ultracode, rebuilding when it flips", async () => {
+    const bridge = createBridgeJsonRpcTestHarness(handleLine);
+    const queries: ControlledClaudeQuery[] = [];
+    queryMock.mockImplementation(() => {
+      const query = createControlledClaudeQuery();
+      queries.push(query);
+      return query;
+    });
+    const threadSettings = JSON.stringify({
+      permissions: { deny: ["Workflow", "Workflow(review)", "ScheduleWakeup"] },
+      skillOverrides: { "workflow-authoring": "user-invocable-only", dataviz: "off" },
+    });
+    const turn = (id: number, reasoningLevel: string, settings = threadSettings) =>
+      bridge.sendRequest(id, "turn/start", {
+        threadId,
+        providerThreadId,
+        clientRequestId: `creq_2345678${id}ab`,
+        input: [{ type: "text", text: `turn ${id}`, mentions: [] }],
+        options: {
+          ...canonicalOptions,
+          reasoningLevel,
+          envVars: { BB_CLAUDE_CODE_SETTINGS: settings },
+          providerOptions: { workflowsEnabled: true },
+        },
+      });
+    const threadId = "thread-settings-ultracode";
+    let providerThreadId = "";
+
+    try {
+      bridge.sendRequest(1, "thread/start", {
+        threadId,
+        cwd: "/tmp/worktree",
+        instructionMode: "append",
+        options: {
+          ...canonicalOptions,
+          reasoningLevel: "high",
+          envVars: { BB_CLAUDE_CODE_SETTINGS: threadSettings },
+          providerOptions: { workflowsEnabled: true },
+        },
+      });
+      providerThreadId = getProviderThreadIdFromResult(
+        await bridge.waitForResponse(1),
+      );
+      expect(getLatestQueryOptions().settings).toMatchObject({
+        permissions: { deny: ["Workflow", "Workflow(review)", "ScheduleWakeup"] },
+        skillOverrides: { "workflow-authoring": "user-invocable-only", dataviz: "off" },
+        ultracode: false,
+      });
+
+      turn(2, "ultracode");
+      await bridge.flushWork();
+      expect(queries).toHaveLength(2);
+      expect(getLatestQueryOptions().settings).toMatchObject({
+        permissions: { deny: ["ScheduleWakeup"] },
+        skillOverrides: { dataviz: "off" },
+        ultracode: true,
+      });
+      expect(getLatestQueryOptions().settings?.skillOverrides).not.toHaveProperty(
+        "workflow-authoring",
+      );
+      await readNextPromptText(getLatestQueryCall());
+      await bridge.waitForResponse(2);
+
+      // A live effort change within ultracode keeps the session and its trim.
+      turn(3, "ultracode");
+      await bridge.flushWork();
+      expect(queries).toHaveLength(2);
+      await readNextPromptText(getLatestQueryCall());
+      await bridge.waitForResponse(3);
+
+      // Reattaching without a reasoning level keeps ultracode live, matching
+      // the session's tools.
+      bridge.sendRequest(30, "thread/resume", {
+        threadId,
+        providerThreadId,
+        cwd: "/tmp/worktree",
+        instructionMode: "append",
+        options: {
+          ...canonicalOptions,
+          envVars: { BB_CLAUDE_CODE_SETTINGS: threadSettings },
+          providerOptions: { workflowsEnabled: true },
+        },
+      });
+      await bridge.waitForResponse(30);
+      expect(queries).toHaveLength(2);
+      expect(queries[1]?.applyFlagSettings).toHaveBeenLastCalledWith(
+        expect.objectContaining({ ultracode: true }),
+      );
+
+      turn(4, "xhigh");
+      await bridge.flushWork();
+      expect(queries).toHaveLength(3);
+      expect(getLatestQueryOptions().settings).toMatchObject({
+        permissions: { deny: ["Workflow", "Workflow(review)", "ScheduleWakeup"] },
+        ultracode: false,
+      });
+      await readNextPromptText(getLatestQueryCall());
+      await bridge.waitForResponse(4);
+
+      // A value that is not JSON counts as none.
+      turn(5, "xhigh", "{not json");
+      await bridge.flushWork();
+      expect(queries).toHaveLength(4);
+      expect(getLatestQueryOptions().settings).not.toHaveProperty("permissions");
+      await readNextPromptText(getLatestQueryCall());
+      await bridge.waitForResponse(5);
     } finally {
       queries.forEach((query) => query.finish());
       bridge.restore();

@@ -1,6 +1,7 @@
 import {
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   readlinkSync,
   rmSync,
@@ -13,6 +14,7 @@ import {
   CLAUDE_SKILL_PLUGIN_NAME,
   createClaudeSkillPluginsRoot,
   ensureClaudeSkillPlugin,
+  withoutHiddenSkills,
 } from "../skill-plugins.js";
 
 describe("claude skill plugins", () => {
@@ -102,5 +104,33 @@ describe("claude skill plugins", () => {
     });
     expect(nameOf(a)).toBe(CLAUDE_SKILL_PLUGIN_NAME);
     expect(nameOf(b)).toMatch(/^bb-global-skills-[0-9a-f]{8}$/u);
+  });
+
+  it("copies a plugin without its hidden skills, keeping it current", () => {
+    const pluginsRoot = createClaudeSkillPluginsRoot(baseDir);
+    const root = stageSkills("filtered");
+    for (const skill of ["hidden", "later"]) {
+      mkdirSync(join(root, skill));
+    }
+    const pluginPath = ensureClaudeSkillPlugin({
+      pluginsRoot,
+      root: { id: "r", path: root },
+    });
+    const hide = (...skills: string[]) => new Set(skills);
+
+    expect(withoutHiddenSkills(pluginPath, hide("absent"))).toBe(pluginPath);
+    const filtered = withoutHiddenSkills(pluginPath, hide("hidden", "absent"));
+    expect(filtered).not.toBe(pluginPath);
+    expect(readdirSync(join(filtered, "skills")).sort()).toEqual(["demo", "later"]);
+    expect(readlinkSync(join(filtered, "skills", "demo"))).toBe(join(root, "demo"));
+    expect(
+      readFileSync(join(filtered, ".claude-plugin", "plugin.json"), "utf8"),
+    ).toBe(readFileSync(join(pluginPath, ".claude-plugin", "plugin.json"), "utf8"));
+
+    // Same hidden set, same copy; it follows the root as skills come and go.
+    rmSync(join(root, "later"), { recursive: true });
+    mkdirSync(join(root, "added"));
+    expect(withoutHiddenSkills(pluginPath, hide("hidden"))).toBe(filtered);
+    expect(readdirSync(join(filtered, "skills")).sort()).toEqual(["added", "demo"]);
   });
 });

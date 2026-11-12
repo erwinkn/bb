@@ -7,6 +7,7 @@ import {
   type Query,
   type SDKMessage,
   type SDKUserMessage,
+  type Settings,
   type SpawnedProcess,
   type SpawnOptions,
 } from "@anthropic-ai/claude-agent-sdk";
@@ -40,6 +41,8 @@ export interface SdkSessionOptions {
   plugins?: Options["plugins"];
   thinking?: Options["thinking"];
   settings?: Options["settings"];
+  /** Settings the thread's provider environment adds under `settings` (BB_CLAUDE_CODE_SETTINGS). */
+  threadSettings?: Settings;
   extraArgs?: Options["extraArgs"];
   recordThreadId?: () => string;
 }
@@ -316,7 +319,7 @@ export class SdkSession {
         : {}),
       ...(this.options.plugins ? { plugins: this.options.plugins } : {}),
       ...(this.options.thinking ? { thinking: this.options.thinking } : {}),
-      ...(this.options.settings ? { settings: this.options.settings } : {}),
+      ...withThreadSettings(this.options),
       extraArgs: {
         ...this.options.extraArgs,
         "replay-user-messages": null,
@@ -539,4 +542,40 @@ export class SdkSession {
       this.sessionId = providerThreadId;
     }
   }
+}
+
+// bb's own flag settings win over the thread's: they share one `--settings` layer.
+// An ultracode session runs on workflows, so the thread's settings never take
+// away its Workflow tool or the skill that teaches it. That skill is Claude
+// Code's bundled `workflow-authoring`: an override of a BB-injected skill of the
+// same name (`<plugin>:workflow-authoring`) would still hide it under ultracode.
+function withThreadSettings(
+  options: Pick<SdkSessionOptions, "settings" | "threadSettings">,
+): Pick<Options, "settings"> {
+  const { settings, threadSettings } = options;
+  if (threadSettings === undefined || typeof settings === "string") {
+    return settings ? { settings } : {};
+  }
+  const thread =
+    settings?.ultracode === true ? keepingWorkflows(threadSettings) : threadSettings;
+  return { settings: { ...thread, ...settings } };
+}
+
+function keepingWorkflows(threadSettings: Settings): Settings {
+  const { permissions, skillOverrides, ...rest } = threadSettings;
+  const { "workflow-authoring": _skill, ...overrides } = skillOverrides ?? {};
+  return {
+    ...rest,
+    ...(permissions
+      ? {
+          permissions: {
+            ...permissions,
+            deny: permissions.deny?.filter(
+              (rule) => rule !== "Workflow" && !rule.startsWith("Workflow("),
+            ),
+          },
+        }
+      : {}),
+    ...(skillOverrides ? { skillOverrides: overrides } : {}),
+  };
 }

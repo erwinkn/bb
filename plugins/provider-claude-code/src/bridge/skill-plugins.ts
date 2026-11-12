@@ -1,9 +1,13 @@
 import { createHash } from "node:crypto";
 import {
+  copyFileSync,
   lstatSync,
   mkdirSync,
   mkdtempSync,
+  readFileSync,
+  readdirSync,
   readlinkSync,
+  realpathSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -48,6 +52,22 @@ function pluginNameFor(
   return `${CLAUDE_SKILL_PLUGIN_NAME}-${directory.slice(0, 8)}`;
 }
 
+function readFileIfAny(path: string): string | null {
+  try {
+    return readFileSync(path, "utf8");
+  } catch {
+    return null;
+  }
+}
+
+function readLink(path: string): string | null {
+  try {
+    return lstatSync(path).isSymbolicLink() ? readlinkSync(path) : "";
+  } catch {
+    return null;
+  }
+}
+
 export function ensureClaudeSkillPlugin(args: {
   pluginsRoot: string;
   root: ClaudeSkillPluginRoot;
@@ -73,19 +93,60 @@ export function ensureClaudeSkillPlugin(args: {
     "utf8",
   );
   const skillsLink = join(pluginPath, "skills");
-  let current: string | null = null;
-  try {
-    current = lstatSync(skillsLink).isSymbolicLink()
-      ? readlinkSync(skillsLink)
-      : "";
-  } catch {
-    current = null;
-  }
-  if (current !== args.root.path) {
+  if (readLink(skillsLink) !== args.root.path) {
     rmSync(skillsLink, { recursive: true, force: true });
     symlinkSync(args.root.path, skillsLink, "dir");
   }
   return pluginPath;
+}
+
+/**
+ * The injected skill plugin at `pluginPath` without the skills named in
+ * `hidden`: a sibling copy whose skills link one by one, or the plugin itself
+ * when it hides none. Claude Code's skillOverrides setting only reaches its own
+ * skills, not a plugin's.
+ */
+export function withoutHiddenSkills(
+  pluginPath: string,
+  hidden: ReadonlySet<string>,
+): string {
+  const manifestPath = join(pluginPath, ".claude-plugin", "plugin.json");
+  const skillsPath = join(pluginPath, "skills");
+  const skills = readdirSync(skillsPath);
+  const dropped = skills.filter((skill) => hidden.has(skill));
+  if (dropped.length === 0) {
+    return pluginPath;
+  }
+  const filteredPath = `${pluginPath}-${createHash("sha256")
+    .update(dropped.sort().join("\0"))
+    .digest("hex")
+    .slice(0, 8)}`;
+  const filteredSkillsPath = join(filteredPath, "skills");
+  mkdirSync(join(filteredPath, ".claude-plugin"), { recursive: true });
+  mkdirSync(filteredSkillsPath, { recursive: true });
+  // A session starting from this copy may be reading it: write only what changed.
+  const filteredManifestPath = join(filteredPath, ".claude-plugin", "plugin.json");
+  if (readFileIfAny(filteredManifestPath) !== readFileSync(manifestPath, "utf8")) {
+    copyFileSync(manifestPath, filteredManifestPath);
+  }
+  const kept = new Map(
+    skills
+      .filter((skill) => !dropped.includes(skill))
+      .map((skill) => [skill, realpathSync(join(skillsPath, skill))]),
+  );
+  for (const entry of readdirSync(filteredSkillsPath)) {
+    if (!kept.has(entry)) {
+      rmSync(join(filteredSkillsPath, entry), { recursive: true, force: true });
+    }
+  }
+  for (const [skill, target] of kept) {
+    const link = join(filteredSkillsPath, skill);
+    if (readLink(link) !== target) {
+      rmSync(link, { recursive: true, force: true });
+      symlinkSync(target, link, "dir");
+    }
+  }
+  return filteredPath;
 }
 
 export function createClaudeSkillPluginsRoot(baseDir = tmpdir()): string {

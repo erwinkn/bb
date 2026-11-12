@@ -37,6 +37,7 @@ import {
   type HookCallback,
   type PermissionResult,
   type SDKMessage,
+  type Settings,
 } from "@anthropic-ai/claude-agent-sdk";
 import { z } from "zod";
 import {
@@ -99,7 +100,9 @@ import {
 } from "./session-options.js";
 import {
   createClaudeSkillPluginsRoot,
+  CLAUDE_SKILL_PLUGIN_NAME,
   ensureClaudeSkillPlugin,
+  withoutHiddenSkills,
 } from "./skill-plugins.js";
 import {
   buildBridgeMcpServer,
@@ -556,6 +559,34 @@ function applySandboxSetting(
   if (attachment.residentSession) {
     attachment.residentSession.restartBeforeNextTurn = {
       reason: CLAUDE_SANDBOX_SETTING_RESTART_REASON,
+      showRuntimeNote: false,
+    };
+  }
+}
+
+// A session the thread's settings trim keeps Workflow only under ultracode
+// (withThreadSettings), and its tool list is fixed at launch: crossing into or
+// out of ultracode rebuilds it before the turn.
+function applyUltracodeTrim(
+  attachment: ThreadAttachment,
+  reasoningLevel: ReasoningLevel | undefined,
+): void {
+  const { settings, threadSettings } = attachment.sessionOptions;
+  if (
+    reasoningLevel === undefined ||
+    threadSettings === undefined ||
+    typeof settings !== "object"
+  ) {
+    return;
+  }
+  const ultracode = reasoningLevel === "ultracode";
+  if ((settings.ultracode === true) === ultracode) {
+    return;
+  }
+  attachment.sessionOptions.settings = { ...settings, ultracode };
+  if (attachment.residentSession) {
+    attachment.residentSession.restartBeforeNextTurn = {
+      reason: "Ultracode changed; the Claude session was rebuilt to apply it.",
       showRuntimeNote: false,
     };
   }
@@ -1931,7 +1962,76 @@ function buildSessionEnv(
     CLAUDE_CODE_ENTRYPOINT: "cli",
   };
   delete sessionEnv.CLAUDE_AGENT_SDK_CLIENT_APP;
+  delete sessionEnv[THREAD_SETTINGS_ENV];
   return sessionEnv;
+}
+
+// A plugin's provider environment can trim one thread's session: deny rules
+// that drop tools, and skillOverrides that hide skills from the listing, as a
+// JSON object in BB_CLAUDE_CODE_SETTINGS. Nothing else passes: any other key
+// voids the value. They join the session's flag settings under bb's own, and
+// the skills they hide as `bb-global-skills:<skill>` also leave bb's injected
+// skill plugins, which skillOverrides does not reach. The env applies at
+// session start and when a turn's env changes; a turn that carries no env at
+// all keeps the session as it is.
+const THREAD_SETTINGS_ENV = "BB_CLAUDE_CODE_SETTINGS";
+
+const threadSettingsSchema = z
+  .object({
+    permissions: z.object({ deny: z.array(z.string()) }).strict().optional(),
+    skillOverrides: z
+      .record(z.string(), z.enum(["on", "name-only", "user-invocable-only", "off"]))
+      .optional(),
+  })
+  .strict();
+
+function applyThreadSettings(
+  sessionOptions: SdkSessionOptions,
+  plugins: SdkSessionOptions["plugins"],
+  envOverrides: Readonly<Record<string, string>>,
+): void {
+  const threadSettings = readThreadSettings(envOverrides);
+  sessionOptions.threadSettings = threadSettings;
+  const prefix = `${CLAUDE_SKILL_PLUGIN_NAME}:`;
+  const hidden = new Set(
+    Object.entries(threadSettings?.skillOverrides ?? {})
+      .filter(([name, mode]) => name.startsWith(prefix) && (mode === "off" || mode === "user-invocable-only"))
+      .map(([name]) => name.slice(prefix.length)),
+  );
+  sessionOptions.plugins = plugins?.map((plugin) => {
+    if (hidden.size === 0 || plugin.type !== "local") return plugin;
+    try {
+      return { ...plugin, path: withoutHiddenSkills(plugin.path, hidden) };
+    } catch (error) {
+      logBridgeError(
+        `kept every skill of ${plugin.path}: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      return plugin;
+    }
+  });
+}
+
+function readThreadSettings(
+  envOverrides: Readonly<Record<string, string>>,
+): Settings | undefined {
+  const raw = envOverrides[THREAD_SETTINGS_ENV];
+  if (raw === undefined) {
+    return undefined;
+  }
+  let value: unknown;
+  try {
+    value = JSON.parse(raw);
+  } catch {
+    value = undefined;
+  }
+  const parsed = threadSettingsSchema.safeParse(value);
+  if (parsed.success) {
+    return parsed.data;
+  }
+  logBridgeError(
+    `ignoring ${THREAD_SETTINGS_ENV}: only permissions.deny and skillOverrides may be set`,
+  );
+  return undefined;
 }
 
 const sessionConfigEnvVarsSchema = z.record(z.string(), z.string());
@@ -1966,6 +2066,11 @@ function applyTurnEnvironment(
     ...attachment.sessionConstructionConfig,
     config,
   };
+  applyThreadSettings(
+    attachment.sessionOptions,
+    attachment.sessionConstructionConfig.sessionOptions.plugins,
+    envOverrides,
+  );
   attachment.sessionOptions.env = {
     ...buildSessionEnv(envOverrides),
     CLAUDE_CODE_DISABLE_1M_CONTEXT: attachment.sessionConstructionConfig
@@ -2558,8 +2663,10 @@ function attachThreadSession(
   resume: boolean,
 ): void {
   const threadIdRef = { current: params.threadId };
-  const env = buildSessionEnv(readConfigEnvOverrides(params.config));
+  const envOverrides = readConfigEnvOverrides(params.config);
+  const env = buildSessionEnv(envOverrides);
   const sessionOptions = buildTrackedSessionOptions(params, env, threadIdRef);
+  applyThreadSettings(sessionOptions, params.plugins, envOverrides);
   if (!resume) {
     sessionOptions.sessionId = providerThreadId;
   }
@@ -2629,7 +2736,16 @@ async function handleThreadResume(
       sessionConstructionConfig,
     )
   ) {
-    const liveSettings = toInitialLiveSessionSettings(params);
+    // A resume without a reasoning level keeps the session's, as a turn does:
+    // otherwise ultracode would turn off live while the session keeps Workflow.
+    const initial = toInitialLiveSessionSettings(params);
+    const reasoningLevel =
+      initial.reasoningLevel ?? existing.liveSettings.reasoningLevel;
+    const liveSettings = {
+      ...initial,
+      ...(reasoningLevel !== undefined ? { reasoningLevel } : {}),
+    };
+    applyUltracodeTrim(existing, liveSettings.reasoningLevel);
     if (existingSession) {
       await applyLiveSessionSettings(
         existingSession,
@@ -2763,6 +2879,11 @@ async function deliverTurnInput(
     applyContextWindowSetting(attachment, params.disable1MContext);
     applySandboxSetting(attachment, params.sandboxEnabled);
     applyPermissionSetting(attachment, params);
+    // A trimmed session's tool list changes only between turns: a steer into
+    // or out of ultracode takes effect, with its rebuild, on the next new turn.
+    if (intent === "new-turn") {
+      applyUltracodeTrim(attachment, params.reasoningLevel);
+    }
   }
 
   const threadSession = bound
