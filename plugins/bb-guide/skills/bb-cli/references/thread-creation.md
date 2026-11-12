@@ -173,12 +173,9 @@ environment pull-request show <id>`. Diff commands require an explicit target
 - Use `--parent-self` inside a thread to parent the new thread to the current
   thread.
 - Use `--parent-thread <thread-id>` to choose another specific parent.
-- Pass `--final-reports-only` (`--parent-notices explicit`) when the child
-  should report by sending its parent a message: its turn ends (completed,
-  failed or interrupted) then never notify the parent, while needs-input
-  notices still do. Change it later with
-  `bb thread update <id> --parent-notices turns|explicit`; `bb thread show`
-  prints the mode.
+- Every turn end of the child (completed, failed or interrupted) notifies the
+  parent; the CLI has no option to silence it. `bb thread show` prints the
+  mode (`Parent notices`).
 - A parent can live in a different project. Pass `--project <other-id>` with
   `--parent-self` to delegate work in another repository; the child still
   reports back to its parent and inherits its permission mode by default, adapted

@@ -508,6 +508,23 @@ describe("bb thread spawn command output", () => {
     expect(helpOutput).not.toContain("bb curl");
   });
 
+  it.each(["--final-reports-only", "--parent-notices"])(
+    "bb thread spawn and update no longer accept %s",
+    async (flag) => {
+      for (const command of ["spawn", "update"]) {
+        expect(
+          await getHelpOutput(["thread", command], register),
+        ).not.toContain(flag);
+      }
+      await expect(
+        runCommand(
+          ["thread", "spawn", "--project", "proj-1", "--prompt", "hi", flag],
+          register,
+        ),
+      ).rejects.toThrow("process.exit:1");
+    },
+  );
+
   it("bb thread spawn reports invalid permission mode choices", async () => {
     vi.stubEnv("BB_PROJECT_ID", "proj-1");
 
