@@ -738,6 +738,7 @@ interface RunBundledCliCommandArgs {
   args: string[];
   context: BbAppStartContext;
   env: NodeJS.ProcessEnv;
+  launcherPath?: string;
 }
 
 interface AssertConfiguredServerBindHostArgs {
@@ -2696,10 +2697,42 @@ export function resolveBundledCliLaunch(args: ResolveBundledCliLaunchArgs): {
     : { command: args.cliPath, args: args.args };
 }
 
+const BB_CLI_REEXEC_ENV = "BB_CLI_REEXEC";
+
+function tryRealpath(path: string): string | null {
+  try {
+    return realpathSync(resolve(path));
+  } catch {
+    return null;
+  }
+}
+
+export function resolveBbCliOverride(args: {
+  env: NodeJS.ProcessEnv;
+  launcherPath?: string;
+}): string | undefined {
+  const override = toOptionalString(args.env.BB_CLI);
+  if (override === undefined || args.env[BB_CLI_REEXEC_ENV] === "1") {
+    return undefined;
+  }
+  if (args.launcherPath !== undefined) {
+    const launcher = tryRealpath(args.launcherPath);
+    if (launcher !== null && tryRealpath(override) === launcher) {
+      return undefined;
+    }
+  }
+  return override;
+}
+
 export async function runBundledCliCommand(
   args: RunBundledCliCommandArgs,
 ): Promise<number> {
-  const bbCliOverride = toOptionalString(args.env.BB_CLI);
+  const bbCliOverride = resolveBbCliOverride({
+    env: args.env,
+    ...(args.launcherPath !== undefined
+      ? { launcherPath: args.launcherPath }
+      : {}),
+  });
   const cliPath = bbCliOverride ?? join(args.context.daemonBundleDir, "bb");
   const launch = resolveBundledCliLaunch({
     args: args.args,
@@ -2707,9 +2740,13 @@ export async function runBundledCliCommand(
     nodePath: process.execPath,
     platform: process.platform,
   });
+  const cliEnv = createCliEnv({ context: args.context, env: args.env });
+  if (bbCliOverride !== undefined) {
+    cliEnv[BB_CLI_REEXEC_ENV] = "1";
+  }
   const childProcess = spawn(launch.command, launch.args, {
     cwd: process.cwd(),
-    env: createCliEnv({ context: args.context, env: args.env }),
+    env: cliEnv,
     stdio: "inherit",
   });
 
@@ -2731,6 +2768,7 @@ export async function runBbCli(
     args: cliArgs,
     context: runtime.context,
     env: runtime.env,
+    launcherPath: fileURLToPath(import.meta.url),
   });
 }
 
