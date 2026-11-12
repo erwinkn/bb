@@ -15,7 +15,7 @@ import {
 } from "@bb/domain";
 import { groupHostDaemonEvents } from "@bb/host-daemon-contract";
 import { threadResponseSchema } from "@bb/server-contract";
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   queueChildThreadNeedsAttentionNotificationBestEffort,
   queueChildThreadTurnNotificationBestEffort,
@@ -34,6 +34,14 @@ import {
   seedTurnStarted,
 } from "../helpers/seed.js";
 import { withTestHarness, type TestAppHarness } from "../helpers/test-app.js";
+import { listThreadsAwaitingBgjob as listUnits } from "../../src/services/threads/child-bgjobs.js";
+
+const listThreadsAwaitingBgjob = vi.mocked(listUnits);
+
+beforeEach(() => {
+  listThreadsAwaitingBgjob.mockReset();
+  listThreadsAwaitingBgjob.mockResolvedValue(new Set());
+});
 
 interface Family {
   child: ReturnType<typeof seedThread>;
@@ -109,12 +117,13 @@ async function endChildTurnThroughEvents(
   harness: TestAppHarness,
   family: Family,
   status: ThreadEventTurnStatus,
+  turnId = "child-turn",
 ) {
   seedTurnStarted(harness.deps, {
     environmentId: family.environmentId,
     providerThreadId: "child-provider-thread",
     threadId: family.child.id,
-    turnId: "child-turn",
+    turnId,
   });
   harness.db
     .update(threads)
@@ -145,7 +154,7 @@ async function endChildTurnThroughEvents(
             type: "turn/completed",
             threadId: family.child.id,
             providerThreadId: "child-provider-thread",
-            scope: turnScope("child-turn"),
+            scope: turnScope(turnId),
             status,
           },
         },
@@ -174,6 +183,164 @@ describe.each(["completed", "failed", "interrupted"] as const)(
     );
   },
 );
+
+describe("a child with a bgjob still running (W607)", () => {
+  it("holds its completed notice", async () => {
+    await withChildThreadNotificationClock(async (harness) => {
+      const family = seedFamily(harness);
+      listThreadsAwaitingBgjob.mockResolvedValue(new Set([family.child.id]));
+      await endChildTurnThroughEvents(harness, family, "completed");
+      expect(systemNoticesTo(harness, family.parent.id)).toEqual([]);
+    });
+  });
+
+  it.each(["failed", "interrupted"] as const)(
+    "still reports a %s turn",
+    async (status) => {
+      await withChildThreadNotificationClock(async (harness) => {
+        const family = seedFamily(harness);
+        listThreadsAwaitingBgjob.mockResolvedValue(new Set([family.child.id]));
+        await endChildTurnThroughEvents(harness, family, status);
+        expect(systemNoticesTo(harness, family.parent.id)).toEqual([
+          `child-${status}`,
+        ]);
+        expect(listThreadsAwaitingBgjob).not.toHaveBeenCalled();
+      });
+    },
+  );
+
+  it("delivers a batch queued while another waits on systemd", async () => {
+    await withChildThreadNotificationClock(async (harness) => {
+      const family = seedFamily(harness);
+      const sibling = seedThread(harness.deps, {
+        projectId: family.projectId,
+        environmentId: family.environmentId,
+        parentThreadId: family.parent.id,
+        status: "idle",
+        title: "Sibling",
+      });
+      let answerSystemd: (threadIds: Set<string>) => void = () => {};
+      listThreadsAwaitingBgjob.mockReturnValueOnce(
+        new Promise((resolve) => {
+          answerSystemd = resolve;
+        }),
+      );
+      await queueChildThreadTurnNotificationBestEffort(harness.deps, {
+        childThread: family.child,
+        parentThreadId: family.parent.id,
+        turnStatus: "completed",
+      });
+      await flushChildThreadNotifications();
+      expect(listThreadsAwaitingBgjob).toHaveBeenCalledOnce();
+
+      await queueChildThreadTurnNotificationBestEffort(harness.deps, {
+        childThread: sibling,
+        parentThreadId: family.parent.id,
+        turnStatus: "failed",
+        failureContext: "failed to start",
+      });
+      await flushChildThreadNotifications();
+      expect(systemNoticesTo(harness, family.parent.id)).toEqual([
+        "child-failed",
+      ]);
+
+      answerSystemd(new Set());
+      await flushChildThreadNotifications();
+      expect(systemNoticesTo(harness, family.parent.id).sort()).toEqual([
+        "child-completed",
+        "child-failed",
+      ]);
+    });
+  });
+
+  it("notifies when only another thread has a bgjob", async () => {
+    await withChildThreadNotificationClock(async (harness) => {
+      const family = seedFamily(harness);
+      listThreadsAwaitingBgjob.mockResolvedValue(new Set(["thr_other"]));
+      await endChildTurnThroughEvents(harness, family, "completed");
+      expect(systemNoticesTo(harness, family.parent.id)).toEqual([
+        "child-completed",
+      ]);
+    });
+  });
+
+  it("notifies when systemd can't be asked", async () => {
+    await withChildThreadNotificationClock(async (harness) => {
+      const family = seedFamily(harness);
+      listThreadsAwaitingBgjob.mockRejectedValue(new Error("no user manager"));
+      await endChildTurnThroughEvents(harness, family, "completed");
+      expect(systemNoticesTo(harness, family.parent.id)).toEqual([
+        "child-completed",
+      ]);
+    });
+  });
+
+  it("drops only the completed notice from a mixed batch", async () => {
+    await withChildThreadNotificationClock(async (harness) => {
+      const family = seedFamily(harness);
+      const sibling = seedThread(harness.deps, {
+        projectId: family.projectId,
+        environmentId: family.environmentId,
+        parentThreadId: family.parent.id,
+        status: "idle",
+        title: "Sibling",
+      });
+      listThreadsAwaitingBgjob.mockResolvedValue(new Set([family.child.id]));
+      await queueChildThreadTurnNotificationBestEffort(harness.deps, {
+        childThread: family.child,
+        parentThreadId: family.parent.id,
+        turnStatus: "completed",
+      });
+      await queueChildThreadTurnNotificationBestEffort(harness.deps, {
+        childThread: sibling,
+        parentThreadId: family.parent.id,
+        turnStatus: "failed",
+        failureContext: "failed to start",
+      });
+      await flushChildThreadNotifications();
+      expect(systemNoticesTo(harness, family.parent.id)).toEqual([
+        "child-failed",
+      ]);
+    });
+  });
+
+  it("notifies at the turn the job's exit wakes", async () => {
+    await withChildThreadNotificationClock(async (harness) => {
+      const family = seedFamily(harness);
+      listThreadsAwaitingBgjob.mockResolvedValue(new Set([family.child.id]));
+      await endChildTurnThroughEvents(harness, family, "completed");
+      expect(systemNoticesTo(harness, family.parent.id)).toEqual([]);
+
+      listThreadsAwaitingBgjob.mockResolvedValue(new Set());
+      const tell = await harness.app.request(
+        `/api/v1/threads/${family.child.id}/send`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            input: textInput("[bgjob] `pnpm test` exited 0 after 312s."),
+            mode: "queue-if-active",
+          }),
+        },
+      );
+      expect(tell.status).toBe(200);
+      const wakes = listEvents(harness.db, { threadId: family.child.id })
+        .filter((row) => row.type === "client/turn/requested")
+        .map((row) => turnRequestEventDataSchema.parse(JSON.parse(row.data)));
+      expect(wakes.length).toBeGreaterThan(0);
+
+      await endChildTurnThroughEvents(
+        harness,
+        family,
+        "completed",
+        "child-turn-after-bgjob",
+      );
+      expect(systemNoticesTo(harness, family.parent.id)).toEqual([
+        "child-completed",
+      ]);
+    });
+  });
+});
 
 describe("final reports only", () => {
   it("drops command-failure notices too", async () => {

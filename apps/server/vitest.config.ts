@@ -9,6 +9,7 @@ export default defineWorkspaceTestConfig({
     setupFiles: [
       "test/setup/stored-event-decode-freeze.ts",
       "test/setup/warm-test-harness.ts",
+      "test/setup/no-bgjob-units.ts",
     ],
     env: {
       BB_DATA_DIR: "/tmp/bb-server-test",

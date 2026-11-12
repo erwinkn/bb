@@ -24,6 +24,7 @@ import {
   childOutcomeSystemMessageKind,
   systemMessageKindForTemplate,
 } from "./system-message-kind.js";
+import { listThreadsAwaitingBgjob } from "./child-bgjobs.js";
 import { getLastThreadOutput } from "./thread-data.js";
 
 export type ChildThreadNotificationSource = ParentSystemThreadMentionSource;
@@ -389,6 +390,33 @@ function childThreadTurnNotificationLogMessage(
   }
 }
 
+async function withoutChildrenAwaitingBgjob(
+  deps: LoggedPendingInteractionWorkSessionDeps,
+  items: ChildThreadTurnNotificationBatchItem[],
+): Promise<ChildThreadTurnNotificationBatchItem[]> {
+  if (!items.some((item) => item.turnStatus === "completed")) {
+    return items;
+  }
+  let awaiting: Set<string>;
+  try {
+    awaiting = await listThreadsAwaitingBgjob();
+  } catch (error) {
+    deps.logger.debug({ err: error }, "Could not list bgjob units");
+    return items;
+  }
+  return items.filter((item) => {
+    const dropped =
+      item.turnStatus === "completed" && awaiting.has(item.childThread.id);
+    if (dropped) {
+      deps.logger.info(
+        { childThreadId: item.childThread.id },
+        "Dropped a child's completed notice: its bgjob's exit will wake it",
+      );
+    }
+    return !dropped;
+  });
+}
+
 async function flushChildThreadTurnNotificationBatch(
   deps: LoggedPendingInteractionWorkSessionDeps,
   parentThreadId: string,
@@ -400,12 +428,14 @@ async function flushChildThreadTurnNotificationBatch(
   childThreadTurnNotificationBatches.delete(parentThreadId);
 
   try {
+    const items = await withoutChildrenAwaitingBgjob(deps, batch.items);
+    if (items.length === 0) {
+      return;
+    }
     await queueParentSystemMessage(deps, {
-      input: buildChildThreadTurnStatusBatchInput({
-        items: batch.items,
-      }),
+      input: buildChildThreadTurnStatusBatchInput({ items }),
       parentThreadId,
-      ...childThreadTurnStatusBatchTaxonomy(batch.items),
+      ...childThreadTurnStatusBatchTaxonomy(items),
     });
   } catch (error) {
     deps.logger.error(
