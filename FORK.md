@@ -239,6 +239,25 @@ that ran `deploy`: agent processes live in thread scopes that stop with the
 service (on Linux, see the thread cgroups row above), the rest in the
 `bb-app.service` cgroup.
 
+Before a full restart, save the running threads; afterwards, retry each one.
+The restart ends each running turn as `interrupted` and leaves the thread in
+`error` ("Please retry the thread to continue."); nothing resumes it. A
+`turns`-mode parent gets an "interrupted" notice, queued until its own host is
+back:
+
+```bash
+bb thread list --all --include-hidden --json \
+  | jq -r '.[] | select(.status == "active") | .id' \
+  > ~/.local/share/bb-fork/running-before-restart.txt
+# ... full restart, wait for last-deploy-check.txt ...
+while read -r id; do bb thread retry "$id" --reason "bb-app full restart"; done \
+  < ~/.local/share/bb-fork/running-before-restart.txt
+```
+
+`status == "active"` is "a turn is running". Run the list command, as is, a few
+seconds before the restart: a thread that finished since is not retried by
+mistake, and `bb thread retry` refuses a thread with no failed turn.
+
 The launcher patches only work once the running launcher contains them. The
 first switch to a patched 0.45.0 build is always a full restart.
 

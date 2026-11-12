@@ -105,6 +105,8 @@ In practice:
 
 A full restart stops every running turn on the machine, including the
 coordinator's. Say so plainly in your report when your change needs one.
+The coordinator saves the running threads before a full restart and runs
+`bb thread retry` on each afterwards (FORK.md, "A full restart runs").
 
 ## Move to a new upstream release
 
