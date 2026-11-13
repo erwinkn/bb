@@ -1967,9 +1967,11 @@ function buildSessionEnv(
 }
 
 // A plugin's provider environment can trim one thread's session: deny rules
-// that drop tools, skillOverrides that hide skills from the listing, and
-// commands to run after a tool call (PostToolUse hooks), as a JSON object in
-// BB_CLAUDE_CODE_SETTINGS. Nothing else passes: any other key voids the value. They join the session's flag settings under bb's own, and
+// that drop tools, skillOverrides that hide skills from the listing,
+// deniedMcpServers that leave configured MCP servers out by name, and commands
+// to run after a tool call (PostToolUse hooks), as a JSON object in
+// BB_CLAUDE_CODE_SETTINGS. Nothing else passes: any other key voids the value.
+// They join the session's flag settings under bb's own, and
 // the skills they hide as `bb-global-skills:<skill>` also leave bb's injected
 // skill plugins, which skillOverrides does not reach. The env applies at
 // session start and when a turn's env changes; a turn that carries no env at
@@ -1981,6 +1983,9 @@ const threadSettingsSchema = z
     permissions: z.object({ deny: z.array(z.string()) }).strict().optional(),
     skillOverrides: z
       .record(z.string(), z.enum(["on", "name-only", "user-invocable-only", "off"]))
+      .optional(),
+    deniedMcpServers: z
+      .array(z.object({ serverName: z.string() }).strict())
       .optional(),
     hooks: z
       .object({
@@ -2050,7 +2055,7 @@ function readThreadSettings(
     return parsed.data;
   }
   logBridgeError(
-    `ignoring ${THREAD_SETTINGS_ENV}: only permissions.deny, skillOverrides and PostToolUse command hooks may be set`,
+    `ignoring ${THREAD_SETTINGS_ENV}: only permissions.deny, skillOverrides, deniedMcpServers and PostToolUse command hooks may be set`,
   );
   return undefined;
 }

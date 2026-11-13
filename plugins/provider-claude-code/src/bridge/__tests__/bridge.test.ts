@@ -5777,6 +5777,7 @@ describe("canonical model context-window hint", () => {
         "bb-global-skills:hidden": "off",
         "bb-global-skills:kept": "name-only",
       },
+      deniedMcpServers: [{ serverName: "axiom" }],
       hooks: {
         PostToolUse: [
           { matcher: "Read|Bash", hooks: [{ type: "command", command: "node /nudge.mjs", timeout: 5 }] },
@@ -5811,6 +5812,7 @@ describe("canonical model context-window hint", () => {
       expect(started.settings).toMatchObject({
         permissions: threadSettings.permissions,
         skillOverrides: threadSettings.skillOverrides,
+        deniedMcpServers: threadSettings.deniedMcpServers,
         hooks: threadSettings.hooks,
         enableWorkflows: true,
       });
@@ -5834,13 +5836,15 @@ describe("canonical model context-window hint", () => {
       });
       await bridge.flushWork();
 
-      // A value setting anything but deny rules, skillOverrides and PostToolUse
-      // command hooks counts as none: the rebuilt session has every skill again.
+      // A value setting anything but deny rules, skillOverrides,
+      // deniedMcpServers and PostToolUse command hooks counts as none: the
+      // rebuilt session has every skill and server again.
       expect(queries).toHaveLength(2);
       const rebuilt = getLatestQueryOptions();
       expect(rebuilt.settings).not.toHaveProperty("permissions");
       expect(rebuilt.settings).not.toHaveProperty("skillOverrides");
       expect(rebuilt.settings).not.toHaveProperty("hooks");
+      expect(rebuilt.settings).not.toHaveProperty("deniedMcpServers");
       const [full] = rebuilt.plugins ?? [];
       expect(readlinkSync(join(full!.path, "skills"))).toBe(root);
       await expect(readNextPromptText(getLatestQueryCall())).resolves.toBe(
