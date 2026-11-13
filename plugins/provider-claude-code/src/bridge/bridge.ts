@@ -1967,9 +1967,9 @@ function buildSessionEnv(
 }
 
 // A plugin's provider environment can trim one thread's session: deny rules
-// that drop tools, and skillOverrides that hide skills from the listing, as a
-// JSON object in BB_CLAUDE_CODE_SETTINGS. Nothing else passes: any other key
-// voids the value. They join the session's flag settings under bb's own, and
+// that drop tools, skillOverrides that hide skills from the listing, and
+// commands to run after a tool call (PostToolUse hooks), as a JSON object in
+// BB_CLAUDE_CODE_SETTINGS. Nothing else passes: any other key voids the value. They join the session's flag settings under bb's own, and
 // the skills they hide as `bb-global-skills:<skill>` also leave bb's injected
 // skill plugins, which skillOverrides does not reach. The env applies at
 // session start and when a turn's env changes; a turn that carries no env at
@@ -1981,6 +1981,27 @@ const threadSettingsSchema = z
     permissions: z.object({ deny: z.array(z.string()) }).strict().optional(),
     skillOverrides: z
       .record(z.string(), z.enum(["on", "name-only", "user-invocable-only", "off"]))
+      .optional(),
+    hooks: z
+      .object({
+        PostToolUse: z.array(
+          z
+            .object({
+              matcher: z.string().optional(),
+              hooks: z.array(
+                z
+                  .object({
+                    type: z.literal("command"),
+                    command: z.string(),
+                    timeout: z.number().positive().optional(),
+                  })
+                  .strict(),
+              ),
+            })
+            .strict(),
+        ),
+      })
+      .strict()
       .optional(),
   })
   .strict();
@@ -2029,7 +2050,7 @@ function readThreadSettings(
     return parsed.data;
   }
   logBridgeError(
-    `ignoring ${THREAD_SETTINGS_ENV}: only permissions.deny and skillOverrides may be set`,
+    `ignoring ${THREAD_SETTINGS_ENV}: only permissions.deny, skillOverrides and PostToolUse command hooks may be set`,
   );
   return undefined;
 }

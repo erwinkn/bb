@@ -5777,6 +5777,11 @@ describe("canonical model context-window hint", () => {
         "bb-global-skills:hidden": "off",
         "bb-global-skills:kept": "name-only",
       },
+      hooks: {
+        PostToolUse: [
+          { matcher: "Read|Bash", hooks: [{ type: "command", command: "node /nudge.mjs", timeout: 5 }] },
+        ],
+      },
     };
 
     try {
@@ -5806,6 +5811,7 @@ describe("canonical model context-window hint", () => {
       expect(started.settings).toMatchObject({
         permissions: threadSettings.permissions,
         skillOverrides: threadSettings.skillOverrides,
+        hooks: threadSettings.hooks,
         enableWorkflows: true,
       });
       expect(started.env).not.toHaveProperty("BB_CLAUDE_CODE_SETTINGS");
@@ -5822,18 +5828,19 @@ describe("canonical model context-window hint", () => {
         options: {
           ...canonicalOptions,
           envVars: {
-            BB_CLAUDE_CODE_SETTINGS: JSON.stringify({ ...threadSettings, hooks: {} }),
+            BB_CLAUDE_CODE_SETTINGS: JSON.stringify({ ...threadSettings, env: { X: "1" } }),
           },
         },
       });
       await bridge.flushWork();
 
-      // A value setting anything but deny rules and skillOverrides counts as
-      // none: the rebuilt session has every skill again.
+      // A value setting anything but deny rules, skillOverrides and PostToolUse
+      // command hooks counts as none: the rebuilt session has every skill again.
       expect(queries).toHaveLength(2);
       const rebuilt = getLatestQueryOptions();
       expect(rebuilt.settings).not.toHaveProperty("permissions");
       expect(rebuilt.settings).not.toHaveProperty("skillOverrides");
+      expect(rebuilt.settings).not.toHaveProperty("hooks");
       const [full] = rebuilt.plugins ?? [];
       expect(readlinkSync(join(full!.path, "skills"))).toBe(root);
       await expect(readNextPromptText(getLatestQueryCall())).resolves.toBe(
